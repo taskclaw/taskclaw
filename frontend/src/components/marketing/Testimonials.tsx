@@ -46,7 +46,7 @@ const Testimonials = () => {
             One board. All your tasks. <GradientText>AI starts them.</GradientText>
           </h2>
           <p className="section-subtitle mx-auto reveal" style={{ animationDelay: '0.1s' }}>
-            Onset syncs tasks from all your tools into a single Kanban board.
+            TaskClaw syncs tasks from all your tools into a single Kanban board.
             Drag a task to &quot;Start with AI&quot; or click Run AI Assistant, and your connected
             OpenClaw picks it up — with the right skills and knowledge already loaded.
           </p>
@@ -60,7 +60,7 @@ const Testimonials = () => {
               <div className="w-3 h-3 rounded-full bg-brand-purple"></div>
               <span className="font-semibold text-sm text-foreground">My Tasks</span>
             </div>
-            <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-orange-500/15 text-orange-400 font-bold">
+            <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-claw-red/15 text-claw-coral font-bold">
               LIVE SYNC
             </span>
           </div>
@@ -142,8 +142,8 @@ function KanbanColumn({
   variant?: 'ai' | 'done';
   children: React.ReactNode;
 }) {
-  const colBg = variant === 'ai' ? 'bg-gradient-to-b from-orange-500/[0.04] to-transparent' : '';
-  const labelColor = variant === 'ai' ? 'text-orange-400' : variant === 'done' ? 'text-green-400' : 'text-foreground/50';
+  const colBg = variant === 'ai' ? 'bg-gradient-to-b from-claw-red/[0.04] to-transparent' : '';
+  const labelColor = variant === 'ai' ? 'text-claw-red' : variant === 'done' ? 'text-green-400' : 'text-foreground/50';
 
   return (
     <div className={`p-4 border-r border-foreground/10 last:border-r-0 border-b sm:border-b-0 lg:border-b-0 ${colBg}`}>
@@ -175,12 +175,12 @@ function KanbanCard({
     <div
       className={`relative p-3 rounded-lg border text-sm font-medium transition-all ${
         aiLive
-          ? 'border-orange-500/25 bg-foreground/[0.03] shadow-[0_0_15px_-3px_rgba(249,115,22,0.1)]'
+          ? 'border-claw-red/25 bg-foreground/[0.03] shadow-[0_0_15px_-3px_rgba(230,59,59,0.1)]'
           : 'border-foreground/10 bg-foreground/[0.02]'
       }`}
     >
       {aiLive && (
-        <span className="absolute top-2 right-2 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-400 animate-pulse">
+        <span className="absolute top-2 right-2 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-claw-red/15 text-claw-coral animate-pulse">
           LIVE
         </span>
       )}

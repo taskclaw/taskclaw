@@ -56,7 +56,7 @@ export function TaskCard({ task, isDone, categories = [] }: TaskCardProps) {
                 'bg-card border border-border p-3 rounded-lg cursor-grab transition-all group relative',
                 isDragging && 'opacity-50 rotate-2 scale-105 z-10',
                 isDone && 'opacity-60',
-                isAIRunning && 'ring-1 ring-amber-500/30 border-amber-500/20 bg-amber-500/5',
+                isAIRunning && 'ring-1 ring-claw-red/30 border-claw-red/20 bg-claw-red/5',
                 isInReview && 'ring-1 ring-purple-500/30 border-purple-500/20 bg-purple-500/5',
                 isActive && 'ring-1 ring-primary/30 border-primary/20 bg-primary/5',
                 !isDone && !isDragging && 'hover:border-muted-foreground/30 hover:shadow-sm',
@@ -112,7 +112,7 @@ export function TaskCard({ task, isDone, categories = [] }: TaskCardProps) {
                     )}
 
                     {isAIRunning && (
-                        <div className="flex items-center gap-1 text-amber-400 text-[10px] font-bold">
+                        <div className="flex items-center gap-1 text-claw-red text-[10px] font-bold">
                             <BrainCircuit className="w-3 h-3 animate-pulse" />
                             AI RUNNING
                         </div>

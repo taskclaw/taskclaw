@@ -6,17 +6,19 @@ import { cn } from '@kit/ui/utils';
 interface GradientTextProps {
   children: React.ReactNode;
   className?: string;
-  gradient?: 'purple-blue' | 'purple-pink';
+  gradient?: 'purple-blue' | 'purple-pink' | 'claw' | 'claw-purple';
 }
 
-const GradientText = ({ 
-  children, 
+const GradientText = ({
+  children,
   className,
-  gradient = 'purple-blue' 
+  gradient = 'purple-blue'
 }: GradientTextProps) => {
   const gradients = {
     'purple-blue': 'from-brand-purple to-brand-blue',
-    'purple-pink': 'from-purple-600 to-pink-500'
+    'purple-pink': 'from-purple-600 to-pink-500',
+    'claw': 'from-claw-red to-claw-coral',
+    'claw-purple': 'from-claw-red to-brand-purple',
   };
 
   return (

@@ -62,6 +62,9 @@ const config: Config = {
                 },
                 "brand-purple": "hsl(var(--brand-purple))",
                 "brand-blue": "hsl(var(--brand-blue))",
+                "claw-red": "hsl(var(--claw-red))",
+                "claw-coral": "hsl(var(--claw-coral))",
+                "claw-deep": "hsl(var(--claw-deep))",
                 "hero-glow": "var(--hero-glow)",
             },
             borderRadius: {

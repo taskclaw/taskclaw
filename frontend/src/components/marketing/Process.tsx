@@ -58,11 +58,11 @@ const Process = () => {
       <div className="section-container">
         <div className="mb-12 text-center">
           <div className="inline-flex items-center justify-center mb-3 px-3 py-1 rounded-full bg-foreground/5 border border-foreground/10 text-xs text-foreground/70">
-            <span className="mr-2 size-2 rounded-full bg-brand-purple"></span>
+            <span className="mr-2 size-2 rounded-full bg-claw-coral"></span>
             How It Works
           </div>
           <h2 className="section-title reveal">
-            From scattered to shipped, in <GradientText>three steps</GradientText>.
+            From scattered to shipped, in <GradientText gradient="claw">three steps</GradientText>.
           </h2>
         </div>
 
@@ -73,7 +73,7 @@ const Process = () => {
               className="h-full reveal relative"
               style={{ animationDelay: `${index * 0.15}s` }}
             >
-              <div className="font-mono text-5xl font-bold mb-4 bg-gradient-to-r from-brand-purple to-brand-blue bg-clip-text text-transparent opacity-40">
+              <div className="font-mono text-5xl font-bold mb-4 bg-gradient-to-r from-claw-red to-claw-coral bg-clip-text text-transparent opacity-50">
                 {step.number}
               </div>
               <h3 className="text-xl font-bold mb-3 text-foreground">{step.title}</h3>

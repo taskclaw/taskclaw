@@ -47,8 +47,8 @@ export const KANBAN_COLUMNS: TaskStatus[] = ['To-Do', 'Today', 'In Progress', 'A
 export const STATUS_COLORS: Record<string, string> = {
   'To-Do': '#71717a',
   Today: '#3b82f6',
-  'In Progress': '#f97316',
-  'AI Running': '#f59e0b',
+  'In Progress': '#F06050',
+  'AI Running': '#E63B3B',
   'In Review': '#a855f7',
   Done: '#22c55e',
 }

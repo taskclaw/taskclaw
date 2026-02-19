@@ -36,7 +36,7 @@ const Button = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const variants = {
-    primary: 'bg-gradient-to-r from-brand-purple to-brand-blue button-gradient text-white border-0 hover:shadow-lg hover:shadow-purple-500/20',
+    primary: 'bg-gradient-to-r from-claw-red to-claw-coral button-gradient text-white border-0 hover:shadow-lg hover:shadow-claw-red/20',
     secondary: 'glass hover:bg-white/10 dark:hover:bg-white/10 text-foreground dark:text-white border-white/10',
     outline: 'bg-transparent border border-foreground/20 dark:border-white/20 hover:bg-foreground/5 dark:hover:bg-white/5 text-foreground dark:text-white',
     ghost: 'bg-transparent text-foreground dark:text-white hover:bg-foreground/5 dark:hover:bg-white/5'

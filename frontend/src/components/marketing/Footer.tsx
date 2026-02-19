@@ -29,7 +29,7 @@ export function Footer() {
               hello@onset.dev
             </a>
             <span className="text-foreground/20">&middot;</span>
-            <span>&copy; {new Date().getFullYear()} Onset</span>
+            <span>&copy; {new Date().getFullYear()} TaskClaw</span>
           </div>
           <LanguageSelector />
         </div>

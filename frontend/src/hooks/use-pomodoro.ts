@@ -63,6 +63,16 @@ export const usePomodoroStore = create<PomodoroState>()(
     ),
 )
 
+function playSound(src: string) {
+    try {
+        const audio = new Audio(src)
+        audio.volume = 0.6
+        audio.play().catch(() => {})
+    } catch {
+        // Audio not available
+    }
+}
+
 export function usePomodoro() {
     const store = usePomodoroStore()
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -70,24 +80,30 @@ export function usePomodoro() {
     const handleComplete = useCallback(async () => {
         const state = usePomodoroStore.getState()
         if (state.mode === 'focus') {
-            // Notify
+            // Focus session done
             if (typeof window !== 'undefined' && Notification.permission === 'granted') {
                 new Notification('Pomodoro Complete!', {
                     body: 'Time for a break.',
                 })
             }
-            // Play sound
-            try {
-                const audio = new Audio('/sounds/bell.mp3')
-                audio.play().catch(() => { })
-            } catch {
-                // Audio not available
-            }
+            playSound('/sounds/done.wav')
+
             const sessions = state.sessionsCompleted + 1
             const nextMode = sessions % 4 === 0 ? 'longBreak' : 'break'
             usePomodoroStore.setState({ sessionsCompleted: sessions })
             state.setMode(nextMode)
+            // Auto-start break
+            setTimeout(() => {
+                usePomodoroStore.setState({ isRunning: true })
+            }, 50)
         } else {
+            // Break done
+            if (typeof window !== 'undefined' && Notification.permission === 'granted') {
+                new Notification('Break Over!', {
+                    body: 'Ready to focus again.',
+                })
+            }
+            playSound('/sounds/done.wav')
             state.setMode('focus')
         }
     }, [])
@@ -113,6 +129,11 @@ export function usePomodoro() {
     }, [store.isRunning, handleComplete])
 
     const toggleTimer = useCallback(() => {
+        const state = usePomodoroStore.getState()
+        if (!state.isRunning) {
+            // Playing start sound when beginning a session
+            playSound('/sounds/start.wav')
+        }
         store.setRunning(!store.isRunning)
     }, [store])
 

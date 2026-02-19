@@ -85,15 +85,15 @@ const CTA = () => {
       <div className="section-container">
         <div className="max-w-2xl mx-auto text-center">
           <div className="inline-flex items-center justify-center mb-3 px-3 py-1 rounded-full bg-foreground/5 border border-foreground/10 text-xs text-foreground/70 reveal">
-            <span className="mr-2 size-2 rounded-full bg-brand-purple"></span>
+            <span className="mr-2 size-2 rounded-full bg-claw-red"></span>
             Early Access
           </div>
 
           <h2 className="section-title reveal" style={{ animationDelay: '0.05s' }}>
-            Be the first to stop managing and start <GradientText>shipping</GradientText>.
+            Be the first to stop managing and start <GradientText gradient="claw">shipping</GradientText>.
           </h2>
           <p className="section-subtitle reveal mx-auto" style={{ animationDelay: '0.1s' }}>
-            We&apos;re building Onset for people who are tired of task managers that just hold lists.
+            We&apos;re building TaskClaw for people who are tired of task managers that just hold lists.
             If you want a tool that actually gets things done, join the waitlist.
           </p>
 
@@ -108,12 +108,12 @@ const CTA = () => {
                     placeholder="you@email.com"
                     required
                     disabled={loading}
-                    className="flex-1 px-4 py-3 rounded-xl bg-foreground/[0.05] border border-foreground/10 text-foreground placeholder:text-foreground/40 focus:outline-none focus:border-brand-purple/50 text-sm transition-colors disabled:opacity-50"
+                    className="flex-1 px-4 py-3 rounded-xl bg-foreground/[0.05] border border-foreground/10 text-foreground placeholder:text-foreground/40 focus:outline-none focus:border-claw-red/50 text-sm transition-colors disabled:opacity-50"
                   />
                   <button
                     type="submit"
                     disabled={loading}
-                    className="px-6 py-3 bg-gradient-to-r from-brand-purple to-brand-blue text-white rounded-xl font-semibold text-sm hover:shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 transition-all whitespace-nowrap disabled:opacity-50 disabled:hover:translate-y-0"
+                    className="px-6 py-3 bg-gradient-to-r from-claw-red to-claw-coral text-white rounded-xl font-semibold text-sm hover:shadow-lg hover:shadow-claw-red/20 hover:-translate-y-0.5 transition-all whitespace-nowrap disabled:opacity-50 disabled:hover:translate-y-0"
                   >
                     {loading ? 'Joining...' : 'Join Waitlist'}
                   </button>
@@ -144,7 +144,7 @@ const CTA = () => {
       </div>
 
       {/* Background decoration */}
-      <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-brand-purple/5 to-transparent -z-10"></div>
+      <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-claw-red/5 to-transparent -z-10"></div>
     </section>
   );
 };

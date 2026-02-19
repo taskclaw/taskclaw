@@ -33,20 +33,15 @@ const Hero = () => {
       className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20"
       style={{ '--x': '0.5', '--y': '0.5' } as React.CSSProperties}
     >
+      {/* Dual glow: purple (existing) + claw red accent */}
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] bg-[radial-gradient(ellipse,rgba(230,59,59,0.08),transparent_70%)] blur-2xl -z-10 pointer-events-none" />
+
       <div className="section-container text-center relative z-10">
         {/* Badge */}
         <div className="inline-flex items-center bg-foreground/5 backdrop-blur-sm rounded-full px-4 py-1.5 mb-6 border border-foreground/10 opacity-0 animate-fade-in">
-          <div className="h-2 w-2 rounded-full bg-orange-500 mr-2 animate-pulse"></div>
+          <div className="h-2 w-2 rounded-full bg-claw-red mr-2 animate-pulse"></div>
           <p className="text-sm font-medium text-foreground/80">
-            Powered by{' '}
-            <a
-              href="https://openclaw.ai"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-orange-500 font-semibold hover:text-orange-400 transition-colors"
-            >
-              OpenClaw
-            </a>
+            Open Source AI Task Orchestration
           </p>
         </div>
 
@@ -54,7 +49,7 @@ const Hero = () => {
         <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold leading-tight mb-6 max-w-4xl mx-auto opacity-0 animate-fade-in-delay-1 text-foreground tracking-tight">
           Stop organizing tasks.
           <br />
-          <GradientText>Start finishing them.</GradientText>
+          <GradientText gradient="claw-purple">Start finishing them.</GradientText>
         </h1>
 
         {/* Subheadline */}
@@ -67,7 +62,7 @@ const Hero = () => {
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 opacity-0 animate-fade-in-delay-3">
           <a
             href="#waitlist"
-            className="inline-flex items-center gap-2 py-3 px-8 bg-gradient-to-r from-brand-purple to-brand-blue text-white rounded-xl font-semibold text-base hover:shadow-lg hover:shadow-purple-500/20 hover:-translate-y-0.5 transition-all"
+            className="inline-flex items-center gap-2 py-3 px-8 bg-gradient-to-r from-claw-red to-claw-coral text-white rounded-xl font-semibold text-base hover:shadow-lg hover:shadow-red-500/20 hover:-translate-y-0.5 transition-all"
           >
             Join the Waitlist
             <ArrowRightIcon className="h-4 w-4" />
@@ -86,7 +81,7 @@ const Hero = () => {
           <FlowArrow />
           <FlowNode icon="C" label="ClickUp" />
           <FlowArrow />
-          <FlowNode icon="O" label="Onset" variant="onset" />
+          <FlowNode icon="TC" label="TaskClaw" variant="taskclaw" />
           <FlowArrow />
           <FlowNode icon="AI" label="OpenClaw" variant="claw" />
           <FlowArrow />
@@ -97,16 +92,16 @@ const Hero = () => {
   );
 };
 
-function FlowNode({ icon, label, variant }: { icon: string; label: string; variant?: 'onset' | 'claw' | 'done' }) {
+function FlowNode({ icon, label, variant }: { icon: string; label: string; variant?: 'taskclaw' | 'claw' | 'done' }) {
   const variantStyles = {
-    onset: 'border-brand-purple/30 bg-brand-purple/10',
-    claw: 'border-orange-500/30 bg-orange-500/10',
+    taskclaw: 'border-claw-red/30 bg-claw-red/10',
+    claw: 'border-brand-purple/30 bg-brand-purple/10',
     done: 'border-green-500/30 bg-green-500/10',
   };
 
   const iconStyles = {
-    onset: 'text-brand-purple',
-    claw: 'text-orange-500',
+    taskclaw: 'text-claw-red',
+    claw: 'text-brand-purple',
     done: 'text-green-500',
   };
 
