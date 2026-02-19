@@ -1,0 +1,24 @@
+{
+  "name": "@taskclaw/openclaw-plugin",
+  "version": "1.0.0",
+  "description": "TaskClaw sync plugin for OpenClaw — manages skills and knowledge base on the gateway via RPC",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "openclaw": {
+    "extensions": ["./dist/index.js"]
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "echo 'no lint configured'"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json"
+  ],
+  "license": "MIT"
+}

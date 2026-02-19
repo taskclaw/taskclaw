@@ -12,6 +12,7 @@ import { OpenClawService } from './openclaw.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { SkillsService } from '../skills/skills.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
+import { AgentSyncService } from '../agent-sync/agent-sync.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
@@ -29,6 +30,7 @@ export class ConversationsService {
     private readonly knowledgeService: KnowledgeService,
     private readonly skillsService: SkillsService,
     private readonly notionAdapter: NotionAdapter,
+    private readonly agentSyncService: AgentSyncService,
   ) {}
 
   /**
@@ -601,57 +603,75 @@ Current Context:
 `;
 
     // ═══════════════════════════════════════════════════════════
-    // SPRINT 3: SKILLS INJECTION
+    // SKILLS & KNOWLEDGE: Provider-synced or inline injection
     // ═══════════════════════════════════════════════════════════
-    // Fetch selected skills (stored in conversation metadata)
-    try {
-      const skillIds = conversation.metadata?.skill_ids || [];
-      if (skillIds.length > 0) {
-        const skills = await this.skillsService.findByIds(
-          accessToken,
-          conversation.account_id,
-          skillIds,
-        );
-
-        if (skills.length > 0) {
-          prompt += `\n\n=== ACTIVE SKILLS ===\n`;
-          prompt += `The following specialized skills are active for this conversation:\n\n`;
-          skills.forEach((skill, index) => {
-            prompt += `Skill ${index + 1}: ${skill.name}\n`;
-            if (skill.description) {
-              prompt += `Description: ${skill.description}\n`;
-            }
-            prompt += `Instructions:\n${skill.instructions}\n\n`;
-          });
-          prompt += `Apply these skills when responding to the user.\n`;
-        }
-      }
-    } catch (error) {
-      this.logger.warn(`Failed to fetch skills for prompt: ${error.message}`);
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // SPRINT 3: KNOWLEDGE INJECTION
-    // ═══════════════════════════════════════════════════════════
-    // Fetch master knowledge doc for task's category (if task-linked)
-    try {
-      if (conversation.task_id && conversation.task?.category_id) {
-        const masterDoc = await this.knowledgeService.findMasterForCategory(
-          accessToken,
+    // Check if skills/knowledge are synced to the provider (OpenClaw).
+    // If synced, skip inline injection — the content is loaded from
+    // SKILL.md files on the server, saving thousands of tokens per request.
+    let providerSynced = false;
+    if (conversation.task_id && conversation.task?.category_id) {
+      try {
+        providerSynced = await this.agentSyncService.isSynced(
           conversation.account_id,
           conversation.task.category_id,
         );
-
-        if (masterDoc) {
-          prompt += `\n\n=== KNOWLEDGE BASE ===\n`;
-          prompt += `Master Document: "${masterDoc.title}"\n`;
-          prompt += `Category: ${conversation.task.category?.name || 'Unknown'}\n\n`;
-          prompt += `${masterDoc.content}\n\n`;
-          prompt += `Use this knowledge to provide contextually relevant responses.\n`;
-        }
+      } catch {
+        // Fallback to inline injection if sync check fails
       }
-    } catch (error) {
-      this.logger.warn(`Failed to fetch knowledge for prompt: ${error.message}`);
+    }
+
+    if (providerSynced) {
+      this.logger.debug(
+        `Category skills/knowledge synced to provider — skipping inline injection`,
+      );
+    } else {
+      // FALLBACK: Inline skills injection (original Sprint 3 behavior)
+      try {
+        const skillIds = conversation.metadata?.skill_ids || [];
+        if (skillIds.length > 0) {
+          const skills = await this.skillsService.findByIds(
+            accessToken,
+            conversation.account_id,
+            skillIds,
+          );
+
+          if (skills.length > 0) {
+            prompt += `\n\n=== ACTIVE SKILLS ===\n`;
+            prompt += `The following specialized skills are active for this conversation:\n\n`;
+            skills.forEach((skill, index) => {
+              prompt += `Skill ${index + 1}: ${skill.name}\n`;
+              if (skill.description) {
+                prompt += `Description: ${skill.description}\n`;
+              }
+              prompt += `Instructions:\n${skill.instructions}\n\n`;
+            });
+            prompt += `Apply these skills when responding to the user.\n`;
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to fetch skills for prompt: ${error.message}`);
+      }
+
+      // FALLBACK: Inline knowledge injection (original Sprint 3 behavior)
+      try {
+        if (conversation.task_id && conversation.task?.category_id) {
+          const masterDoc = await this.knowledgeService.findMasterForCategory(
+            accessToken,
+            conversation.account_id,
+            conversation.task.category_id,
+          );
+
+          if (masterDoc) {
+            prompt += `\n\n=== KNOWLEDGE BASE ===\n`;
+            prompt += `Master Document: "${masterDoc.title}"\n`;
+            prompt += `Category: ${conversation.task.category?.name || 'Unknown'}\n\n`;
+            prompt += `${masterDoc.content}\n\n`;
+            prompt += `Use this knowledge to provide contextually relevant responses.\n`;
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to fetch knowledge for prompt: ${error.message}`);
+      }
     }
 
     // ═══════════════════════════════════════════════════════════

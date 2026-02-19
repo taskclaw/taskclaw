@@ -4,11 +4,14 @@ import {
   ConflictException,
   BadRequestException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { CreateKnowledgeDocDto } from './dto/create-knowledge-doc.dto';
 import { UpdateKnowledgeDocDto } from './dto/update-knowledge-doc.dto';
+import { AgentSyncService } from '../agent-sync/agent-sync.service';
 
 const ALLOWED_FILE_TYPES = [
   'application/pdf',
@@ -36,6 +39,8 @@ export class KnowledgeService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(forwardRef(() => AgentSyncService))
+    private readonly agentSyncService: AgentSyncService,
   ) {}
 
   /**
@@ -165,6 +170,11 @@ export class KnowledgeService {
         throw new Error(error.message);
       }
 
+      // Trigger sync if this is a master doc with a category
+      if (data.is_master && data.category_id) {
+        this.triggerCategorySync(accountId, data.category_id);
+      }
+
       return data;
     } catch (error) {
       this.logger.error('Error creating knowledge doc:', error);
@@ -225,6 +235,11 @@ export class KnowledgeService {
         throw new Error(error.message);
       }
 
+      // Trigger sync if this is a master doc with a category
+      if (data.is_master && data.category_id) {
+        this.triggerCategorySync(accountId, data.category_id);
+      }
+
       return data;
     } catch (error) {
       this.logger.error('Error updating knowledge doc:', error);
@@ -256,8 +271,8 @@ export class KnowledgeService {
    */
   async remove(accessToken: string, accountId: string, id: string) {
     try {
-      // Check doc exists
-      await this.findOne(accessToken, accountId, id);
+      // Check doc exists and get category info BEFORE deleting
+      const doc = await this.findOne(accessToken, accountId, id);
 
       const client = this.supabaseAdmin.getClient();
       const { error } = await client
@@ -269,6 +284,11 @@ export class KnowledgeService {
       if (error) {
         this.logger.error(`Failed to delete knowledge doc: ${error.message}`);
         throw new Error(error.message);
+      }
+
+      // Trigger sync if this was a master doc with a category
+      if (doc.is_master && doc.category_id) {
+        this.triggerCategorySync(accountId, doc.category_id);
       }
 
       return { message: 'Knowledge doc deleted successfully' };
@@ -429,5 +449,14 @@ export class KnowledgeService {
       this.logger.error('Error removing attachment:', error);
       throw error;
     }
+  }
+
+  /**
+   * Fire-and-forget sync trigger for a category's provider agent.
+   */
+  private triggerCategorySync(accountId: string, categoryId: string): void {
+    this.agentSyncService.markStale(accountId, categoryId).catch((err) => {
+      this.logger.warn(`Failed to trigger agent sync for category ${categoryId}: ${err.message}`);
+    });
   }
 }

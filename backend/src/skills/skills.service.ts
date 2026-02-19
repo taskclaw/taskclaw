@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Logger, Inject, forwardRef } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
+import { AgentSyncService } from '../agent-sync/agent-sync.service';
 
 @Injectable()
 export class SkillsService {
@@ -11,6 +12,8 @@ export class SkillsService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(forwardRef(() => AgentSyncService))
+    private readonly agentSyncService: AgentSyncService,
   ) {}
 
   /**
@@ -227,6 +230,9 @@ export class SkillsService {
         throw new Error(error.message);
       }
 
+      // Trigger sync for all linked categories
+      await this.syncLinkedCategories(accountId, id);
+
       return data;
     } catch (error) {
       this.logger.error('Error updating skill:', error);
@@ -272,6 +278,11 @@ export class SkillsService {
         throw new Error(error.message);
       }
 
+      // Trigger sync for the linked category
+      this.agentSyncService.markStale(accountId, categoryId).catch((err) => {
+        this.logger.warn(`Failed to trigger sync after linking skill: ${err.message}`);
+      });
+
       return data;
     } catch (error) {
       this.logger.error('Error linking skill to category:', error);
@@ -299,6 +310,11 @@ export class SkillsService {
         throw new Error(error.message);
       }
 
+      // Trigger sync for the unlinked category
+      this.agentSyncService.markStale(accountId, categoryId).catch((err) => {
+        this.logger.warn(`Failed to trigger sync after unlinking skill: ${err.message}`);
+      });
+
       return { message: 'Skill unlinked from category successfully' };
     } catch (error) {
       this.logger.error('Error unlinking skill from category:', error);
@@ -314,7 +330,13 @@ export class SkillsService {
       // Check skill exists
       await this.findOne(accessToken, accountId, id);
 
+      // Get linked categories BEFORE deleting (cascade will remove category_skills rows)
       const client = this.supabaseAdmin.getClient();
+      const { data: linkedCategories } = await client
+        .from('category_skills')
+        .select('category_id')
+        .eq('skill_id', id);
+
       const { error } = await client.from('skills').delete().eq('id', id).eq('account_id', accountId);
 
       if (error) {
@@ -322,10 +344,38 @@ export class SkillsService {
         throw new Error(error.message);
       }
 
+      // Trigger sync for all previously linked categories
+      for (const link of linkedCategories || []) {
+        this.agentSyncService.markStale(accountId, link.category_id).catch((err) => {
+          this.logger.warn(`Failed to trigger sync after deleting skill: ${err.message}`);
+        });
+      }
+
       return { message: 'Skill deleted successfully' };
     } catch (error) {
       this.logger.error('Error deleting skill:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Find all categories linked to a skill and trigger sync for each.
+   */
+  private async syncLinkedCategories(accountId: string, skillId: string): Promise<void> {
+    try {
+      const client = this.supabaseAdmin.getClient();
+      const { data: linkedCategories } = await client
+        .from('category_skills')
+        .select('category_id')
+        .eq('skill_id', skillId);
+
+      for (const link of linkedCategories || []) {
+        this.agentSyncService.markStale(accountId, link.category_id).catch((err) => {
+          this.logger.warn(`Failed to trigger sync for category ${link.category_id}: ${err.message}`);
+        });
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to sync linked categories: ${err.message}`);
     }
   }
 }

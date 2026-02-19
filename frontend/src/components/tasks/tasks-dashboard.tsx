@@ -103,7 +103,7 @@ function TasksDashboardInner({ categories }: TasksDashboardInnerProps) {
         <div className="flex-1 flex overflow-hidden min-h-0 -m-4 -mb-4">
             <main className="flex-1 flex flex-col overflow-hidden min-h-0">
                 {/* Header Bar */}
-                <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
+                <div className="flex items-center justify-between px-6 py-3 mt-[5px] border-b border-border shrink-0">
                     <div className="flex items-center gap-4">
                         <SidebarTrigger className="-ml-1" />
                         <h2 className="text-lg font-bold">Tasks</h2>

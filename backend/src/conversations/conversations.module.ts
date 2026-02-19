@@ -8,9 +8,10 @@ import { AiProviderModule } from '../ai-provider/ai-provider.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { SkillsModule } from '../skills/skills.module';
 import { AdaptersModule } from '../adapters/adapters.module';
+import { AgentSyncModule } from '../agent-sync/agent-sync.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule, AiProviderModule, KnowledgeModule, SkillsModule, AdaptersModule],
+  imports: [SupabaseModule, CommonModule, AiProviderModule, KnowledgeModule, SkillsModule, AdaptersModule, AgentSyncModule],
   controllers: [ConversationsController],
   providers: [ConversationsService, OpenClawService],
   exports: [ConversationsService, OpenClawService],

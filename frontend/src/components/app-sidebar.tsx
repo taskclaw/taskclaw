@@ -142,7 +142,7 @@ export function AppSidebar({ user, teams, activeTeam, projects, allowMultiplePro
     return (
         <Sidebar collapsible="icon" {...props}>
             <SidebarHeader>
-                <BrandLogo className="justify-center py-4 [&_img]:h-16" />
+                <BrandLogo className="justify-center py-4 [&_img]:h-auto [&_img]:w-[90%]" />
                 <TeamSwitcher
                     teams={teamsWithIcons}
                     activeTeam={activeTeamWithIcon}
