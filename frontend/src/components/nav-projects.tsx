@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import {
     Folder,
     Forward,
@@ -30,6 +31,8 @@ import { useRouter } from "next/navigation"
 import { deleteProject } from "@/app/dashboard/actions"
 import { CreateProjectDialog } from "@/components/create-project-dialog"
 import { toast } from "sonner"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
+import { cn } from "@/lib/utils"
 
 export function NavProjects({
     projects,
@@ -45,16 +48,30 @@ export function NavProjects({
 }) {
     const { isMobile } = useSidebar()
     const router = useRouter()
+    const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+    const [deleteLoading, setDeleteLoading] = useState(false)
+    const [deletingId, setDeletingId] = useState<string | null>(null)
 
-    const handleDelete = async (projectId: string) => {
-        if (confirm("Are you sure you want to delete this project?")) {
-            const result = await deleteProject(projectId)
+    const confirmDelete = async () => {
+        if (!deleteTarget) return
+        setDeleteLoading(true)
+        try {
+            const result = await deleteProject(deleteTarget.id)
             if (result.error) {
                 toast.error(result.error)
             } else {
-                toast.success('Project deleted successfully')
-                router.refresh()
+                setDeleteTarget(null)
+                setDeletingId(deleteTarget.id)
+                setTimeout(() => {
+                    setDeletingId(null)
+                    toast.success('Project deleted successfully')
+                    router.refresh()
+                }, 500)
             }
+        } catch (error: any) {
+            toast.error(error.message || 'Failed to delete project')
+        } finally {
+            setDeleteLoading(false)
         }
     }
 
@@ -63,7 +80,10 @@ export function NavProjects({
             <SidebarGroupLabel>Projects</SidebarGroupLabel>
             <SidebarMenu>
                 {projects.map((item) => (
-                    <SidebarMenuItem key={item.name}>
+                    <SidebarMenuItem
+                        key={item.name}
+                        className={cn(deletingId === item.id && 'animate-deleting')}
+                    >
                         <SidebarMenuButton asChild>
                             <a href={item.url}>
                                 <item.icon />
@@ -95,7 +115,7 @@ export function NavProjects({
                                     onClick={(e) => {
                                         e.preventDefault()
                                         e.stopPropagation()
-                                        handleDelete(item.id)
+                                        setDeleteTarget({ id: item.id, name: item.name })
                                     }}
                                 >
                                     <Trash2 className="text-muted-foreground" />
@@ -116,6 +136,15 @@ export function NavProjects({
                     )}
                 </SidebarMenuItem>
             </SidebarMenu>
+
+            <ConfirmDeleteDialog
+                open={!!deleteTarget}
+                onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+                onConfirm={confirmDelete}
+                title="Delete project?"
+                description="This will permanently delete this project and all its data."
+                loading={deleteLoading}
+            />
         </SidebarGroup>
     )
 }

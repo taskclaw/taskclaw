@@ -1,9 +1,18 @@
-import { Injectable, NotFoundException, ConflictException, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Logger, Inject, forwardRef } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
+
+const ALLOWED_EXTENSIONS = [
+  'pdf', 'txt', 'md', 'doc', 'docx', 'csv', 'json', 'png', 'jpg', 'jpeg',
+  'yaml', 'yml', 'xml', 'html', 'css', 'js', 'ts', 'py', 'sh', 'sql',
+  'toml', 'ini', 'cfg', 'conf', 'env', 'log', 'rst', 'tex',
+];
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const STORAGE_BUCKET = 'skill-attachments';
 
 @Injectable()
 export class SkillsService {
@@ -165,7 +174,8 @@ export class SkillsService {
             name,
             description,
             instructions,
-            is_active
+            is_active,
+            file_attachments
           )
         `,
         )
@@ -401,6 +411,152 @@ export class SkillsService {
       return { message: 'Skill deleted successfully' };
     } catch (error) {
       this.logger.error('Error deleting skill:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Upload a file attachment to a skill
+   */
+  async uploadAttachment(
+    accessToken: string,
+    accountId: string,
+    skillId: string,
+    file: Express.Multer.File,
+  ) {
+    try {
+      if (file.size > MAX_FILE_SIZE) {
+        throw new BadRequestException(
+          `File too large. Maximum size is ${MAX_FILE_SIZE / (1024 * 1024)}MB`,
+        );
+      }
+
+      const ext = file.originalname.split('.').pop()?.toLowerCase();
+      if (!ext || !ALLOWED_EXTENSIONS.includes(ext)) {
+        throw new BadRequestException(
+          `File type not allowed. Allowed types: ${ALLOWED_EXTENSIONS.join(', ')}`,
+        );
+      }
+
+      // Verify skill exists and belongs to account
+      const skill = await this.findOne(accessToken, accountId, skillId);
+
+      // Upload to Supabase Storage
+      const storagePath = `${accountId}/${skillId}/${file.originalname}`;
+      const adminClient = this.supabase.getAdminClient();
+
+      const { error: uploadError } = await adminClient.storage
+        .from(STORAGE_BUCKET)
+        .upload(storagePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        this.logger.error(`Failed to upload file: ${uploadError.message}`);
+        throw new Error(`Storage upload failed: ${uploadError.message}`);
+      }
+
+      // Get the public URL
+      const { data: urlData } = adminClient.storage
+        .from(STORAGE_BUCKET)
+        .getPublicUrl(storagePath);
+
+      const attachment = {
+        name: file.originalname,
+        url: urlData.publicUrl,
+        size: file.size,
+        type: file.mimetype,
+        uploaded_at: new Date().toISOString(),
+      };
+
+      // Update the skill's file_attachments array
+      const existingAttachments = skill.file_attachments || [];
+      const filteredAttachments = existingAttachments.filter(
+        (a: any) => a.name !== file.originalname,
+      );
+      const updatedAttachments = [...filteredAttachments, attachment];
+
+      const client = this.supabaseAdmin.getClient();
+      const { data, error } = await client
+        .from('skills')
+        .update({ file_attachments: updatedAttachments })
+        .eq('id', skillId)
+        .eq('account_id', accountId)
+        .select()
+        .single();
+
+      if (error) {
+        this.logger.error(`Failed to update skill attachments: ${error.message}`);
+        throw new Error(error.message);
+      }
+
+      // Trigger sync for linked categories
+      await this.syncLinkedCategories(accountId, skillId);
+
+      return data;
+    } catch (error) {
+      this.logger.error('Error uploading skill attachment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Remove a file attachment from a skill
+   */
+  async removeAttachment(
+    accessToken: string,
+    accountId: string,
+    skillId: string,
+    filename: string,
+  ) {
+    try {
+      const skill = await this.findOne(accessToken, accountId, skillId);
+
+      const existingAttachments = skill.file_attachments || [];
+      const attachment = existingAttachments.find((a: any) => a.name === filename);
+
+      if (!attachment) {
+        throw new NotFoundException(`Attachment "${filename}" not found`);
+      }
+
+      // Delete from Supabase Storage
+      const storagePath = `${accountId}/${skillId}/${filename}`;
+      const adminClient = this.supabase.getAdminClient();
+
+      const { error: deleteError } = await adminClient.storage
+        .from(STORAGE_BUCKET)
+        .remove([storagePath]);
+
+      if (deleteError) {
+        this.logger.error(`Failed to delete file from storage: ${deleteError.message}`);
+        throw new Error(`Storage delete failed: ${deleteError.message}`);
+      }
+
+      const updatedAttachments = existingAttachments.filter(
+        (a: any) => a.name !== filename,
+      );
+
+      const client = this.supabaseAdmin.getClient();
+      const { data, error } = await client
+        .from('skills')
+        .update({ file_attachments: updatedAttachments })
+        .eq('id', skillId)
+        .eq('account_id', accountId)
+        .select()
+        .single();
+
+      if (error) {
+        this.logger.error(`Failed to update skill attachments: ${error.message}`);
+        throw new Error(error.message);
+      }
+
+      // Trigger sync for linked categories
+      await this.syncLinkedCategories(accountId, skillId);
+
+      return data;
+    } catch (error) {
+      this.logger.error('Error removing skill attachment:', error);
       throw error;
     }
   }

@@ -4,9 +4,22 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   getSkills, createSkill, updateSkill, deleteSkill,
   getCategorySkillsMap, linkSkillToCategory, unlinkSkillFromCategory,
+  uploadSkillAttachment, removeSkillAttachment,
 } from './actions';
 import { getCategories } from '../categories/actions';
-import { Plus, Edit, Trash2, Save, X, Power, PowerOff, Tag, Link2 } from 'lucide-react';
+import { Plus, Edit, Trash2, Save, X, Power, PowerOff, Tag, Link2, FileText, Download, PenLine, FolderUp } from 'lucide-react';
+import { FileDropZone, type DroppedFile } from '@/components/ui/file-drop-zone';
+import { toast } from 'sonner';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
+import { cn } from '@/lib/utils';
+
+interface Attachment {
+  name: string;
+  url: string;
+  size: number;
+  type: string;
+  uploaded_at: string;
+}
 
 interface Skill {
   id: string;
@@ -14,6 +27,7 @@ interface Skill {
   description: string;
   instructions: string;
   is_active: boolean;
+  file_attachments?: Attachment[];
   created_at: string;
   updated_at: string;
 }
@@ -38,6 +52,13 @@ export default function SkillsPage() {
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [linkingSkillId, setLinkingSkillId] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<DroppedFile[]>([]);
+  const [activeTab, setActiveTab] = useState<'write' | 'import'>('write');
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -86,6 +107,9 @@ export default function SkillsPage() {
       instructions: '',
       is_active: true,
     });
+    setAttachments([]);
+    setPendingFiles([]);
+    setActiveTab('write');
     setIsCreating(true);
     setEditingSkill(null);
   }
@@ -97,6 +121,9 @@ export default function SkillsPage() {
       instructions: skill.instructions,
       is_active: skill.is_active,
     });
+    setAttachments(skill.file_attachments || []);
+    setPendingFiles([]);
+    setActiveTab('write');
     setEditingSkill(skill);
     setIsCreating(false);
   }
@@ -104,17 +131,20 @@ export default function SkillsPage() {
   function cancelEdit() {
     setEditingSkill(null);
     setIsCreating(false);
+    setAttachments([]);
+    setPendingFiles([]);
+    setActiveTab('write');
     setFormData({ name: '', description: '', instructions: '', is_active: true });
   }
 
   async function handleSave() {
     try {
       if (!formData.name.trim()) {
-        alert('Name is required');
+        toast.error('Name is required');
         return;
       }
       if (!formData.instructions.trim()) {
-        alert('Instructions are required');
+        toast.error('Instructions are required');
         return;
       }
 
@@ -128,14 +158,27 @@ export default function SkillsPage() {
       if (editingSkill) {
         await updateSkill(editingSkill.id, data);
       } else {
-        await createSkill(data);
+        const newSkill = await createSkill(data);
+        // Upload any pending reference files for the new skill
+        if (pendingFiles.length > 0 && newSkill?.id) {
+          for (const droppedFile of pendingFiles) {
+            try {
+              const fd = new FormData();
+              // Use path to preserve folder structure (e.g. "references/guide.md")
+              fd.append('file', droppedFile.file, droppedFile.path);
+              await uploadSkillAttachment(newSkill.id, fd);
+            } catch (err: any) {
+              console.error(`Failed to upload ${droppedFile.path}:`, err);
+            }
+          }
+        }
       }
 
       await loadData();
       cancelEdit();
     } catch (error: any) {
       console.error('Error saving skill:', error);
-      alert(error.message || 'Failed to save skill');
+      toast.error(error.message || 'Failed to save skill');
     }
   }
 
@@ -145,21 +188,27 @@ export default function SkillsPage() {
       await loadData();
     } catch (error: any) {
       console.error('Error toggling skill:', error);
-      alert(error.message || 'Failed to toggle skill');
+      toast.error(error.message || 'Failed to toggle skill');
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this skill?')) {
-      return;
-    }
-
+  async function confirmDeleteSkill() {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
     try {
-      await deleteSkill(id);
-      await loadData();
+      await deleteSkill(deleteTarget.id);
+      setDeleteTarget(null);
+      setDeletingId(deleteTarget.id);
+      setTimeout(() => {
+        setSkills((prev) => prev.filter((s) => s.id !== deleteTarget.id));
+        setDeletingId(null);
+        toast.success('Skill deleted');
+      }, 500);
     } catch (error: any) {
       console.error('Error deleting skill:', error);
-      alert(error.message || 'Failed to delete skill');
+      toast.error(error.message || 'Failed to delete skill');
+    } finally {
+      setDeleteLoading(false);
     }
   }
 
@@ -170,7 +219,7 @@ export default function SkillsPage() {
       await loadData();
     } catch (error: any) {
       console.error('Error linking category:', error);
-      alert(error.message || 'Failed to link category');
+      toast.error(error.message || 'Failed to link category');
     }
   }
 
@@ -180,8 +229,62 @@ export default function SkillsPage() {
       await loadData();
     } catch (error: any) {
       console.error('Error unlinking category:', error);
-      alert(error.message || 'Failed to unlink category');
+      toast.error(error.message || 'Failed to unlink category');
     }
+  }
+
+  async function handleFilesDropped(files: DroppedFile[]) {
+    if (editingSkill) {
+      // Editing: upload immediately
+      for (const droppedFile of files) {
+        const displayPath = droppedFile.path;
+        setUploadingFiles((prev) => new Set(prev).add(displayPath));
+        try {
+          const fd = new FormData();
+          // Use path as filename to preserve folder structure (e.g. "references/guide.md")
+          fd.append('file', droppedFile.file, droppedFile.path);
+          const updated = await uploadSkillAttachment(editingSkill.id, fd);
+          setAttachments(updated.file_attachments || []);
+        } catch (error: any) {
+          console.error(`Error uploading ${displayPath}:`, error);
+          toast.error(`Failed to upload ${displayPath}: ${error.message}`);
+        } finally {
+          setUploadingFiles((prev) => {
+            const next = new Set(prev);
+            next.delete(displayPath);
+            return next;
+          });
+        }
+      }
+    } else {
+      // Creating: queue files for upload after save
+      setPendingFiles((prev) => {
+        const existing = new Set(prev.map((f) => f.path));
+        const newFiles = files.filter((f) => !existing.has(f.path));
+        return [...prev, ...newFiles];
+      });
+    }
+  }
+
+  async function handleRemoveAttachment(filename: string) {
+    if (editingSkill) {
+      try {
+        const updated = await removeSkillAttachment(editingSkill.id, filename);
+        setAttachments(updated.file_attachments || []);
+      } catch (error: any) {
+        console.error('Error removing attachment:', error);
+        toast.error(error.message || 'Failed to remove attachment');
+      }
+    } else {
+      // Remove from pending queue (match by path to support folder structure)
+      setPendingFiles((prev) => prev.filter((f) => f.path !== filename));
+    }
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
   }
 
   const getCategoryById = (id: string) => categories.find((c) => c.id === id);
@@ -225,11 +328,13 @@ export default function SkillsPage() {
             return (
               <div
                 key={skill.id}
-                className={`border rounded-lg p-4 ${
+                className={cn(
+                  'border rounded-lg p-4',
                   skill.is_active
                     ? 'bg-white dark:bg-gray-800'
-                    : 'bg-gray-50 dark:bg-gray-900 opacity-60'
-                }`}
+                    : 'bg-gray-50 dark:bg-gray-900 opacity-60',
+                  deletingId === skill.id && 'animate-deleting',
+                )}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
@@ -324,6 +429,11 @@ export default function SkillsPage() {
                     <details className="text-sm text-gray-700 dark:text-gray-300">
                       <summary className="cursor-pointer text-blue-600 hover:underline">
                         View Instructions
+                        {(skill.file_attachments?.length || 0) > 0 && (
+                          <span className="ml-2 text-xs text-gray-400">
+                            + {skill.file_attachments!.length} reference file{skill.file_attachments!.length > 1 ? 's' : ''}
+                          </span>
+                        )}
                       </summary>
                       <pre className="mt-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-md overflow-x-auto whitespace-pre-wrap">
                         {skill.instructions}
@@ -356,7 +466,7 @@ export default function SkillsPage() {
                       <Edit className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleDelete(skill.id)}
+                      onClick={() => setDeleteTarget({ id: skill.id, name: skill.name })}
                       className="p-2 text-gray-500 hover:text-red-600"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -384,7 +494,8 @@ export default function SkillsPage() {
             </div>
 
             {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+              {/* Name & Description — always visible */}
               <div>
                 <label className="block text-sm font-medium mb-1">Name *</label>
                 <input
@@ -407,15 +518,153 @@ export default function SkillsPage() {
                 />
               </div>
 
+              {/* Tabs */}
               <div>
-                <label className="block text-sm font-medium mb-1">Instructions *</label>
-                <textarea
-                  value={formData.instructions}
-                  onChange={(e) => setFormData({ ...formData, instructions: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 font-mono text-sm"
-                  rows={15}
-                  placeholder="When reviewing code, check for:&#10;1. Security vulnerabilities&#10;2. Performance bottlenecks&#10;3. Clean code principles..."
-                />
+                <div className="flex border-b">
+                  <button
+                    onClick={() => setActiveTab('write')}
+                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === 'write'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
+                  >
+                    <PenLine className="w-4 h-4" />
+                    Write
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('import')}
+                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === 'import'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
+                  >
+                    <FolderUp className="w-4 h-4" />
+                    Import
+                  </button>
+                </div>
+
+                {/* Write Tab */}
+                {activeTab === 'write' && (
+                  <div className="pt-4">
+                    <label className="block text-sm font-medium mb-1">Instructions *</label>
+                    <textarea
+                      value={formData.instructions}
+                      onChange={(e) => setFormData({ ...formData, instructions: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 font-mono text-sm"
+                      rows={15}
+                      placeholder="When reviewing code, check for:&#10;1. Security vulnerabilities&#10;2. Performance bottlenecks&#10;3. Clean code principles..."
+                    />
+                  </div>
+                )}
+
+                {/* Import Tab */}
+                {activeTab === 'import' && (
+                  <div className="pt-4 space-y-3">
+                    <FileDropZone
+                      onFilesDropped={handleFilesDropped}
+                      onMainContent={(content) => setFormData((prev) => ({ ...prev, instructions: content }))}
+                      mainFileName="SKILL.md"
+                      disabled={uploadingFiles.size > 0}
+                      className="py-10"
+                    />
+
+                    {formData.instructions && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 text-sm text-green-700 dark:text-green-300">
+                        <PenLine className="w-4 h-4 flex-shrink-0" />
+                        Instructions loaded ({formData.instructions.length} chars)
+                      </div>
+                    )}
+
+                    {/* Uploaded attachments (editing existing skill) */}
+                    {(attachments.length > 0 || uploadingFiles.size > 0) && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Uploaded Files</p>
+                        <div className="space-y-1">
+                          {attachments.map((att) => (
+                            <div
+                              key={att.name}
+                              className="flex items-center justify-between px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                <span className="truncate">{att.name}</span>
+                                <span className="text-xs text-gray-400 flex-shrink-0">
+                                  {formatFileSize(att.size)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                                <a
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1 text-gray-400 hover:text-blue-500"
+                                  title="Download"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </a>
+                                <button
+                                  onClick={() => handleRemoveAttachment(att.name)}
+                                  className="p-1 text-gray-400 hover:text-red-500"
+                                  title="Remove"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {[...uploadingFiles].map((name) => (
+                            <div
+                              key={name}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm text-gray-400"
+                            >
+                              <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                              <span className="truncate">Uploading {name}...</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Pending files (creating new skill) */}
+                    {pendingFiles.length > 0 && (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 mb-1">
+                          Queued Files (will upload on save)
+                        </p>
+                        <div className="space-y-1">
+                          {pendingFiles.map((f) => (
+                            <div
+                              key={f.path}
+                              className="flex items-center justify-between px-3 py-1.5 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-sm"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <FileText className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                                <span className="truncate">{f.path}</span>
+                                <span className="text-xs text-gray-400 flex-shrink-0">
+                                  {formatFileSize(f.file.size)}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => handleRemoveAttachment(f.path)}
+                                className="p-1 text-gray-400 hover:text-red-500 flex-shrink-0"
+                                title="Remove"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <p className="text-xs text-gray-400">
+                      Drop a skill folder — SKILL.md fills instructions, other files become references.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -451,6 +700,15 @@ export default function SkillsPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+        onConfirm={confirmDeleteSkill}
+        title="Delete skill?"
+        description={`This will permanently delete "${deleteTarget?.name || ''}" and its reference files.`}
+        loading={deleteLoading}
+      />
     </div>
   );
 }

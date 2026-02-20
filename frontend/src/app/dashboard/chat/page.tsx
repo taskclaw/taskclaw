@@ -27,6 +27,9 @@ import {
   updateConversationTitle as updateTitleAction,
 } from './actions';
 import { getAiProviderConfig } from '@/app/dashboard/settings/ai-provider/actions';
+import { toast } from 'sonner';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
+import { cn } from '@/lib/utils';
 
 interface Conversation {
   id: string;
@@ -63,6 +66,9 @@ export default function ChatPage() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [aiConfigured, setAiConfigured] = useState<boolean | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Load conversations and check AI config on mount
   useEffect(() => {
@@ -180,23 +186,31 @@ export default function ChatPage() {
     }
   };
 
-  const deleteConversation = async (conversationId: string) => {
-    if (!confirm('Delete this conversation? This cannot be undone.')) return;
-
+  const confirmDeleteConversation = async () => {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
     try {
-      const result = await deleteConversationAction(conversationId);
+      const result = await deleteConversationAction(deleteTarget);
 
       if (result.error) {
-        alert('Failed to delete conversation: ' + result.error);
-        return;
-      }
-
-      setConversations(conversations.filter((c) => c.id !== conversationId));
-      if (currentConversation?.id === conversationId) {
-        setCurrentConversation(conversations[0] || null);
+        toast.error('Failed to delete conversation: ' + result.error);
+      } else {
+        setDeleteTarget(null);
+        setDeletingId(deleteTarget);
+        setTimeout(() => {
+          setConversations((prev) => prev.filter((c) => c.id !== deleteTarget));
+          if (currentConversation?.id === deleteTarget) {
+            setCurrentConversation(conversations.find((c) => c.id !== deleteTarget) || null);
+          }
+          setDeletingId(null);
+          toast.success('Conversation deleted');
+        }, 500);
       }
     } catch (error) {
       console.error('Failed to delete conversation:', error);
+      toast.error('Failed to delete conversation');
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -243,11 +257,11 @@ export default function ChatPage() {
                 <button
                   key={conv.id}
                   onClick={() => setCurrentConversation(conv)}
-                  className={`w-full text-left p-3 rounded-lg hover:bg-accent transition-colors ${
-                    currentConversation?.id === conv.id
-                      ? 'bg-accent border border-accent-foreground/20'
-                      : ''
-                  }`}
+                  className={cn(
+                    'w-full text-left p-3 rounded-lg hover:bg-accent transition-colors',
+                    currentConversation?.id === conv.id && 'bg-accent border border-accent-foreground/20',
+                    deletingId === conv.id && 'animate-deleting',
+                  )}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
@@ -269,7 +283,7 @@ export default function ChatPage() {
                       className="h-6 w-6 p-0"
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteConversation(conv.id);
+                        setDeleteTarget(conv.id);
                       }}
                     >
                       <Trash2 className="h-3 w-3" />
@@ -280,6 +294,15 @@ export default function ChatPage() {
             )}
           </div>
         </ScrollArea>
+
+        <ConfirmDeleteDialog
+          open={!!deleteTarget}
+          onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+          onConfirm={confirmDeleteConversation}
+          title="Delete conversation?"
+          description="This conversation and all its messages will be permanently deleted."
+          loading={deleteLoading}
+        />
       </div>
 
       {/* Main Chat Area */}

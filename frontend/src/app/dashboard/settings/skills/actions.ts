@@ -13,6 +13,11 @@ async function getAuthHeaders() {
   };
 }
 
+async function getAuthToken(): Promise<string | undefined> {
+  const cookieStore = await cookies();
+  return cookieStore.get('auth_token')?.value;
+}
+
 async function getCurrentAccountId(): Promise<string | null> {
   const cookieStore = await cookies();
   const accountId = cookieStore.get('current_account_id')?.value;
@@ -238,6 +243,64 @@ export async function unlinkSkillFromCategory(skillId: string, categoryId: strin
     return await response.json();
   } catch (error) {
     console.error('Error unlinking skill from category:', error);
+    throw error;
+  }
+}
+
+export async function uploadSkillAttachment(skillId: string, formData: FormData) {
+  try {
+    const accountId = await getCurrentAccountId();
+    if (!accountId) {
+      throw new Error('No account ID found');
+    }
+
+    const token = await getAuthToken();
+    const response = await fetch(
+      `${API_URL}/accounts/${accountId}/skills/${skillId}/attachments`,
+      {
+        method: 'POST',
+        headers: {
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: formData,
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Failed to upload attachment');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error uploading skill attachment:', error);
+    throw error;
+  }
+}
+
+export async function removeSkillAttachment(skillId: string, filename: string) {
+  try {
+    const accountId = await getCurrentAccountId();
+    if (!accountId) {
+      throw new Error('No account ID found');
+    }
+
+    const response = await fetch(
+      `${API_URL}/accounts/${accountId}/skills/${skillId}/attachments/${encodeURIComponent(filename)}`,
+      {
+        method: 'DELETE',
+        headers: await getAuthHeaders(),
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Failed to remove attachment');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error removing skill attachment:', error);
     throw error;
   }
 }

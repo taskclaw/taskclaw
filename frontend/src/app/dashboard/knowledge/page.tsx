@@ -20,10 +20,13 @@ import {
   X,
   FileText,
   Paperclip,
-  Upload,
   File,
-  Loader2,
+  Download,
 } from 'lucide-react';
+import { FileDropZone, type DroppedFile } from '@/components/ui/file-drop-zone';
+import { toast } from 'sonner';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
+import { cn } from '@/lib/utils';
 
 interface FileAttachment {
   name: string;
@@ -65,7 +68,12 @@ export default function KnowledgePage() {
   });
   const [showPreview, setShowPreview] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
-  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [removeAttTarget, setRemoveAttTarget] = useState<string | null>(null);
+  const [removeAttLoading, setRemoveAttLoading] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -82,7 +90,7 @@ export default function KnowledgePage() {
       setCategories(categoriesData);
     } catch (error) {
       console.error('Error loading data:', error);
-      alert('Failed to load knowledge base');
+      toast.error('Failed to load knowledge base');
     } finally {
       setLoading(false);
     }
@@ -121,7 +129,7 @@ export default function KnowledgePage() {
   async function handleSave() {
     try {
       if (!formData.title.trim()) {
-        alert('Title is required');
+        toast.error('Title is required');
         return;
       }
 
@@ -142,7 +150,7 @@ export default function KnowledgePage() {
       cancelEdit();
     } catch (error: any) {
       console.error('Error saving doc:', error);
-      alert(error.message || 'Failed to save doc');
+      toast.error(error.message || 'Failed to save doc');
     }
   }
 
@@ -152,77 +160,72 @@ export default function KnowledgePage() {
       await loadData();
     } catch (error: any) {
       console.error('Error setting master:', error);
-      alert(error.message || 'Failed to set as master doc');
+      toast.error(error.message || 'Failed to set as master doc');
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this document?')) {
-      return;
-    }
-
+  async function confirmDeleteDoc() {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
     try {
-      await deleteKnowledgeDoc(id);
-      await loadData();
+      await deleteKnowledgeDoc(deleteTarget);
+      setDeleteTarget(null);
+      setDeletingId(deleteTarget);
+      setTimeout(() => {
+        setDocs((prev) => prev.filter((d) => d.id !== deleteTarget));
+        setDeletingId(null);
+        toast.success('Document deleted');
+      }, 500);
     } catch (error: any) {
       console.error('Error deleting doc:', error);
-      alert(error.message || 'Failed to delete doc');
-    }
-  }
-
-  async function handleUploadAttachment(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !editingDoc) return;
-
-    // Reset the input so the same file can be re-selected
-    e.target.value = '';
-
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      alert('File is too large. Maximum size is 10MB.');
-      return;
-    }
-
-    const allowedExtensions = [
-      'pdf', 'txt', 'md', 'doc', 'docx', 'csv', 'json', 'png', 'jpg', 'jpeg',
-    ];
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (!ext || !allowedExtensions.includes(ext)) {
-      alert(`File type not allowed. Allowed types: ${allowedExtensions.join(', ')}`);
-      return;
-    }
-
-    try {
-      setUploadingFile(true);
-      const fd = new FormData();
-      fd.append('file', file);
-      const updatedDoc = await uploadAttachment(editingDoc.id, fd);
-      setAttachments(updatedDoc.file_attachments || []);
-      // Also update the doc in the list
-      setDocs((prev) =>
-        prev.map((d) => (d.id === editingDoc.id ? { ...d, file_attachments: updatedDoc.file_attachments } : d)),
-      );
-    } catch (error: any) {
-      console.error('Error uploading attachment:', error);
-      alert(error.message || 'Failed to upload attachment');
+      toast.error(error.message || 'Failed to delete doc');
     } finally {
-      setUploadingFile(false);
+      setDeleteLoading(false);
     }
   }
 
-  async function handleRemoveAttachment(filename: string) {
+  async function handleFilesDropped(files: DroppedFile[]) {
     if (!editingDoc) return;
-    if (!confirm(`Remove attachment "${filename}"?`)) return;
+    for (const droppedFile of files) {
+      const name = droppedFile.name;
+      setUploadingFiles((prev) => new Set(prev).add(name));
+      try {
+        const fd = new FormData();
+        fd.append('file', droppedFile.file);
+        const updatedDoc = await uploadAttachment(editingDoc.id, fd);
+        setAttachments(updatedDoc.file_attachments || []);
+        setDocs((prev) =>
+          prev.map((d) => (d.id === editingDoc.id ? { ...d, file_attachments: updatedDoc.file_attachments } : d)),
+        );
+      } catch (error: any) {
+        console.error(`Error uploading ${name}:`, error);
+        toast.error(`Failed to upload ${name}: ${error.message}`);
+      } finally {
+        setUploadingFiles((prev) => {
+          const next = new Set(prev);
+          next.delete(name);
+          return next;
+        });
+      }
+    }
+  }
 
+  async function confirmRemoveAttachment() {
+    if (!editingDoc || !removeAttTarget) return;
+    setRemoveAttLoading(true);
     try {
-      const updatedDoc = await removeAttachment(editingDoc.id, filename);
+      const updatedDoc = await removeAttachment(editingDoc.id, removeAttTarget);
       setAttachments(updatedDoc.file_attachments || []);
       setDocs((prev) =>
         prev.map((d) => (d.id === editingDoc.id ? { ...d, file_attachments: updatedDoc.file_attachments } : d)),
       );
+      setRemoveAttTarget(null);
+      toast.success('Attachment removed');
     } catch (error: any) {
       console.error('Error removing attachment:', error);
-      alert(error.message || 'Failed to remove attachment');
+      toast.error(error.message || 'Failed to remove attachment');
+    } finally {
+      setRemoveAttLoading(false);
     }
   }
 
@@ -305,7 +308,10 @@ export default function KnowledgePage() {
                 return (
                   <div
                     key={doc.id}
-                    className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-white dark:bg-gray-800"
+                    className={cn(
+                      'border rounded-lg p-4 hover:shadow-md transition-shadow bg-white dark:bg-gray-800',
+                      deletingId === doc.id && 'animate-deleting',
+                    )}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -358,7 +364,7 @@ export default function KnowledgePage() {
                           <Edit className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDelete(doc.id)}
+                          onClick={() => setDeleteTarget(doc.id)}
                           className="p-2 text-gray-500 hover:text-red-600"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -458,70 +464,60 @@ export default function KnowledgePage() {
             {/* Attachments Section (only shown when editing an existing doc) */}
             {editingDoc && (
               <div className="border-t px-4 py-4">
-                <div className="flex items-center justify-between mb-3">
-                  <label className="text-sm font-medium flex items-center gap-2">
-                    <Paperclip className="w-4 h-4" />
-                    Attachments
-                  </label>
-                  <label
-                    className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm border rounded-md cursor-pointer
-                      ${uploadingFile
-                        ? 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-700'
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-                      }`}
-                  >
-                    {uploadingFile ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Upload className="w-4 h-4" />
-                    )}
-                    {uploadingFile ? 'Uploading...' : 'Upload File'}
-                    <input
-                      type="file"
-                      className="hidden"
-                      onChange={handleUploadAttachment}
-                      disabled={uploadingFile}
-                      accept=".pdf,.txt,.md,.doc,.docx,.csv,.json,.png,.jpg,.jpeg"
-                    />
-                  </label>
-                </div>
-                <p className="text-xs text-gray-500 mb-3">
-                  Max 10MB. Allowed: pdf, txt, md, doc, docx, csv, json, png, jpg, jpeg
-                </p>
-                {attachments.length === 0 ? (
-                  <p className="text-sm text-gray-400 italic">No attachments yet.</p>
-                ) : (
-                  <ul className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2 mb-2">
+                  <Paperclip className="w-4 h-4" />
+                  Attachments
+                </label>
+                <FileDropZone
+                  onFilesDropped={handleFilesDropped}
+                  accept=".pdf,.txt,.md,.doc,.docx,.csv,.json,.png,.jpg,.jpeg"
+                  disabled={uploadingFiles.size > 0}
+                />
+                {(attachments.length > 0 || uploadingFiles.size > 0) && (
+                  <div className="mt-2 space-y-1">
                     {attachments.map((att) => (
-                      <li
+                      <div
                         key={att.name}
-                        className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded-md"
+                        className="flex items-center justify-between px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm"
                       >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <File className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                        <div className="flex items-center gap-2 min-w-0">
+                          <File className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          <span className="truncate">{att.name}</span>
+                          <span className="text-xs text-gray-400 flex-shrink-0">
+                            {formatFileSize(att.size)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                           <a
                             href={att.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-sm text-blue-600 dark:text-blue-400 hover:underline truncate"
-                            title={att.name}
+                            className="p-1 text-gray-400 hover:text-blue-500"
+                            title="Download"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            {att.name}
+                            <Download className="w-3.5 h-3.5" />
                           </a>
-                          <span className="text-xs text-gray-500 flex-shrink-0">
-                            {formatFileSize(att.size)}
-                          </span>
+                          <button
+                            onClick={() => setRemoveAttTarget(att.name)}
+                            className="p-1 text-gray-400 hover:text-red-500"
+                            title="Remove"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
-                        <button
-                          onClick={() => handleRemoveAttachment(att.name)}
-                          className="p-1 text-gray-400 hover:text-red-600 flex-shrink-0"
-                          title="Remove attachment"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </li>
+                      </div>
                     ))}
-                  </ul>
+                    {[...uploadingFiles].map((name) => (
+                      <div
+                        key={name}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm text-gray-400"
+                      >
+                        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                        <span className="truncate">Uploading {name}...</span>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
@@ -545,6 +541,25 @@ export default function KnowledgePage() {
           </div>
         </div>
       )}
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+        onConfirm={confirmDeleteDoc}
+        title="Delete document?"
+        description="This knowledge document will be permanently deleted."
+        loading={deleteLoading}
+      />
+
+      <ConfirmDeleteDialog
+        open={!!removeAttTarget}
+        onOpenChange={(open) => { if (!open) setRemoveAttTarget(null) }}
+        onConfirm={confirmRemoveAttachment}
+        title="Remove attachment?"
+        description={`Remove "${removeAttTarget || ''}" from this document?`}
+        confirmLabel="Remove"
+        loading={removeAttLoading}
+      />
     </div>
   );
 }

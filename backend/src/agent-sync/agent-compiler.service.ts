@@ -1,5 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { SupabaseService } from '../supabase/supabase.service';
 import { SkillsService } from '../skills/skills.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import * as crypto from 'crypto';
@@ -22,6 +23,7 @@ export class AgentCompilerService {
 
   constructor(
     private readonly supabaseAdmin: SupabaseAdminService,
+    private readonly supabase: SupabaseService,
     @Inject(forwardRef(() => SkillsService))
     private readonly skillsService: SkillsService,
     @Inject(forwardRef(() => KnowledgeService))
@@ -81,7 +83,7 @@ export class AgentCompilerService {
 
     // 5. Build the SKILL.md content
     const categorySlug = this.slugify(category.name);
-    const content = this.buildSkillMd(category.name, categorySlug, skills, masterDoc);
+    const content = await this.buildSkillMd(accountId, category.name, categorySlug, skills, masterDoc);
     const hash = this.computeHash(content);
     const skillIds = skills.map((s: any) => s.id);
 
@@ -98,12 +100,13 @@ export class AgentCompilerService {
   /**
    * Build the SKILL.md markdown content.
    */
-  private buildSkillMd(
+  private async buildSkillMd(
+    accountId: string,
     categoryName: string,
     categorySlug: string,
     skills: any[],
     masterDoc: any | null,
-  ): string {
+  ): Promise<string> {
     const lines: string[] = [];
 
     // YAML frontmatter
@@ -129,6 +132,23 @@ export class AgentCompilerService {
           lines.push(skill.instructions);
         }
         lines.push('');
+
+        // Include text-based reference file content inline
+        const attachments = skill.file_attachments || [];
+        const textAttachments = attachments.filter((a: any) =>
+          /\.(md|txt|csv|json)$/i.test(a.name),
+        );
+
+        for (const att of textAttachments) {
+          const content = await this.fetchAttachmentContent(accountId, skill.id, att.name);
+          if (content) {
+            const refName = att.name.replace(/\.[^.]+$/, '');
+            lines.push(`#### Reference: ${refName}`);
+            lines.push('');
+            lines.push(content);
+            lines.push('');
+          }
+        }
       }
     }
 
@@ -143,6 +163,33 @@ export class AgentCompilerService {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Fetch text content of a skill attachment from Supabase Storage.
+   */
+  private async fetchAttachmentContent(
+    accountId: string,
+    skillId: string,
+    filename: string,
+  ): Promise<string | null> {
+    try {
+      const storagePath = `${accountId}/${skillId}/${filename}`;
+      const adminClient = this.supabase.getAdminClient();
+      const { data, error } = await adminClient.storage
+        .from('skill-attachments')
+        .download(storagePath);
+
+      if (error || !data) {
+        this.logger.warn(`Failed to download attachment ${storagePath}: ${error?.message}`);
+        return null;
+      }
+
+      return await data.text();
+    } catch (err: any) {
+      this.logger.warn(`Error fetching attachment content: ${err.message}`);
+      return null;
+    }
   }
 
   /**

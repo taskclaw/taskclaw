@@ -39,6 +39,9 @@ import {
     getCategories, createCategory, updateCategory, deleteCategory,
     getSources, updateSource, getSourceProperties,
 } from './actions'
+import { toast } from 'sonner'
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
+import { cn } from '@/lib/utils'
 import { getSkills, getSkillsForCategory, getCategorySkillsMap, linkSkillToCategory, unlinkSkillFromCategory } from '../skills/actions'
 import { getAgentSyncStatus, triggerSync, type SyncStatusDetail } from '../agent-sync/actions'
 import { getKnowledgeDocs } from '../../knowledge/actions'
@@ -182,6 +185,9 @@ export default function CategoriesPage() {
     const [editingCategory, setEditingCategory] = useState<Category | null>(null)
     const [filterSourceId, setFilterSourceId] = useState<string | null>(null)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+    const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+    const [deleteLoading, setDeleteLoading] = useState(false)
+    const [deletingId, setDeletingId] = useState<string | null>(null)
 
     // Background-loaded data (non-blocking)
     const [syncDetails, setSyncDetails] = useState<Map<string, SyncStatusDetail>>(new Map())
@@ -271,7 +277,7 @@ export default function CategoriesPage() {
         }
     }
 
-    const handleDelete = async (catId: string) => {
+    const requestDelete = (catId: string) => {
         const linkedSources = sources.filter((s) => s.category_id === catId)
         if (linkedSources.length > 0) {
             setAlert({
@@ -280,18 +286,34 @@ export default function CategoriesPage() {
             })
             return
         }
-        if (!confirm('Delete this category? Tasks in this category will lose their assignment.')) return
-        const result = await deleteCategory(catId)
-        if (result.error) {
-            setAlert({ type: 'error', message: result.error })
-        } else {
-            setAlert({ type: 'success', message: 'Category deleted.' })
-            setCategories((prev) => prev.filter((c) => c.id !== catId))
-            setCategorySkills((prev) => {
-                const next = new Map(prev)
-                next.delete(catId)
-                return next
-            })
+        setDeleteTarget(catId)
+    }
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return
+        setDeleteLoading(true)
+        try {
+            const result = await deleteCategory(deleteTarget)
+            if (result.error) {
+                toast.error(result.error)
+            } else {
+                setDeleteTarget(null)
+                setDeletingId(deleteTarget)
+                setTimeout(() => {
+                    setCategories((prev) => prev.filter((c) => c.id !== deleteTarget))
+                    setCategorySkills((prev) => {
+                        const next = new Map(prev)
+                        next.delete(deleteTarget)
+                        return next
+                    })
+                    setDeletingId(null)
+                    toast.success('Category deleted')
+                }, 500)
+            }
+        } catch (e: any) {
+            toast.error(e.message || 'Failed to delete category')
+        } finally {
+            setDeleteLoading(false)
         }
     }
 
@@ -397,8 +419,9 @@ export default function CategoriesPage() {
                             syncDetail={syncDetails.get(cat.id)}
                             isLinking={linkingCategory === cat.id}
                             onToggleVisibility={() => handleToggleVisibility(cat)}
+                            isAnimatingDelete={deletingId === cat.id}
                             onEdit={() => openEditDialog(cat)}
-                            onDelete={() => handleDelete(cat.id)}
+                            onDelete={() => requestDelete(cat.id)}
                             onConfigureFilters={(sourceId) => setFilterSourceId(sourceId)}
                             onLinkSkill={(skillId) => handleLinkSkill(cat.id, skillId)}
                             onUnlinkSkill={(skillId) => handleUnlinkSkill(cat.id, skillId)}
@@ -467,6 +490,15 @@ export default function CategoriesPage() {
                     }}
                 />
             )}
+
+            <ConfirmDeleteDialog
+                open={!!deleteTarget}
+                onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+                onConfirm={confirmDelete}
+                title="Delete category?"
+                description="Tasks in this category will lose their assignment."
+                loading={deleteLoading}
+            />
         </div>
     )
 }
@@ -493,7 +525,7 @@ function SyncBadge({ status }: { status?: string }) {
 
 function CategoryCard({
     category, linkedSources, sharedSources, linkedSkills, allSkills,
-    syncDetail, isLinking, onToggleVisibility, onEdit, onDelete,
+    syncDetail, isLinking, isAnimatingDelete, onToggleVisibility, onEdit, onDelete,
     onConfigureFilters, onLinkSkill, onUnlinkSkill, onToggleLinking, onSync,
 }: {
     category: Category
@@ -503,6 +535,7 @@ function CategoryCard({
     allSkills: Skill[]
     syncDetail?: SyncStatusDetail
     isLinking: boolean
+    isAnimatingDelete: boolean
     onToggleVisibility: () => void
     onEdit: () => void
     onDelete: () => void
@@ -525,7 +558,7 @@ function CategoryCard({
     }
 
     return (
-        <Card className={!category.visible ? 'opacity-60' : ''}>
+        <Card className={cn(!category.visible && 'opacity-60', isAnimatingDelete && 'animate-deleting')}>
             <CardContent className="py-4">
                 <div className="flex items-center gap-4">
                     {/* Color indicator */}

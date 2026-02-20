@@ -8,10 +8,14 @@ import {
   Delete,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
   Request,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { SkillsService } from './skills.service';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
@@ -46,6 +50,42 @@ export class SkillsController {
     @Param('categoryId') categoryId: string,
   ) {
     return this.skillsService.findDefaultForCategory(req.accessToken, accountId, categoryId);
+  }
+
+  @Post(':id/attachments')
+  @UseInterceptors(FileInterceptor('file'))
+  @HttpCode(HttpStatus.OK)
+  uploadAttachment(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') skillId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+    return this.skillsService.uploadAttachment(
+      req.accessToken,
+      accountId,
+      skillId,
+      file,
+    );
+  }
+
+  @Delete(':id/attachments/:filename')
+  @HttpCode(HttpStatus.OK)
+  removeAttachment(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') skillId: string,
+    @Param('filename') filename: string,
+  ) {
+    return this.skillsService.removeAttachment(
+      req.accessToken,
+      accountId,
+      skillId,
+      filename,
+    );
   }
 
   @Get(':id')
