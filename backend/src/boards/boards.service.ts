@@ -83,7 +83,7 @@ export class BoardsService {
 
     const { data, error } = await client
       .from('board_instances')
-      .select('*, board_steps(id, step_key, name, step_type, position, color, linked_category_id, trigger_type, ai_first, input_schema, output_schema, on_success_step_id, on_error_step_id, linked_category:categories!linked_category_id(id, name, color, icon))')
+      .select('*, board_steps(id, step_key, name, step_type, position, color, linked_category_id, trigger_type, ai_first, input_schema, output_schema, on_success_step_id, on_error_step_id, webhook_url, webhook_auth_header, schedule_cron, system_prompt, linked_category:categories!linked_category_id(id, name, color, icon))')
       .eq('id', boardId)
       .eq('account_id', accountId)
       .single();
@@ -254,7 +254,7 @@ export class BoardsService {
       throw new Error(`Failed to duplicate board: ${error.message}`);
     }
 
-    // Copy steps
+    // Copy steps (including rich config)
     if (original.board_steps && original.board_steps.length > 0) {
       const stepRows = original.board_steps.map((step: any) => ({
         board_instance_id: copy.id,
@@ -264,6 +264,14 @@ export class BoardsService {
         position: step.position,
         color: step.color,
         linked_category_id: step.linked_category_id || null,
+        trigger_type: step.trigger_type || 'on_entry',
+        ai_first: step.ai_first || false,
+        input_schema: step.input_schema || [],
+        output_schema: step.output_schema || [],
+        webhook_url: step.webhook_url || null,
+        webhook_auth_header: step.webhook_auth_header || null,
+        schedule_cron: step.schedule_cron || null,
+        system_prompt: step.system_prompt || null,
       }));
 
       await client.from('board_steps').insert(stepRows);
@@ -273,7 +281,60 @@ export class BoardsService {
   }
 
   async exportManifest(userId: string, accountId: string, boardId: string) {
+    const client = this.supabaseAdmin.getClient();
     const board = await this.findOne(userId, accountId, boardId);
+
+    // Collect unique linked category IDs
+    const categoryIds = [
+      ...new Set(
+        (board.board_steps || [])
+          .map((s: any) => s.linked_category_id)
+          .filter(Boolean),
+      ),
+    ];
+
+    // Fetch full category data: skills + knowledge docs
+    const categoriesMap: Record<string, any> = {};
+    if (categoryIds.length > 0) {
+      // Fetch categories with skills
+      const { data: cats } = await client
+        .from('categories')
+        .select('id, name, color, icon, category_skills(skill:skills(id, name, description, instructions, is_active, file_attachments))')
+        .in('id', categoryIds);
+
+      // Fetch knowledge docs for these categories
+      const { data: knowledgeDocs } = await client
+        .from('knowledge_docs')
+        .select('id, category_id, title, content, is_master, file_attachments')
+        .in('category_id', categoryIds);
+
+      if (cats) {
+        for (const cat of cats) {
+          categoriesMap[cat.id] = {
+            id: cat.id,
+            name: cat.name,
+            color: cat.color,
+            icon: cat.icon,
+            skills: (cat.category_skills || []).map((cs: any) => cs.skill).filter(Boolean),
+            knowledge_docs: (knowledgeDocs || [])
+              .filter((d: any) => d.category_id === cat.id)
+              .map((d: any) => ({
+                id: d.id,
+                title: d.title,
+                content: d.content,
+                is_master: d.is_master,
+                file_attachments: d.file_attachments,
+              })),
+          };
+        }
+      }
+    }
+
+    // Build step-level on_success/on_error references using step_key instead of UUID
+    const stepIdToKey: Record<string, string> = {};
+    (board.board_steps || []).forEach((s: any) => {
+      stepIdToKey[s.id] = s.step_key;
+    });
 
     const manifest = {
       manifest_version: '1.0',
@@ -284,8 +345,8 @@ export class BoardsService {
       icon: board.icon,
       color: board.color,
       tags: board.tags,
-      required_tools: [],
       settings: board.settings_override || {},
+      categories: Object.values(categoriesMap),
       steps: (board.board_steps || []).map((step: any) => ({
         id: step.step_key,
         name: step.name,
@@ -294,8 +355,16 @@ export class BoardsService {
         color: step.color,
         linked_category_id: step.linked_category_id || null,
         linked_category_name: step.linked_category?.name || null,
-        ai_config: { enabled: !!step.linked_category_id },
-        fields: { inputs: [], outputs: [] },
+        trigger_type: step.trigger_type || 'on_entry',
+        ai_first: step.ai_first || false,
+        system_prompt: step.system_prompt || null,
+        input_schema: step.input_schema || [],
+        output_schema: step.output_schema || [],
+        on_success: step.on_success_step_id ? stepIdToKey[step.on_success_step_id] || null : null,
+        on_error: step.on_error_step_id ? stepIdToKey[step.on_error_step_id] || null : null,
+        webhook_url: step.webhook_url || null,
+        webhook_auth_header: step.webhook_auth_header || null,
+        schedule_cron: step.schedule_cron || null,
       })),
     };
 

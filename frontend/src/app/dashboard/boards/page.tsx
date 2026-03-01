@@ -23,6 +23,7 @@ import { CreateBoardDialog } from '@/components/boards/create-board-dialog'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
 import { ViewToggle } from '@/components/view-toggle'
 import type { Board } from '@/types/board'
+import { BoardIcon } from '@/lib/board-icon'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -310,7 +311,7 @@ export default function BoardsPage() {
                                                             color,
                                                         }}
                                                     >
-                                                        {board.icon || <LayoutGrid className="w-3.5 h-3.5" />}
+                                                        <BoardIcon name={board.icon} className="w-3.5 h-3.5" />
                                                     </div>
                                                     <div className="min-w-0">
                                                         <div className="flex items-center gap-1.5">

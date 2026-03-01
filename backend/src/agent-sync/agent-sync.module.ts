@@ -17,6 +17,6 @@ import { SkillsModule } from '../skills/skills.module';
   ],
   controllers: [AgentSyncController],
   providers: [AgentSyncService, AgentCompilerService, OpenClawRpcClient],
-  exports: [AgentSyncService],
+  exports: [AgentSyncService, OpenClawRpcClient],
 })
 export class AgentSyncModule {}

@@ -91,6 +91,8 @@ export function BoardKanbanView({ board, categories }: BoardKanbanViewProps) {
                             <BoardKanbanColumn
                                 key={step.id}
                                 step={step}
+                                allSteps={steps}
+                                boardId={board.id}
                                 tasks={getTasksByStep(step.id) as Task[]}
                                 categories={categories}
                                 onAddTask={() => setShowNewTask(step)}

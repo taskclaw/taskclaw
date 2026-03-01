@@ -35,6 +35,8 @@ import {
     validateSource, listNotionDatabases, listClickUpWorkspaces,
     getCategories,
 } from './actions'
+import { getAiProviderConfig } from '../ai-provider/actions'
+import { CommToolsSection } from '@/components/settings/comm-tools-section'
 
 // ============================================================================
 // Types
@@ -115,12 +117,18 @@ export default function IntegrationsPage() {
     const [deleteLoading, setDeleteLoading] = useState(false)
     const [deletingId, setDeletingId] = useState<string | null>(null)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+    const [openClawConnected, setOpenClawConnected] = useState(false)
 
     const loadData = useCallback(async () => {
         setLoading(true)
-        const [srcData, catData] = await Promise.all([getSources(), getCategories()])
+        const [srcData, catData, aiConfig] = await Promise.all([
+            getSources(),
+            getCategories(),
+            getAiProviderConfig(),
+        ])
         setSources(srcData)
         setCategories(catData)
+        setOpenClawConnected(!!aiConfig?.verified_at)
         setLoading(false)
     }, [])
 
@@ -239,6 +247,16 @@ export default function IntegrationsPage() {
                     </CardContent>
                 </Card>
             )}
+
+            {/* Communication Tools */}
+            <div className="mb-8">
+                <h2 className="text-lg font-semibold mb-1">Communication Tools</h2>
+                <p className="text-sm text-muted-foreground mb-4">
+                    Declare which communication tools are available in your OpenClaw instance.
+                    The AI will check availability before attempting communication tasks.
+                </p>
+                <CommToolsSection openClawConnected={openClawConnected} />
+            </div>
 
             {/* Available Integrations */}
             <h2 className="text-lg font-semibold mb-4">Available Integrations</h2>

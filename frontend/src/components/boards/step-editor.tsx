@@ -320,7 +320,7 @@ export function StepEditor({ boardId, steps }: StepEditorProps) {
                             {step.linked_category && (
                                 <div className="ml-10 flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
                                     <Sparkles className="w-3 h-3" />
-                                    Inherits skills, knowledge & prompt from
+                                    Inherits skills & knowledge from
                                     <span className="text-primary/70 font-medium">{step.linked_category.name}</span>
                                 </div>
                             )}

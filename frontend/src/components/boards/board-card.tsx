@@ -21,6 +21,7 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { Board } from '@/types/board'
+import { BoardIcon } from '@/lib/board-icon'
 import { cn } from '@/lib/utils'
 
 interface BoardCardProps {
@@ -78,7 +79,7 @@ export function BoardCard({
                                 color: color,
                             }}
                         >
-                            {board.icon || <LayoutGrid className="w-4 h-4" />}
+                            <BoardIcon name={board.icon} className="w-4 h-4" />
                         </div>
                         <div className="min-w-0">
                             <h3 className="text-sm font-semibold truncate">{board.name}</h3>

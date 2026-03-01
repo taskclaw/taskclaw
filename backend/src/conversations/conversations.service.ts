@@ -13,6 +13,7 @@ import { KnowledgeService } from '../knowledge/knowledge.service';
 import { SkillsService } from '../skills/skills.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
+import { CommToolsService } from '../comm-tools/comm-tools.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
@@ -31,6 +32,7 @@ export class ConversationsService {
     private readonly skillsService: SkillsService,
     private readonly notionAdapter: NotionAdapter,
     private readonly agentSyncService: AgentSyncService,
+    private readonly commToolsService: CommToolsService,
   ) {}
 
   /**
@@ -709,6 +711,36 @@ Current Context:
       }
       prompt += `\nThe user is asking for help with this specific task. Provide relevant, actionable advice.\n`;
       prompt += `When you produce findings or insights, the user can save them directly to the task card.\n`;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // COMMUNICATION TOOLS AVAILABILITY
+    // ═══════════════════════════════════════════════════════════
+    try {
+      const availableTools = await this.commToolsService.getAvailableTools(
+        conversation.account_id,
+      );
+      const allTools = ['telegram', 'whatsapp', 'slack'];
+      const unavailable = allTools.filter((t) => !availableTools.includes(t));
+
+      if (availableTools.length > 0) {
+        prompt += `\n\n=== AVAILABLE COMMUNICATION TOOLS ===\n`;
+        prompt += `These communication tools are confirmed available and healthy:\n`;
+        availableTools.forEach((t) => {
+          prompt += `- ${t}\n`;
+        });
+        prompt += `You may use these tools when the user requests communication actions.\n`;
+      }
+
+      if (unavailable.length > 0) {
+        prompt += `\n=== UNAVAILABLE COMMUNICATION TOOLS ===\n`;
+        prompt += `Do NOT attempt to use these tools. If the user asks, explain they are not configured and suggest setting them up in Settings > Integrations:\n`;
+        unavailable.forEach((t) => {
+          prompt += `- ${t}\n`;
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to fetch comm tools for prompt: ${error.message}`);
     }
 
     return prompt;

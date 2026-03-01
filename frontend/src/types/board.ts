@@ -53,6 +53,7 @@ export interface BoardStep {
   webhook_url: string | null
   webhook_auth_header: string | null
   schedule_cron: string | null
+  system_prompt: string | null
   task_count?: number
   created_at: string
   updated_at: string

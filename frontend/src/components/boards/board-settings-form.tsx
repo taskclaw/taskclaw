@@ -8,11 +8,20 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { BoardIcon } from '@/lib/board-icon'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 
 const PRESET_COLORS = [
     '#6366f1', '#8b5cf6', '#ec4899', '#ef4444',
     '#f97316', '#eab308', '#22c55e', '#06b6d4',
+]
+
+const PRESET_ICONS = [
+    'layout-grid', 'kanban', 'list-checks', 'clipboard-list',
+    'briefcase', 'rocket', 'target', 'zap',
+    'heart', 'star', 'code', 'book-open',
+    'users', 'settings', 'shopping-cart', 'megaphone',
 ]
 
 interface BoardSettingsFormProps {
@@ -24,7 +33,7 @@ export function BoardSettingsForm({ board }: BoardSettingsFormProps) {
     const [name, setName] = useState(board.name)
     const [description, setDescription] = useState(board.description || '')
     const [color, setColor] = useState(board.color || PRESET_COLORS[0])
-    const [icon, setIcon] = useState(board.icon || '')
+    const [icon, setIcon] = useState(board.icon || 'layout-grid')
     const [tags, setTags] = useState(board.tags?.join(', ') || '')
 
     const handleSave = async () => {
@@ -80,39 +89,49 @@ export function BoardSettingsForm({ board }: BoardSettingsFormProps) {
                 />
             </div>
 
-            {/* Color + Icon */}
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
-                        Color
-                    </Label>
-                    <div className="flex flex-wrap gap-2">
-                        {PRESET_COLORS.map((c) => (
-                            <button
-                                key={c}
-                                type="button"
-                                onClick={() => setColor(c)}
-                                className="w-6 h-6 rounded-full border-2 transition-all"
-                                style={{
-                                    backgroundColor: c,
-                                    borderColor: color === c ? 'white' : 'transparent',
-                                    transform: color === c ? 'scale(1.2)' : 'scale(1)',
-                                }}
-                            />
-                        ))}
-                    </div>
+            {/* Color */}
+            <div>
+                <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Color
+                </Label>
+                <div className="flex flex-wrap gap-2">
+                    {PRESET_COLORS.map((c) => (
+                        <button
+                            key={c}
+                            type="button"
+                            onClick={() => setColor(c)}
+                            className="w-6 h-6 rounded-full border-2 transition-all"
+                            style={{
+                                backgroundColor: c,
+                                borderColor: color === c ? 'white' : 'transparent',
+                                transform: color === c ? 'scale(1.2)' : 'scale(1)',
+                            }}
+                        />
+                    ))}
                 </div>
+            </div>
 
-                <div>
-                    <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
-                        Icon (emoji)
-                    </Label>
-                    <Input
-                        value={icon}
-                        onChange={(e) => setIcon(e.target.value)}
-                        placeholder="e.g. 📋, 🚀, 🎯"
-                        maxLength={2}
-                    />
+            {/* Icon */}
+            <div>
+                <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Icon
+                </Label>
+                <div className="flex flex-wrap gap-2">
+                    {PRESET_ICONS.map((ic) => (
+                        <button
+                            key={ic}
+                            type="button"
+                            onClick={() => setIcon(ic)}
+                            className={cn(
+                                'w-8 h-8 rounded-lg flex items-center justify-center border transition-all',
+                                icon === ic
+                                    ? 'border-primary bg-primary/10 text-primary'
+                                    : 'border-border hover:border-muted-foreground/30 text-muted-foreground',
+                            )}
+                        >
+                            <BoardIcon name={ic} className="w-4 h-4" />
+                        </button>
+                    ))}
                 </div>
             </div>
 

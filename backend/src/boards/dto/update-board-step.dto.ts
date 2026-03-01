@@ -66,4 +66,10 @@ export class UpdateBoardStepDto {
   @IsOptional()
   @IsString()
   schedule_cron?: string | null;
+
+  // ─── System prompt ─────────────────────────────────────
+
+  @IsOptional()
+  @IsString()
+  system_prompt?: string | null;
 }

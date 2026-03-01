@@ -285,6 +285,7 @@ export async function updateBoardStep(
         webhook_url: string | null
         webhook_auth_header: string | null
         schedule_cron: string | null
+        system_prompt: string | null
     }>
 ): Promise<{ success?: boolean; step?: BoardStep; error?: string }> {
     const headers = await getAuthHeaders()
