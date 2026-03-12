@@ -20,6 +20,7 @@ import { Separator } from "@/components/ui/separator"
 import { Loader2, Trash2, Unlink, Shield, User, ShieldAlert } from "lucide-react"
 import { getAdminUserDetails, updateUserRole, deleteUser } from '../actions'
 import { toast } from "sonner"
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 
@@ -34,7 +35,8 @@ export function UserSheet({ userId, open, onOpenChange, onClose }: UserSheetProp
     const [user, setUser] = useState<any>(null)
     const [loading, setLoading] = useState(false)
     const [saving, setSaving] = useState(false)
-
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+    const [deleteLoading, setDeleteLoading] = useState(false)
 
     useEffect(() => {
         if (open && userId) {
@@ -70,18 +72,20 @@ export function UserSheet({ userId, open, onOpenChange, onClose }: UserSheetProp
     }
 
     const handleDelete = async () => {
-        if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) return
-
-        const res = await deleteUser(user.id)
-        if (res.error) {
-            toast.error("Error", {
-                description: res.error,
-            })
-        } else {
-            toast.success("Success", {
-                description: "User deleted successfully",
-            })
-            onClose()
+        setDeleteLoading(true)
+        try {
+            const res = await deleteUser(user.id)
+            if (res.error) {
+                toast.error("Error", { description: res.error })
+            } else {
+                toast.success("Success", { description: "User deleted successfully" })
+                setShowDeleteConfirm(false)
+                onClose()
+            }
+        } catch (error: any) {
+            toast.error(error.message || 'Failed to delete user')
+        } finally {
+            setDeleteLoading(false)
         }
     }
 
@@ -247,7 +251,7 @@ export function UserSheet({ userId, open, onOpenChange, onClose }: UserSheetProp
                                 <Button
                                     variant="ghost"
                                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                    onClick={handleDelete}
+                                    onClick={() => setShowDeleteConfirm(true)}
                                 >
                                     <Trash2 className="mr-2 h-4 w-4" /> Delete User
                                 </Button>
@@ -263,6 +267,15 @@ export function UserSheet({ userId, open, onOpenChange, onClose }: UserSheetProp
                     </>
                 )}
             </SheetContent>
+
+            <ConfirmDeleteDialog
+                open={showDeleteConfirm}
+                onOpenChange={setShowDeleteConfirm}
+                onConfirm={handleDelete}
+                title="Delete user?"
+                description="This action cannot be undone. The user will lose all access."
+                loading={deleteLoading}
+            />
         </Sheet>
     )
 }

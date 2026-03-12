@@ -206,6 +206,36 @@ export async function getCategories() {
   }
 }
 
+export async function getAttachmentContent(
+  docId: string,
+  filename: string,
+): Promise<{ content: string; filename: string }> {
+  try {
+    const accountId = await getCurrentAccountId();
+    if (!accountId) {
+      throw new Error('No account ID found');
+    }
+
+    const response = await fetch(
+      `${API_URL}/accounts/${accountId}/knowledge/${docId}/attachments/${encodeURIComponent(filename)}/content`,
+      {
+        headers: await getAuthHeaders(),
+        cache: 'no-store',
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Failed to fetch attachment content');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching attachment content:', error);
+    throw error;
+  }
+}
+
 export async function uploadAttachment(docId: string, formData: FormData) {
   try {
     const accountId = await getCurrentAccountId();

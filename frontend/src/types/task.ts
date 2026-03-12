@@ -14,6 +14,9 @@ export interface Task {
   external_id: string | null
   external_url: string | null
   account_id: string
+  current_step_id?: string
+  board_instance_id?: string
+  override_category_id?: string | null
   created_at: string
   updated_at: string
   metadata?: Record<string, any>
@@ -24,6 +27,13 @@ export interface Task {
   } | null
   // Joined from categories table
   categories?: {
+    id: string
+    name: string
+    color: string | null
+    icon: string | null
+  } | null
+  // Joined from override category
+  override_category?: {
     id: string
     name: string
     color: string | null
@@ -47,8 +57,8 @@ export const KANBAN_COLUMNS: TaskStatus[] = ['To-Do', 'Today', 'In Progress', 'A
 export const STATUS_COLORS: Record<string, string> = {
   'To-Do': '#71717a',
   Today: '#3b82f6',
-  'In Progress': '#f97316',
-  'AI Running': '#f59e0b',
+  'In Progress': '#F06050',
+  'AI Running': '#E63B3B',
   'In Review': '#a855f7',
   Done: '#22c55e',
 }

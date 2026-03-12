@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TaskClaw Template Marketplace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ec5b13",
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#221610",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Public Sans', sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100">
+<div class="flex min-h-screen">
+<!-- Sidebar -->
+<aside class="w-64 bg-[#221311] text-white flex flex-col fixed inset-y-0 left-0 z-50">
+<div class="p-6 flex items-center gap-3">
+<div class="size-10 bg-primary rounded-xl flex items-center justify-center">
+<span class="material-symbols-outlined text-white">architecture</span>
+</div>
+<div>
+<h1 class="font-bold text-lg leading-none">TaskClaw</h1>
+<p class="text-white/50 text-xs mt-1">Workspace Admin</p>
+</div>
+</div>
+<nav class="flex-1 px-4 py-4 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-white/70 hover:bg-white/10 rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="text-sm font-medium">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-white/70 hover:bg-white/10 rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">assignment</span>
+<span class="text-sm font-medium">Boards</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-white/70 hover:bg-white/10 rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">auto_fix</span>
+<span class="text-sm font-medium">Automations</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 bg-primary/20 text-primary rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">storefront</span>
+<span class="text-sm font-medium">Marketplace</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-white/70 hover:bg-white/10 rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="text-sm font-medium">Team</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-white/70 hover:bg-white/10 rounded-xl transition-colors" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-sm font-medium">Settings</span>
+</a>
+</nav>
+<div class="p-4 border-t border-white/10">
+<button class="w-full bg-primary hover:bg-primary/90 text-white font-bold py-2.5 rounded-xl text-sm transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">add</span>
+                    New Board
+                </button>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 ml-64 min-h-screen bg-background-light dark:bg-background-dark">
+<!-- Header Top Bar -->
+<header class="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-background-dark/80 backdrop-blur-md sticky top-0 z-40 px-8 flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">storefront</span>
+<h2 class="text-lg font-bold tracking-tight">Template Marketplace</h2>
+</div>
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-2 px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-[20px]">upload_file</span>
+                        Import JSON
+                    </button>
+<button class="p-2 text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">help_outline</span>
+</button>
+</div>
+</header>
+<div class="max-w-7xl mx-auto p-8 space-y-8">
+<!-- Featured Hero Section -->
+<section class="relative overflow-hidden rounded-xl bg-slate-900 text-white min-h-[320px] flex items-center p-8 group">
+<!-- Background pattern -->
+<div class="absolute inset-0 opacity-20 pointer-events-none" style="background-image: radial-gradient(circle at 2px 2px, rgba(236, 91, 19, 0.4) 1px, transparent 0); background-size: 24px 24px;"></div>
+<div class="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900 to-transparent"></div>
+<div class="relative z-10 w-full grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
+<div class="space-y-4">
+<span class="inline-flex items-center px-3 py-1 rounded-full bg-primary/20 text-primary text-xs font-bold tracking-wider uppercase">Featured Template</span>
+<h3 class="text-3xl font-bold leading-tight">LinkedIn Post Pipeline</h3>
+<p class="text-slate-400 text-lg max-w-md">Scale your personal brand with an AI-integrated content engine that handles everything from ideation to publishing.</p>
+<div class="flex gap-3 pt-4">
+<button class="px-6 py-3 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 shadow-lg shadow-primary/20 transition-all">Get Started</button>
+<button class="px-6 py-3 bg-white/10 text-white font-bold rounded-xl hover:bg-white/20 backdrop-blur-sm transition-all">Preview Workflow</button>
+</div>
+</div>
+<!-- Mini Workflow Diagram -->
+<div class="hidden lg:flex items-center justify-center space-x-4 overflow-x-hidden">
+<div class="flex flex-col items-center gap-2">
+<div class="size-12 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">lightbulb</span>
+</div>
+<span class="text-[10px] font-bold uppercase text-slate-500">Idea</span>
+</div>
+<span class="material-symbols-outlined text-slate-700">arrow_forward</span>
+<div class="flex flex-col items-center gap-2">
+<div class="size-12 rounded-lg bg-primary/20 border border-primary/40 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">smart_toy</span>
+</div>
+<span class="text-[10px] font-bold uppercase text-primary">AI Gen</span>
+</div>
+<span class="material-symbols-outlined text-slate-700">arrow_forward</span>
+<div class="flex flex-col items-center gap-2">
+<div class="size-12 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center">
+<span class="material-symbols-outlined text-slate-400">rate_review</span>
+</div>
+<span class="text-[10px] font-bold uppercase text-slate-500">Review</span>
+</div>
+<span class="material-symbols-outlined text-slate-700">arrow_forward</span>
+<div class="flex flex-col items-center gap-2">
+<div class="size-12 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center">
+<span class="material-symbols-outlined text-slate-400">send</span>
+</div>
+<span class="text-[10px] font-bold uppercase text-slate-500">Publish</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Filters & Search -->
+<div class="flex flex-col md:flex-row gap-4 items-center justify-between bg-white dark:bg-slate-900/50 p-2 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+<div class="flex items-center gap-1 overflow-x-auto no-scrollbar px-2">
+<button class="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold transition-all">All</button>
+<button class="px-4 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-semibold whitespace-nowrap transition-all">Content &amp; Marketing</button>
+<button class="px-4 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-semibold whitespace-nowrap transition-all">Development</button>
+<button class="px-4 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-semibold whitespace-nowrap transition-all">Operations</button>
+<button class="px-4 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-semibold whitespace-nowrap transition-all">Sales</button>
+<button class="px-4 py-2 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-semibold whitespace-nowrap transition-all">Personal</button>
+</div>
+<div class="relative w-full md:w-80 px-2">
+<span class="material-symbols-outlined absolute left-5 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+<input class="w-full pl-11 pr-4 py-2 bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm focus:ring-2 focus:ring-primary/40 transition-all" placeholder="Search templates..." type="text"/>
+</div>
+</div>
+<!-- Template Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-12">
+<!-- Template Card: LinkedIn Post Pipeline -->
+<div class="group bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden hover:border-primary/50 hover:shadow-xl hover:shadow-primary/5 transition-all">
+<div class="p-6">
+<div class="flex justify-between items-start mb-4">
+<div class="size-12 rounded-lg bg-orange-100 dark:bg-orange-950 flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">share</span>
+</div>
+<span class="bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-tight">AI Integrated</span>
+</div>
+<h4 class="text-lg font-bold group-hover:text-primary transition-colors">LinkedIn Post Pipeline</h4>
+<p class="text-slate-500 dark:text-slate-400 text-xs mt-1">by TaskClaw Team</p>
+<p class="text-slate-600 dark:text-slate-300 text-sm mt-3 line-clamp-2">Standardize your posting schedule with automated drafting and multi-stage review gates.</p>
+<div class="flex flex-wrap gap-2 mt-4">
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">Marketing</span>
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">Social</span>
+</div>
+<div class="flex items-center gap-4 mt-6 text-slate-500 dark:text-slate-400 text-xs font-medium">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">download</span>
+                                    2.4k
+                                </div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">account_tree</span>
+                                    5 Steps
+                                </div>
+</div>
+</div>
+<div class="px-6 pb-6 pt-2">
+<button class="w-full bg-primary hover:bg-primary/90 text-white font-bold py-2.5 rounded-xl text-sm transition-all">Install Template</button>
+</div>
+</div>
+<!-- Template Card: Blog Publishing Workflow -->
+<div class="group bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden hover:border-primary/50 hover:shadow-xl transition-all">
+<div class="p-6">
+<div class="flex justify-between items-start mb-4">
+<div class="size-12 rounded-lg bg-purple-100 dark:bg-purple-950 flex items-center justify-center">
+<span class="material-symbols-outlined text-purple-600">article</span>
+</div>
+<span class="bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-tight">Update available</span>
+</div>
+<h4 class="text-lg font-bold group-hover:text-primary transition-colors">Blog Publishing Workflow</h4>
+<p class="text-slate-500 dark:text-slate-400 text-xs mt-1">by TaskClaw Team</p>
+<p class="text-slate-600 dark:text-slate-300 text-sm mt-3 line-clamp-2">A comprehensive editorial calendar with SEO checklists and cross-platform distribution hooks.</p>
+<div class="flex flex-wrap gap-2 mt-4">
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">Editorial</span>
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">SEO</span>
+</div>
+<div class="flex items-center gap-4 mt-6 text-slate-500 dark:text-slate-400 text-xs font-medium">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">download</span>
+                                    8.1k
+                                </div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">account_tree</span>
+                                    8 Steps
+                                </div>
+</div>
+</div>
+<div class="px-6 pb-6 pt-2">
+<button class="w-full bg-primary hover:bg-primary/90 text-white font-bold py-2.5 rounded-xl text-sm transition-all">Update to v2.4</button>
+</div>
+</div>
+<!-- Template Card: Sprint Board -->
+<div class="group bg-white dark:bg-slate-900 rounded-xl border border-primary/30 dark:border-primary/20 overflow-hidden shadow-lg shadow-primary/5 transition-all">
+<div class="p-6">
+<div class="flex justify-between items-start mb-4">
+<div class="size-12 rounded-lg bg-blue-100 dark:bg-blue-950 flex items-center justify-center">
+<span class="material-symbols-outlined text-blue-600">speed</span>
+</div>
+<span class="bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 text-[10px] font-bold px-2 py-1 rounded-md uppercase tracking-tight flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">check_circle</span>
+                                    Installed
+                                </span>
+</div>
+<h4 class="text-lg font-bold group-hover:text-primary transition-colors">Sprint Board</h4>
+<p class="text-slate-500 dark:text-slate-400 text-xs mt-1">by TaskClaw Team</p>
+<p class="text-slate-600 dark:text-slate-300 text-sm mt-3 line-clamp-2">Agile methodology made simple. Includes burndown logic and story point tracking automations.</p>
+<div class="flex flex-wrap gap-2 mt-4">
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">Agile</span>
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">Dev</span>
+</div>
+<div class="flex items-center gap-4 mt-6 text-slate-500 dark:text-slate-400 text-xs font-medium">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">download</span>
+                                    42k
+                                </div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">account_tree</span>
+                                    4 Steps
+                                </div>
+</div>
+</div>
+<div class="px-6 pb-6 pt-2">
+<button class="w-full bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-sm cursor-default">Installed ✓</button>
+</div>
+</div>
+<!-- Template Card: Client Onboarding -->
+<div class="group bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden hover:border-primary/50 transition-all">
+<div class="p-6">
+<div class="flex justify-between items-start mb-4">
+<div class="size-12 rounded-lg bg-pink-100 dark:bg-pink-950 flex items-center justify-center">
+<span class="material-symbols-outlined text-pink-600">person_add</span>
+</div>
+</div>
+<h4 class="text-lg font-bold group-hover:text-primary transition-colors">Client Onboarding</h4>
+<p class="text-slate-500 dark:text-slate-400 text-xs mt-1">by TaskClaw Team</p>
+<p class="text-slate-600 dark:text-slate-300 text-sm mt-3 line-clamp-2">Automate the "Welcome" phase. Connects to your CRM to trigger intro emails and kick-off tasks.</p>
+<div class="flex flex-wrap gap-2 mt-4">
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">Operations</span>
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">Success</span>
+</div>
+<div class="flex items-center gap-4 mt-6 text-slate-500 dark:text-slate-400 text-xs font-medium">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">download</span>
+                                    3.1k
+                                </div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">account_tree</span>
+                                    12 Steps
+                                </div>
+</div>
+</div>
+<div class="px-6 pb-6 pt-2">
+<button class="w-full bg-primary hover:bg-primary/90 text-white font-bold py-2.5 rounded-xl text-sm transition-all">Install Template</button>
+</div>
+</div>
+<!-- Template Card: Bug Triage Pipeline -->
+<div class="group bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden hover:border-primary/50 transition-all">
+<div class="p-6">
+<div class="flex justify-between items-start mb-4">
+<div class="size-12 rounded-lg bg-red-100 dark:bg-red-950 flex items-center justify-center">
+<span class="material-symbols-outlined text-red-600">bug_report</span>
+</div>
+</div>
+<h4 class="text-lg font-bold group-hover:text-primary transition-colors">Bug Triage Pipeline</h4>
+<p class="text-slate-500 dark:text-slate-400 text-xs mt-1">by TaskClaw Team</p>
+<p class="text-slate-600 dark:text-slate-300 text-sm mt-3 line-clamp-2">Routing logic that assigns issues to developers based on component labels and severity scores.</p>
+<div class="flex flex-wrap gap-2 mt-4">
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">Engineering</span>
+<span class="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-slate-500">DevOps</span>
+</div>
+<div class="flex items-center gap-4 mt-6 text-slate-500 dark:text-slate-400 text-xs font-medium">
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">download</span>
+                                    1.2k
+                                </div>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">account_tree</span>
+                                    6 Steps
+                                </div>
+</div>
+</div>
+<div class="px-6 pb-6 pt-2">
+<button class="w-full bg-primary hover:bg-primary/90 text-white font-bold py-2.5 rounded-xl text-sm transition-all">Install Template</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

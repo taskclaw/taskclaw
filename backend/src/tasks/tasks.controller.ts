@@ -29,6 +29,7 @@ export class TasksController {
     @Query('status') status?: string,
     @Query('priority') priority?: string,
     @Query('completed') completed?: string,
+    @Query('board_id') boardId?: string,
   ) {
     const filters: any = {};
     if (categoryId) filters.category_id = categoryId;
@@ -36,6 +37,7 @@ export class TasksController {
     if (status) filters.status = status;
     if (priority) filters.priority = priority;
     if (completed !== undefined) filters.completed = completed === 'true';
+    if (boardId) filters.board_id = boardId;
 
     return this.tasksService.findAll(req.user.id, accountId, filters, req.accessToken);
   }

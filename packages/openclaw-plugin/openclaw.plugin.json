@@ -1,0 +1,21 @@
+{
+  "id": "taskclaw-sync",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "skillsBasePath": {
+        "type": "string",
+        "default": "~/.openclaw/skills",
+        "description": "Base directory where TaskClaw skill files are written"
+      },
+      "authToken": {
+        "type": "string",
+        "description": "Shared secret for authenticating RPC calls from the TaskClaw backend"
+      }
+    }
+  },
+  "uiHints": {
+    "label": "TaskClaw Sync",
+    "description": "Syncs skills and knowledge base from TaskClaw to OpenClaw as SKILL.md files"
+  }
+}

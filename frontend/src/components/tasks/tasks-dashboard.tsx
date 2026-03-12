@@ -3,10 +3,10 @@
 import { useEffect, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Search } from 'lucide-react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useTasks } from '@/hooks/use-tasks'
 import { useTaskFilters } from '@/hooks/use-task-filters'
 import { useTaskStore } from '@/hooks/use-task-store'
+import { SidebarTrigger } from '@/components/ui/sidebar'
 import type { Category } from '@/types/task'
 import { KanbanBoard } from './kanban-board'
 import { CategoryList } from './category-list'
@@ -15,15 +15,6 @@ import { SourceFilter } from './source-filter'
 import { TasksViewToggle } from './tasks-view-toggle'
 import { PomodoroTimer } from './pomodoro-timer'
 import { TaskDetailPanel } from './task-detail-panel'
-
-// Create query client for this scope
-const queryClient = new QueryClient({
-    defaultOptions: {
-        queries: {
-            refetchOnWindowFocus: false,
-        },
-    },
-})
 
 interface TasksDashboardInnerProps {
     categories: Category[]
@@ -100,10 +91,11 @@ function TasksDashboardInner({ categories }: TasksDashboardInnerProps) {
 
     return (
         <div className="flex-1 flex overflow-hidden min-h-0 -m-4 -mb-4">
-            <main className="flex-1 flex flex-col overflow-y-auto min-h-0">
+            <main className="flex-1 flex flex-col overflow-hidden min-h-0">
                 {/* Header Bar */}
-                <div className="flex items-center justify-between px-6 py-3 border-b border-border shrink-0">
+                <div className="flex items-center justify-between px-6 py-3 mt-[5px] border-b border-border shrink-0">
                     <div className="flex items-center gap-4">
+                        <SidebarTrigger className="-ml-1" />
                         <h2 className="text-lg font-bold">Tasks</h2>
                         <TasksViewToggle />
                         <div className="h-5 w-px bg-border" />
@@ -150,7 +142,7 @@ function TasksDashboardInner({ categories }: TasksDashboardInnerProps) {
                 )}
 
                 {!isLoading && viewMode === 'category' && (
-                    <div className="p-6">
+                    <div className="flex-1 overflow-y-auto p-6 min-h-0">
                         <CategoryList tasks={filteredTasks} categories={categories} />
                     </div>
                 )}
@@ -167,9 +159,5 @@ interface TasksDashboardProps {
 }
 
 export function TasksDashboard({ categories }: TasksDashboardProps) {
-    return (
-        <QueryClientProvider client={queryClient}>
-            <TasksDashboardInner categories={categories} />
-        </QueryClientProvider>
-    )
+    return <TasksDashboardInner categories={categories} />
 }

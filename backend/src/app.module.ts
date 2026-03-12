@@ -1,5 +1,6 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
 import { AppController } from './app.controller';
@@ -23,6 +24,9 @@ import { AiProviderModule } from './ai-provider/ai-provider.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { SkillsModule } from './skills/skills.module';
+import { AgentSyncModule } from './agent-sync/agent-sync.module';
+import { BoardsModule } from './boards/boards.module';
+import { CommToolsModule } from './comm-tools/comm-tools.module';
 
 // Edition-gated modules (cloud-only)
 import { LangfuseModule } from './ee/langfuse/langfuse.module';
@@ -45,6 +49,7 @@ const editionModules = isCloudEdition
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
     SupabaseModule,
     ...editionModules,
     AuthModule,
@@ -65,6 +70,9 @@ const editionModules = isCloudEdition
     SourcesModule,
     TasksModule,
     SyncModule,
+    AgentSyncModule,
+    BoardsModule,
+    CommToolsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

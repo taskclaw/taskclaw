@@ -27,11 +27,16 @@ import {
     Eye, EyeOff, ExternalLink, Clock, AlertTriangle, Filter, Settings,
 } from 'lucide-react'
 import Link from 'next/link'
+import { toast } from 'sonner'
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
+import { cn } from '@/lib/utils'
 import {
     getSources, createSource, deleteSource, triggerSync,
     validateSource, listNotionDatabases, listClickUpWorkspaces,
     getCategories,
 } from './actions'
+import { getAiProviderConfig } from '../ai-provider/actions'
+import { CommToolsSection } from '@/components/settings/comm-tools-section'
 
 // ============================================================================
 // Types
@@ -108,14 +113,22 @@ export default function IntegrationsPage() {
     const [loading, setLoading] = useState(true)
     const [showAddDialog, setShowAddDialog] = useState(false)
     const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null)
-    const [deletingSourceId, setDeletingSourceId] = useState<string | null>(null)
+    const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+    const [deleteLoading, setDeleteLoading] = useState(false)
+    const [deletingId, setDeletingId] = useState<string | null>(null)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+    const [openClawConnected, setOpenClawConnected] = useState(false)
 
     const loadData = useCallback(async () => {
         setLoading(true)
-        const [srcData, catData] = await Promise.all([getSources(), getCategories()])
+        const [srcData, catData, aiConfig] = await Promise.all([
+            getSources(),
+            getCategories(),
+            getAiProviderConfig(),
+        ])
         setSources(srcData)
         setCategories(catData)
+        setOpenClawConnected(!!aiConfig?.verified_at)
         setLoading(false)
     }, [])
 
@@ -142,21 +155,26 @@ export default function IntegrationsPage() {
         }
     }
 
-    const handleDelete = async (sourceId: string) => {
-        if (!confirm('Remove this integration? Synced tasks will remain but will no longer be updated.')) return
-        setDeletingSourceId(sourceId)
+    const confirmDelete = async () => {
+        if (!deleteTarget) return
+        setDeleteLoading(true)
         try {
-            const result = await deleteSource(sourceId)
+            const result = await deleteSource(deleteTarget)
             if (result.error) {
-                setAlert({ type: 'error', message: result.error })
+                toast.error(result.error)
             } else {
-                setAlert({ type: 'success', message: 'Integration removed.' })
-                loadData()
+                setDeleteTarget(null)
+                setDeletingId(deleteTarget)
+                setTimeout(() => {
+                    setDeletingId(null)
+                    toast.success('Integration removed.')
+                    loadData()
+                }, 500)
             }
         } catch (e: any) {
-            setAlert({ type: 'error', message: e.message })
+            toast.error(e.message || 'Failed to remove integration')
         } finally {
-            setDeletingSourceId(null)
+            setDeleteLoading(false)
         }
     }
 
@@ -206,9 +224,9 @@ export default function IntegrationsPage() {
                             key={source.id}
                             source={source}
                             syncing={syncingSourceId === source.id}
-                            deleting={deletingSourceId === source.id}
+                            isAnimatingDelete={deletingId === source.id}
                             onSync={() => handleSync(source.id)}
-                            onDelete={() => handleDelete(source.id)}
+                            onDelete={() => setDeleteTarget(source.id)}
                         />
                     ))}
                 </div>
@@ -229,6 +247,16 @@ export default function IntegrationsPage() {
                     </CardContent>
                 </Card>
             )}
+
+            {/* Communication Tools */}
+            <div className="mb-8">
+                <h2 className="text-lg font-semibold mb-1">Communication Tools</h2>
+                <p className="text-sm text-muted-foreground mb-4">
+                    Declare which communication tools are available in your OpenClaw instance.
+                    The AI will check availability before attempting communication tasks.
+                </p>
+                <CommToolsSection openClawConnected={openClawConnected} />
+            </div>
 
             {/* Available Integrations */}
             <h2 className="text-lg font-semibold mb-4">Available Integrations</h2>
@@ -282,6 +310,16 @@ export default function IntegrationsPage() {
                 categories={categories}
                 onCreated={handleSourceCreated}
             />
+
+            <ConfirmDeleteDialog
+                open={!!deleteTarget}
+                onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+                onConfirm={confirmDelete}
+                title="Remove integration?"
+                description="Synced tasks will remain but will no longer be updated."
+                confirmLabel="Remove"
+                loading={deleteLoading}
+            />
         </div>
     )
 }
@@ -290,10 +328,10 @@ export default function IntegrationsPage() {
 // Source Card
 // ============================================================================
 
-function SourceCard({ source, syncing, deleting, onSync, onDelete }: {
+function SourceCard({ source, syncing, isAnimatingDelete, onSync, onDelete }: {
     source: Source
     syncing: boolean
-    deleting: boolean
+    isAnimatingDelete: boolean
     onSync: () => void
     onDelete: () => void
 }) {
@@ -303,7 +341,7 @@ function SourceCard({ source, syncing, deleting, onSync, onDelete }: {
         : 'Never'
 
     return (
-        <Card>
+        <Card className={cn(isAnimatingDelete && 'animate-deleting')}>
             <CardContent className="flex items-center gap-4 py-4">
                 <div className="text-3xl">{provider?.icon || '🔗'}</div>
                 <div className="flex-1 min-w-0">
@@ -362,14 +400,10 @@ function SourceCard({ source, syncing, deleting, onSync, onDelete }: {
                         variant="outline"
                         size="sm"
                         onClick={onDelete}
-                        disabled={deleting}
+                        disabled={isAnimatingDelete}
                         className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
                     >
-                        {deleting ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                            <Trash2 className="h-4 w-4" />
-                        )}
+                        <Trash2 className="h-4 w-4" />
                     </Button>
                 </div>
             </CardContent>

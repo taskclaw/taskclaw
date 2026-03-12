@@ -37,4 +37,12 @@ export class CreateTaskDto {
   @IsOptional()
   @IsISO8601()
   due_date?: string;
+
+  @IsOptional()
+  @IsUUID()
+  board_instance_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  current_step_id?: string;
 }

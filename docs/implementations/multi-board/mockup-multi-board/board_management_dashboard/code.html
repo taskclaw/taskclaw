@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TaskClaw - Boards Management</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ec5b13",
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#221610",
+                        "navy-dark": "#0f172a",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Public Sans', sans-serif;
+        }
+        .board-card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark min-h-screen font-display text-slate-900 dark:text-slate-100 transition-colors duration-200">
+<!-- Top Navigation Bar -->
+<header class="sticky top-0 z-50 bg-white/80 dark:bg-navy-dark/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-6 lg:px-12 py-4">
+<div class="max-w-7xl mx-auto flex items-center justify-between gap-4">
+<div class="flex items-center gap-8">
+<div class="flex items-center gap-2 cursor-pointer">
+<div class="bg-primary p-1.5 rounded-lg text-white">
+<span class="material-symbols-outlined text-2xl leading-none">grid_view</span>
+</div>
+<h1 class="text-xl font-black tracking-tight text-slate-900 dark:text-white uppercase">TaskClaw</h1>
+</div>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors" href="#">Dashboard</a>
+<a class="text-sm font-semibold text-primary" href="#">Boards</a>
+<a class="text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors" href="#">Teams</a>
+<a class="text-sm font-semibold text-slate-600 dark:text-slate-400 hover:text-primary dark:hover:text-primary transition-colors" href="#">Settings</a>
+</nav>
+</div>
+<div class="flex items-center gap-3">
+<div class="hidden sm:flex items-center gap-2 mr-4">
+<button class="flex items-center gap-2 px-4 py-2 text-sm font-bold border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-lg">grid_on</span>
+<span>Browse Templates</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-2 text-sm font-bold border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+<span class="material-symbols-outlined text-lg">upload_file</span>
+<span>Import JSON</span>
+</button>
+</div>
+<button class="flex items-center gap-2 px-5 py-2.5 bg-navy-dark dark:bg-slate-100 text-white dark:text-navy-dark rounded-xl font-bold text-sm shadow-lg hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined text-lg font-bold">add</span>
+<span>New Board</span>
+</button>
+<div class="h-10 w-10 rounded-full border-2 border-primary/20 bg-slate-200 overflow-hidden ml-2">
+<img alt="User Profile" class="w-full h-full object-cover" data-alt="Close up portrait of a smiling businessman" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAlBQ-vMa0SdKKH0aiOBdyj3DNF0Av-8KvRtJTDcouXJpRQ2d1dUO3JjJckJq1VciUD43PL72Zec-wa9nUX27RzDuFN8ODhdI2RwrYl2z9puNb83l1cs_9x42wFfRrkpziVasAuswU51NFj7b1_9zN0a3HGHB5hlSC20INPXTkvg5sNXOWAleL0m_HCEcIQl_F-SMOkmgQ8xmsSChBcNb6-OCY36_2HZLY2lUP2A-eDt_CpL8BZ4fxkrMZ-FAX5CTbCbk6OoiGEjM-v"/>
+</div>
+</div>
+</div>
+</header>
+<main class="max-w-7xl mx-auto px-6 lg:px-12 py-10">
+<!-- Page Title & Stats Area -->
+<div class="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
+<div>
+<h2 class="text-4xl font-black text-slate-900 dark:text-white tracking-tight mb-2">Boards</h2>
+<p class="text-slate-500 dark:text-slate-400 font-medium">Manage your active projects and high-level workflows from a central hub.</p>
+</div>
+<div class="flex items-center gap-4 bg-white dark:bg-navy-dark/40 p-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+<button class="flex items-center justify-center p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white">
+<span class="material-symbols-outlined">grid_view</span>
+</button>
+<button class="flex items-center justify-center p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+<span class="material-symbols-outlined">format_list_bulleted</span>
+</button>
+</div>
+</div>
+<!-- Filters Bar -->
+<div class="flex flex-col lg:flex-row items-center justify-between gap-4 mb-8">
+<div class="relative w-full lg:w-96">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+<input class="w-full pl-10 pr-4 py-3 bg-white dark:bg-navy-dark/40 border-slate-200 dark:border-slate-800 rounded-xl focus:ring-primary focus:border-primary text-sm font-medium" placeholder="Search boards, tags, or members..." type="text"/>
+</div>
+<div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+<div class="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+<button class="px-4 py-2 text-xs font-bold rounded-lg bg-white dark:bg-navy-dark text-primary shadow-sm">All</button>
+<button class="px-4 py-2 text-xs font-bold rounded-lg text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-navy-dark transition-all">Active</button>
+<button class="px-4 py-2 text-xs font-bold rounded-lg text-slate-500 dark:text-slate-400 hover:bg-white dark:hover:bg-navy-dark transition-all">Archived</button>
+</div>
+<button class="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-navy-dark/40 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-300 hover:border-primary transition-all">
+<span>Filter by Tag</span>
+<span class="material-symbols-outlined text-lg">keyboard_arrow_down</span>
+</button>
+</div>
+</div>
+<!-- Boards Grid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+<!-- LinkedIn Board -->
+<div class="group board-card-hover relative bg-white dark:bg-navy-dark/40 border border-slate-200 dark:border-slate-800 rounded-xl p-6 transition-all cursor-pointer overflow-hidden flex flex-col h-full">
+<div class="absolute top-0 left-0 right-0 h-1.5 bg-blue-500"></div>
+<div class="flex justify-between items-start mb-4">
+<div class="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 p-2.5 rounded-xl">
+<span class="material-symbols-outlined text-2xl">share</span>
+</div>
+<button class="text-slate-300 hover:text-yellow-400 transition-colors">
+<span class="material-symbols-outlined fill-0 hover:fill-1">star</span>
+</button>
+</div>
+<h3 class="text-lg font-bold mb-2 group-hover:text-primary transition-colors">LinkedIn Post Pipeline</h3>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-6 flex-grow">Automated content scheduling and engagement tracking for personal branding.</p>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">content</span>
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">linkedin</span>
+</div>
+<div class="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">list</span> 5 Steps</span>
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">folder_open</span> 12 Cards</span>
+</div>
+<span>2h ago</span>
+</div>
+</div>
+<!-- Sprint Board -->
+<div class="group board-card-hover relative bg-white dark:bg-navy-dark/40 border border-slate-200 dark:border-slate-800 rounded-xl p-6 transition-all cursor-pointer overflow-hidden flex flex-col h-full">
+<div class="absolute top-0 left-0 right-0 h-1.5 bg-green-500"></div>
+<div class="flex justify-between items-start mb-4">
+<div class="bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 p-2.5 rounded-xl">
+<span class="material-symbols-outlined text-2xl">rocket_launch</span>
+</div>
+<button class="text-yellow-400 transition-colors">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1">star</span>
+</button>
+</div>
+<h3 class="text-lg font-bold mb-2 group-hover:text-primary transition-colors">Sprint Board</h3>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-6 flex-grow">Active engineering sprint tracking with kanban columns and velocity metrics.</p>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">dev</span>
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">agile</span>
+</div>
+<div class="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">list</span> 8 Steps</span>
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">folder_open</span> 34 Cards</span>
+</div>
+<span>Active Now</span>
+</div>
+</div>
+<!-- Content Calendar -->
+<div class="group board-card-hover relative bg-white dark:bg-navy-dark/40 border border-slate-200 dark:border-slate-800 rounded-xl p-6 transition-all cursor-pointer overflow-hidden flex flex-col h-full">
+<div class="absolute top-0 left-0 right-0 h-1.5 bg-purple-500"></div>
+<div class="flex justify-between items-start mb-4">
+<div class="bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 p-2.5 rounded-xl">
+<span class="material-symbols-outlined text-2xl">calendar_month</span>
+</div>
+<button class="text-slate-300 hover:text-yellow-400 transition-colors">
+<span class="material-symbols-outlined">star</span>
+</button>
+</div>
+<h3 class="text-lg font-bold mb-2 group-hover:text-primary transition-colors">Content Calendar</h3>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-6 flex-grow">Editorial planning for blog, video, and social media channels.</p>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">content</span>
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">planning</span>
+</div>
+<div class="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">list</span> 4 Steps</span>
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">folder_open</span> 15 Cards</span>
+</div>
+<span>Yesterday</span>
+</div>
+</div>
+<!-- Bug Tracker -->
+<div class="group board-card-hover relative bg-white dark:bg-navy-dark/40 border border-slate-200 dark:border-slate-800 rounded-xl p-6 transition-all cursor-pointer overflow-hidden flex flex-col h-full">
+<div class="absolute top-0 left-0 right-0 h-1.5 bg-red-500"></div>
+<div class="flex justify-between items-start mb-4">
+<div class="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-2.5 rounded-xl">
+<span class="material-symbols-outlined text-2xl">bug_report</span>
+</div>
+<button class="text-slate-300 hover:text-yellow-400 transition-colors">
+<span class="material-symbols-outlined">star</span>
+</button>
+</div>
+<h3 class="text-lg font-bold mb-2 group-hover:text-primary transition-colors">Bug Tracker</h3>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-6 flex-grow">Critical system issues, bug reports, and hotfix pipeline for the core engine.</p>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">dev</span>
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">bugs</span>
+</div>
+<div class="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">list</span> 6 Steps</span>
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">folder_open</span> 8 Cards</span>
+</div>
+<span>12m ago</span>
+</div>
+</div>
+<!-- Client Onboarding -->
+<div class="group board-card-hover relative bg-white dark:bg-navy-dark/40 border border-slate-200 dark:border-slate-800 rounded-xl p-6 transition-all cursor-pointer overflow-hidden flex flex-col h-full">
+<div class="absolute top-0 left-0 right-0 h-1.5 bg-primary"></div>
+<div class="flex justify-between items-start mb-4">
+<div class="bg-orange-50 dark:bg-primary/20 text-primary p-2.5 rounded-xl">
+<span class="material-symbols-outlined text-2xl">person_add</span>
+</div>
+<button class="text-slate-300 hover:text-yellow-400 transition-colors">
+<span class="material-symbols-outlined">star</span>
+</button>
+</div>
+<h3 class="text-lg font-bold mb-2 group-hover:text-primary transition-colors">Client Onboarding</h3>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-6 flex-grow">Workflow for new customer intake, legal document signing, and setup.</p>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">ops</span>
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">clients</span>
+</div>
+<div class="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">list</span> 10 Steps</span>
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">folder_open</span> 22 Cards</span>
+</div>
+<span>4d ago</span>
+</div>
+</div>
+<!-- Update Available Board -->
+<div class="group board-card-hover relative bg-white dark:bg-navy-dark/40 border border-slate-200 dark:border-slate-800 rounded-xl p-6 transition-all cursor-pointer overflow-hidden flex flex-col h-full">
+<div class="absolute top-0 left-0 right-0 h-1.5 bg-sky-400"></div>
+<div class="flex justify-between items-start mb-4">
+<div class="bg-sky-50 dark:bg-sky-900/20 text-sky-600 dark:text-sky-400 p-2.5 rounded-xl">
+<span class="material-symbols-outlined text-2xl">upgrade</span>
+</div>
+<div class="px-2.5 py-1 bg-blue-600 text-white text-[9px] font-black uppercase rounded-full shadow-lg shadow-blue-500/30">
+                        Update Available
+                    </div>
+</div>
+<h3 class="text-lg font-bold mb-2 group-hover:text-primary transition-colors">Design System Core</h3>
+<p class="text-sm text-slate-500 dark:text-slate-400 mb-6 flex-grow">Global UI components, color tokens, and layout primitives for the TaskClaw ecosystem.</p>
+<div class="flex flex-wrap gap-2 mb-6">
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">design</span>
+<span class="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider rounded-lg text-slate-600 dark:text-slate-400">system</span>
+</div>
+<div class="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+<div class="flex items-center gap-4">
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">list</span> 12 Steps</span>
+<span class="flex items-center gap-1.5"><span class="material-symbols-outlined text-sm">folder_open</span> 45 Cards</span>
+</div>
+<span>1h ago</span>
+</div>
+</div>
+</div>
+<!-- Pagination / Load More -->
+<div class="mt-12 flex flex-col items-center gap-4">
+<button class="px-8 py-3 bg-white dark:bg-navy-dark/40 border border-slate-200 dark:border-slate-800 rounded-xl font-bold text-sm text-slate-700 dark:text-slate-300 hover:border-primary transition-all shadow-sm">
+                Load More Boards
+            </button>
+<p class="text-xs text-slate-400 dark:text-slate-500 font-medium italic">Showing 6 of 24 boards in your workspace</p>
+</div>
+</main>
+<!-- App Store Style Footer Section -->
+<footer class="mt-20 border-t border-slate-200 dark:border-slate-800 py-12 bg-white dark:bg-navy-dark">
+<div class="max-w-7xl mx-auto px-6 lg:px-12 grid grid-cols-1 md:grid-cols-4 gap-8">
+<div class="col-span-1 md:col-span-2">
+<div class="flex items-center gap-2 mb-4">
+<div class="bg-primary p-1.5 rounded-lg text-white">
+<span class="material-symbols-outlined text-xl leading-none">grid_view</span>
+</div>
+<h2 class="text-lg font-black tracking-tight text-slate-900 dark:text-white uppercase">TaskClaw</h2>
+</div>
+<p class="text-sm text-slate-500 dark:text-slate-400 max-w-sm mb-6 leading-relaxed">
+                    TaskClaw is the ultimate board management system for teams that demand precision, speed, and beautiful workflows. Built for the modern enterprise.
+                </p>
+<div class="flex gap-4">
+<a class="h-8 w-8 flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-lg">public</span>
+</a>
+<a class="h-8 w-8 flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-lg">mail</span>
+</a>
+</div>
+</div>
+<div>
+<h4 class="font-bold text-slate-900 dark:text-white mb-4 uppercase text-xs tracking-widest">Platform</h4>
+<ul class="space-y-2 text-sm text-slate-500 dark:text-slate-400">
+<li><a class="hover:text-primary transition-colors" href="#">Features</a></li>
+<li><a class="hover:text-primary transition-colors" href="#">Integrations</a></li>
+<li><a class="hover:text-primary transition-colors" href="#">Pricing</a></li>
+<li><a class="hover:text-primary transition-colors" href="#">Template Gallery</a></li>
+</ul>
+</div>
+<div>
+<h4 class="font-bold text-slate-900 dark:text-white mb-4 uppercase text-xs tracking-widest">Support</h4>
+<ul class="space-y-2 text-sm text-slate-500 dark:text-slate-400">
+<li><a class="hover:text-primary transition-colors" href="#">Help Center</a></li>
+<li><a class="hover:text-primary transition-colors" href="#">API Docs</a></li>
+<li><a class="hover:text-primary transition-colors" href="#">Release Notes</a></li>
+<li><a class="hover:text-primary transition-colors" href="#">Contact Us</a></li>
+</ul>
+</div>
+</div>
+<div class="max-w-7xl mx-auto px-6 lg:px-12 mt-12 pt-8 border-t border-slate-100 dark:border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4">
+<p class="text-xs text-slate-400 font-medium">© 2024 TaskClaw SaaS Platform. All rights reserved.</p>
+<div class="flex gap-6 text-xs text-slate-400 font-medium">
+<a class="hover:text-primary" href="#">Privacy Policy</a>
+<a class="hover:text-primary" href="#">Terms of Service</a>
+<a class="hover:text-primary" href="#">Cookie Settings</a>
+</div>
+</div>
+</footer>
+</body></html>

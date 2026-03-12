@@ -12,6 +12,8 @@ import { OpenClawService } from './openclaw.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { SkillsService } from '../skills/skills.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
+import { AgentSyncService } from '../agent-sync/agent-sync.service';
+import { CommToolsService } from '../comm-tools/comm-tools.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
@@ -29,6 +31,8 @@ export class ConversationsService {
     private readonly knowledgeService: KnowledgeService,
     private readonly skillsService: SkillsService,
     private readonly notionAdapter: NotionAdapter,
+    private readonly agentSyncService: AgentSyncService,
+    private readonly commToolsService: CommToolsService,
   ) {}
 
   /**
@@ -147,7 +151,7 @@ export class ConversationsService {
 
     const { data, error } = await client
       .from('conversations')
-      .select('*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, source_id, sources(id, provider))')
+      .select('*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, source_id, category_id, current_step_id, board_instance_id, override_category_id, sources(id, provider), categories:categories!category_id(id, name, color, icon), override_category:categories!override_category_id(id, name, color, icon))')
       .eq('id', conversationId)
       .eq('user_id', userId)
       .eq('account_id', accountId)
@@ -585,6 +589,69 @@ export class ConversationsService {
   }
 
   /**
+   * Resolve the effective agent category ID using the 3-tier priority cascade:
+   *   1. Card-level: task.override_category_id (highest priority)
+   *   2. Column-level: board_step.linked_category_id
+   *   3. Board-level: board_instance.default_category_id
+   *   4. Legacy: task.category_id (fallback)
+   */
+  private async resolveAgentCategoryId(task: any): Promise<string | null> {
+    if (!task) return null;
+
+    // Tier 1: Card-level override (highest priority)
+    if (task.override_category_id) {
+      this.logger.debug(`Agent cascade: using card-level override category ${task.override_category_id}`);
+      return task.override_category_id;
+    }
+
+    // Tier 2: Column-level (step's linked category)
+    if (task.current_step_id) {
+      try {
+        const client = this.supabaseAdmin.getClient();
+        const { data: step } = await client
+          .from('board_steps')
+          .select('linked_category_id')
+          .eq('id', task.current_step_id)
+          .single();
+
+        if (step?.linked_category_id) {
+          this.logger.debug(`Agent cascade: using column-level category ${step.linked_category_id}`);
+          return step.linked_category_id;
+        }
+      } catch {
+        // Continue to next tier
+      }
+    }
+
+    // Tier 3: Board-level default
+    if (task.board_instance_id) {
+      try {
+        const client = this.supabaseAdmin.getClient();
+        const { data: board } = await client
+          .from('board_instances')
+          .select('default_category_id')
+          .eq('id', task.board_instance_id)
+          .single();
+
+        if (board?.default_category_id) {
+          this.logger.debug(`Agent cascade: using board-level default category ${board.default_category_id}`);
+          return board.default_category_id;
+        }
+      } catch {
+        // Continue to fallback
+      }
+    }
+
+    // Tier 4: Legacy fallback
+    if (task.category_id) {
+      this.logger.debug(`Agent cascade: using legacy task category ${task.category_id}`);
+      return task.category_id;
+    }
+
+    return null;
+  }
+
+  /**
    * Build system prompt with task context
    */
   private async buildSystemPrompt(
@@ -601,57 +668,113 @@ Current Context:
 `;
 
     // ═══════════════════════════════════════════════════════════
-    // SPRINT 3: SKILLS INJECTION
+    // SKILLS & KNOWLEDGE: Provider-synced or inline injection
     // ═══════════════════════════════════════════════════════════
-    // Fetch selected skills (stored in conversation metadata)
-    try {
-      const skillIds = conversation.metadata?.skill_ids || [];
-      if (skillIds.length > 0) {
-        const skills = await this.skillsService.findByIds(
-          accessToken,
-          conversation.account_id,
-          skillIds,
-        );
+    // Resolve the effective agent category using 3-tier cascade:
+    // Card override → Column linked category → Board default → Task category
+    const agentCategoryId = conversation.task_id
+      ? await this.resolveAgentCategoryId(conversation.task)
+      : null;
 
-        if (skills.length > 0) {
-          prompt += `\n\n=== ACTIVE SKILLS ===\n`;
-          prompt += `The following specialized skills are active for this conversation:\n\n`;
-          skills.forEach((skill, index) => {
-            prompt += `Skill ${index + 1}: ${skill.name}\n`;
-            if (skill.description) {
-              prompt += `Description: ${skill.description}\n`;
-            }
-            prompt += `Instructions:\n${skill.instructions}\n\n`;
-          });
-          prompt += `Apply these skills when responding to the user.\n`;
-        }
+    // Check if skills/knowledge are synced to the provider (OpenClaw).
+    // If synced, skip inline injection — the content is loaded from
+    // SKILL.md files on the server, saving thousands of tokens per request.
+    let providerSynced = false;
+    if (agentCategoryId) {
+      try {
+        providerSynced = await this.agentSyncService.isSynced(
+          conversation.account_id,
+          agentCategoryId,
+        );
+      } catch {
+        // Fallback to inline injection if sync check fails
       }
-    } catch (error) {
-      this.logger.warn(`Failed to fetch skills for prompt: ${error.message}`);
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // SPRINT 3: KNOWLEDGE INJECTION
-    // ═══════════════════════════════════════════════════════════
-    // Fetch master knowledge doc for task's category (if task-linked)
-    try {
-      if (conversation.task_id && conversation.task?.category_id) {
-        const masterDoc = await this.knowledgeService.findMasterForCategory(
-          accessToken,
-          conversation.account_id,
-          conversation.task.category_id,
-        );
+    if (providerSynced) {
+      this.logger.debug(
+        `Category ${agentCategoryId} skills/knowledge synced to provider — skipping inline injection`,
+      );
+    } else {
+      // FALLBACK: Inline skills injection
+      // First try: category-linked skills (from resolved agent category)
+      let skillsInjected = false;
+      if (agentCategoryId) {
+        try {
+          const categorySkills = await this.skillsService.findDefaultForCategory(
+            accessToken,
+            conversation.account_id,
+            agentCategoryId,
+          );
 
-        if (masterDoc) {
-          prompt += `\n\n=== KNOWLEDGE BASE ===\n`;
-          prompt += `Master Document: "${masterDoc.title}"\n`;
-          prompt += `Category: ${conversation.task.category?.name || 'Unknown'}\n\n`;
-          prompt += `${masterDoc.content}\n\n`;
-          prompt += `Use this knowledge to provide contextually relevant responses.\n`;
+          if (categorySkills && categorySkills.length > 0) {
+            prompt += `\n\n=== ACTIVE SKILLS ===\n`;
+            prompt += `The following specialized skills are active for this conversation:\n\n`;
+            categorySkills.forEach((skill, index) => {
+              prompt += `Skill ${index + 1}: ${skill.name}\n`;
+              if (skill.description) {
+                prompt += `Description: ${skill.description}\n`;
+              }
+              prompt += `Instructions:\n${skill.instructions}\n\n`;
+            });
+            prompt += `Apply these skills when responding to the user.\n`;
+            skillsInjected = true;
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to fetch category skills for prompt: ${error.message}`);
         }
       }
-    } catch (error) {
-      this.logger.warn(`Failed to fetch knowledge for prompt: ${error.message}`);
+
+      // Second try: conversation-level skill_ids (manual selection, original behavior)
+      if (!skillsInjected) {
+        try {
+          const skillIds = conversation.metadata?.skill_ids || [];
+          if (skillIds.length > 0) {
+            const skills = await this.skillsService.findByIds(
+              accessToken,
+              conversation.account_id,
+              skillIds,
+            );
+
+            if (skills.length > 0) {
+              prompt += `\n\n=== ACTIVE SKILLS ===\n`;
+              prompt += `The following specialized skills are active for this conversation:\n\n`;
+              skills.forEach((skill, index) => {
+                prompt += `Skill ${index + 1}: ${skill.name}\n`;
+                if (skill.description) {
+                  prompt += `Description: ${skill.description}\n`;
+                }
+                prompt += `Instructions:\n${skill.instructions}\n\n`;
+              });
+              prompt += `Apply these skills when responding to the user.\n`;
+            }
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to fetch skills for prompt: ${error.message}`);
+        }
+      }
+
+      // Inline knowledge injection from resolved agent category
+      const knowledgeCategoryId = agentCategoryId || conversation.task?.category_id;
+      try {
+        if (conversation.task_id && knowledgeCategoryId) {
+          const masterDoc = await this.knowledgeService.findMasterForCategory(
+            accessToken,
+            conversation.account_id,
+            knowledgeCategoryId,
+          );
+
+          if (masterDoc) {
+            prompt += `\n\n=== KNOWLEDGE BASE ===\n`;
+            prompt += `Master Document: "${masterDoc.title}"\n`;
+            prompt += `Category: ${conversation.task.category?.name || 'Unknown'}\n\n`;
+            prompt += `${masterDoc.content}\n\n`;
+            prompt += `Use this knowledge to provide contextually relevant responses.\n`;
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to fetch knowledge for prompt: ${error.message}`);
+      }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -689,6 +812,36 @@ Current Context:
       }
       prompt += `\nThe user is asking for help with this specific task. Provide relevant, actionable advice.\n`;
       prompt += `When you produce findings or insights, the user can save them directly to the task card.\n`;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // COMMUNICATION TOOLS AVAILABILITY
+    // ═══════════════════════════════════════════════════════════
+    try {
+      const availableTools = await this.commToolsService.getAvailableTools(
+        conversation.account_id,
+      );
+      const allTools = ['telegram', 'whatsapp', 'slack'];
+      const unavailable = allTools.filter((t) => !availableTools.includes(t));
+
+      if (availableTools.length > 0) {
+        prompt += `\n\n=== AVAILABLE COMMUNICATION TOOLS ===\n`;
+        prompt += `These communication tools are confirmed available and healthy:\n`;
+        availableTools.forEach((t) => {
+          prompt += `- ${t}\n`;
+        });
+        prompt += `You may use these tools when the user requests communication actions.\n`;
+      }
+
+      if (unavailable.length > 0) {
+        prompt += `\n=== UNAVAILABLE COMMUNICATION TOOLS ===\n`;
+        prompt += `Do NOT attempt to use these tools. If the user asks, explain they are not configured and suggest setting them up in Settings > Integrations:\n`;
+        unavailable.forEach((t) => {
+          prompt += `- ${t}\n`;
+        });
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to fetch comm tools for prompt: ${error.message}`);
     }
 
     return prompt;

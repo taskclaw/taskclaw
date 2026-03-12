@@ -8,10 +8,14 @@ import {
   Delete,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
   Request,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { SkillsService } from './skills.service';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
@@ -31,6 +35,22 @@ export class SkillsController {
     return this.skillsService.findAll(req.accessToken, accountId, activeOnly === 'true');
   }
 
+  @Get('agents/dashboard')
+  getAgentsDashboard(
+    @Request() req,
+    @Param('accountId') accountId: string,
+  ) {
+    return this.skillsService.getAgentsDashboard(req.accessToken, accountId);
+  }
+
+  @Get('category-map')
+  getCategorySkillsMap(
+    @Request() req,
+    @Param('accountId') accountId: string,
+  ) {
+    return this.skillsService.getCategorySkillsMap(req.accessToken, accountId);
+  }
+
   @Get('category/:categoryId/default')
   findDefaultForCategory(
     @Request() req,
@@ -38,6 +58,57 @@ export class SkillsController {
     @Param('categoryId') categoryId: string,
   ) {
     return this.skillsService.findDefaultForCategory(req.accessToken, accountId, categoryId);
+  }
+
+  @Post(':id/attachments')
+  @UseInterceptors(FileInterceptor('file'))
+  @HttpCode(HttpStatus.OK)
+  uploadAttachment(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') skillId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+    return this.skillsService.uploadAttachment(
+      req.accessToken,
+      accountId,
+      skillId,
+      file,
+    );
+  }
+
+  @Delete(':id/attachments/:filename')
+  @HttpCode(HttpStatus.OK)
+  removeAttachment(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') skillId: string,
+    @Param('filename') filename: string,
+  ) {
+    return this.skillsService.removeAttachment(
+      req.accessToken,
+      accountId,
+      skillId,
+      filename,
+    );
+  }
+
+  @Get(':id/attachments/:filename/content')
+  getAttachmentContent(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') skillId: string,
+    @Param('filename') filename: string,
+  ) {
+    return this.skillsService.getAttachmentContent(
+      req.accessToken,
+      accountId,
+      skillId,
+      filename,
+    );
   }
 
   @Get(':id')

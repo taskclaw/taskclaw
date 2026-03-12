@@ -1,0 +1,14 @@
+[
+  {
+    "_description": "Master doc — auto-injected into every conversation with this agent",
+    "title": "X Content Guidelines",
+    "content": "# X Content Guidelines\n\n## Brand Voice\n- Professional but approachable\n- Data-driven claims when possible\n- Authentic — avoid corporate speak\n\n## Content Pillars\n1. **Educational**: Teach something actionable\n2. **Behind the scenes**: Show the process\n3. **Community**: Engage and respond\n4. **Promotional**: Max 20% of posts\n\n## Posting Rules\n- Never post without proofreading\n- Always include a CTA\n- Max 3 hashtags per post\n- No posts about politics, religion, or competitors\n\n## Approval Flow\n- Standard posts: Self-approve\n- Controversial topics: Manager approval required\n- Partnership posts: Legal review required",
+    "is_master": true
+  },
+  {
+    "_description": "Supplementary doc — detailed reference, not auto-injected",
+    "title": "X Algorithm Best Practices 2026",
+    "content": "# X Algorithm Best Practices\n\n## Ranking Signals\n| Signal | Weight | Description |\n|--------|--------|-------------|\n| Replies | High | Conversations boost reach |\n| Bookmarks | High | Indicates valuable content |\n| Dwell time | Medium | Time spent reading |\n| Reposts | Medium | Amplification |\n| Profile clicks | Medium | Interest signal |\n| Likes | Low | Basic engagement |\n\n## Best Posting Times (EST)\n- Mon-Fri: 8-10 AM, 12-1 PM, 5-7 PM\n- Saturday: 9-11 AM\n- Sunday: 10 AM-12 PM\n\n## Thread Performance Tips\n- Threads get 2-3x more impressions than single posts\n- First tweet hook determines 80% of thread performance\n- Optimal thread length: 5-10 tweets\n- Include a visual every 3-4 tweets",
+    "is_master": false
+  }
+]

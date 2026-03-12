@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>TaskClaw Sidebar Refactor</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#ec5b13",
+                        "background-light": "#f8f6f6",
+                        "background-dark": "#1a1a2e",
+                    },
+                    fontFamily: {
+                        "display": ["Public Sans", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Public Sans', sans-serif; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        .material-symbols-filled {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-family: 'Material Symbols Outlined';
+        }
+        .sidebar-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+        .sidebar-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .sidebar-scroll::-webkit-scrollbar-thumb {
+            background: rgba(236, 91, 19, 0.2);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 h-screen overflow-hidden flex">
+<!-- Sidebar Component -->
+<aside class="w-64 h-full bg-[#1a1a2e] flex flex-col border-r border-slate-800 shrink-0">
+<!-- Header / Logo -->
+<div class="p-6 flex items-center gap-3">
+<div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-white">restaurant_menu</span>
+</div>
+<h1 class="text-xl font-bold tracking-tight text-white">TaskClaw</h1>
+</div>
+<!-- Scrollable Navigation Area -->
+<div class="flex-1 overflow-y-auto sidebar-scroll px-3 space-y-6">
+<!-- Boards Section -->
+<div class="space-y-1">
+<div class="flex items-center justify-between px-3 mb-2">
+<h2 class="text-[11px] font-bold uppercase tracking-widest text-slate-500">Boards</h2>
+<button class="w-5 h-5 flex items-center justify-center rounded bg-primary/10 text-primary hover:bg-primary hover:text-white transition-colors">
+<span class="material-symbols-outlined text-sm">add</span>
+</button>
+</div>
+<!-- Favorite Boards -->
+<div class="space-y-0.5">
+<!-- LinkedIn Pipeline (Active + Context Menu Trigger) -->
+<div class="relative group">
+<button class="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-primary/10 text-white font-medium text-sm transition-all border-l-2 border-primary">
+<div class="flex items-center gap-3">
+<span class="material-symbols-filled text-primary text-lg">star</span>
+<span class="truncate">LinkedIn Pipeline</span>
+</div>
+</button>
+<!-- Simulated Context Menu (Right-click representation) -->
+<div class="absolute left-full top-0 ml-1 z-50 w-48 bg-[#252545] border border-slate-700 rounded-lg shadow-xl p-1.5 text-xs">
+<button class="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-primary/20 hover:text-primary rounded text-slate-200 text-left transition-colors">
+<span class="material-symbols-outlined text-sm">star_outline</span> Unfavorite
+                            </button>
+<button class="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-primary/20 hover:text-primary rounded text-slate-200 text-left transition-colors">
+<span class="material-symbols-outlined text-sm">edit</span> Rename
+                            </button>
+<button class="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-primary/20 hover:text-primary rounded text-slate-200 text-left transition-colors">
+<span class="material-symbols-outlined text-sm">content_copy</span> Duplicate
+                            </button>
+<div class="my-1 border-t border-slate-700"></div>
+<button class="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-primary/20 hover:text-primary rounded text-slate-200 text-left transition-colors">
+<span class="material-symbols-outlined text-sm">data_object</span> Export JSON
+                            </button>
+<button class="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-red-500/20 hover:text-red-400 rounded text-slate-200 text-left transition-colors">
+<span class="material-symbols-outlined text-sm">archive</span> Archive
+                            </button>
+</div>
+</div>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all group">
+<span class="material-symbols-filled text-primary/60 group-hover:text-primary text-lg">star</span>
+<span class="truncate">Sprint Board</span>
+</button>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all group">
+<span class="material-symbols-filled text-primary/60 group-hover:text-primary text-lg">star</span>
+<span class="truncate">Content Calendar</span>
+</button>
+</div>
+<!-- Recent Boards -->
+<div class="mt-4 space-y-0.5">
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+<span class="material-symbols-outlined text-lg">view_kanban</span>
+<span class="truncate">Bug Tracker</span>
+</button>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+<span class="material-symbols-outlined text-lg">view_kanban</span>
+<span class="truncate">Client Onboarding</span>
+</button>
+<button class="w-full px-3 py-2 text-primary hover:text-primary/80 font-medium text-xs text-left transition-all">
+                        See all (12)
+                    </button>
+</div>
+</div>
+<!-- Divider -->
+<div class="border-t border-slate-800 mx-3"></div>
+<!-- General Navigation -->
+<nav class="space-y-0.5">
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+<span class="material-symbols-outlined text-lg">auto_awesome</span>
+<span>AI Chat</span>
+</button>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+<span class="material-symbols-outlined text-lg">menu_book</span>
+<span>Knowledge Base</span>
+</button>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+<span class="material-symbols-outlined text-lg">label</span>
+<span>Categories</span>
+</button>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+<span class="material-symbols-outlined text-lg">construction</span>
+<span>Skills</span>
+</button>
+<button class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+<span class="material-symbols-outlined text-lg">extension</span>
+<span>Integrations</span>
+</button>
+</nav>
+<!-- Settings (Expandable) -->
+<div>
+<button class="w-full flex items-center justify-between px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 font-medium text-sm transition-all">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-lg">settings</span>
+<span>Settings</span>
+</div>
+<span class="material-symbols-outlined text-sm">keyboard_arrow_right</span>
+</button>
+</div>
+</div>
+<!-- User Profile -->
+<div class="mt-auto p-4 border-t border-slate-800 bg-[#141426]">
+<div class="flex items-center gap-3">
+<div class="relative w-9 h-9 shrink-0">
+<img alt="User Profile Avatar" class="w-full h-full rounded-full object-cover border border-primary/40" data-alt="Close up of a friendly professional human face" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCKI11U8bmGVBRDmUo5ij7QxNStTWRCoSPuvtgiqZVGsMnzqCz3dHwWpVKtve-yFKdj7dxM5Up0QU3EykYzCEnvjAOBajtgV9DGmFvYS88f4KjLTocl0-e3OFeHbqGDdK_mAkpLMGP8_rnyaopSyy2QwvNAhmkaHKmhpuQqTspd9ehEhtRF9pbAdHVT7vdkOoncVCGlSkA3w_1VS6XBXH8o3UQDkDUiixR93iHtao4KyNnWSHK6-mi6Kqv0_YXBM0Svo3unj5lvVDdd"/>
+<div class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-[#141426] rounded-full"></div>
+</div>
+<div class="flex flex-col min-w-0">
+<span class="text-xs font-semibold text-white truncate">Marcus Vane</span>
+<span class="text-[10px] text-slate-500 truncate leading-none">marcus@taskclaw.io</span>
+</div>
+<button class="ml-auto text-slate-500 hover:text-white transition-colors">
+<span class="material-symbols-outlined text-lg">more_vert</span>
+</button>
+</div>
+</div>
+</aside>
+<!-- Main Content Area Placeholder -->
+<main class="flex-1 bg-white dark:bg-slate-900 flex flex-col p-8 overflow-y-auto">
+<header class="flex items-center justify-between mb-8">
+<div>
+<div class="flex items-center gap-2 text-slate-500 text-sm mb-1">
+<span>Boards</span>
+<span class="material-symbols-outlined text-xs">chevron_right</span>
+<span class="text-slate-900 dark:text-slate-100 font-medium">LinkedIn Pipeline</span>
+</div>
+<h2 class="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100">LinkedIn Pipeline</h2>
+</div>
+<div class="flex gap-3">
+<button class="bg-primary hover:bg-primary/90 text-white font-semibold px-4 py-2 rounded-lg shadow-lg shadow-primary/20 flex items-center gap-2 transition-all">
+<span class="material-symbols-outlined">add</span>
+                    New Task
+                </button>
+</div>
+</header>
+<!-- Placeholder Board Grid -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-200 dark:border-slate-800 min-h-[500px]">
+<div class="flex items-center justify-between mb-4 px-1">
+<h3 class="font-bold flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-slate-400"></span>
+                        To Do
+                        <span class="text-xs font-normal text-slate-400 ml-1">4</span>
+</h3>
+<span class="material-symbols-outlined text-slate-400 cursor-pointer">more_horiz</span>
+</div>
+<!-- Task Card Mock -->
+<div class="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-sm border border-slate-200 dark:border-slate-700 space-y-3">
+<div class="flex justify-between items-start">
+<span class="bg-primary/10 text-primary text-[10px] font-bold px-2 py-0.5 rounded uppercase">Outreach</span>
+<span class="material-symbols-outlined text-slate-300 text-sm">attach_file</span>
+</div>
+<p class="text-sm font-medium">Follow up with Senior Product Designers at TechFlow</p>
+<div class="flex items-center gap-2">
+<img alt="Assignee" class="w-5 h-5 rounded-full" data-alt="Small circular profile picture of a team member" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAdjK3-grSErJup_rzL5yqxFuExV_E7MZiHH5cvg89rKdHz6-jb5DeepOjQAs0J96CJujpuw31TST74VOBTpNVzhWSMxebjgjdx4Ndrx_ajSnWxjGi2QTDUdCsz9JeNobKX3Ff_xFqQ3ccX8ghe945uNuwdEJuTI4PIABhtU8CZUyHOg-qiWyDMW_csgreEBL_P3fGehbudZYSgvID7F2gPiXiCPIEUlNGG0gJiLVgmMzWY8wUTH7zOIipNbQUAvXEnisRIuUy0o4X3"/>
+<span class="text-xs text-slate-500">2 days left</span>
+</div>
+</div>
+</div>
+<div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-200 dark:border-slate-800 min-h-[500px]">
+<div class="flex items-center justify-between mb-4 px-1">
+<h3 class="font-bold flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                        In Progress
+                        <span class="text-xs font-normal text-slate-400 ml-1">2</span>
+</h3>
+<span class="material-symbols-outlined text-slate-400 cursor-pointer">more_horiz</span>
+</div>
+</div>
+<div class="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 border border-slate-200 dark:border-slate-800 min-h-[500px]">
+<div class="flex items-center justify-between mb-4 px-1">
+<h3 class="font-bold flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+                        Closed
+                        <span class="text-xs font-normal text-slate-400 ml-1">12</span>
+</h3>
+<span class="material-symbols-outlined text-slate-400 cursor-pointer">more_horiz</span>
+</div>
+</div>
+</div>
+</main>
+</body></html>

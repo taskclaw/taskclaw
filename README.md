@@ -130,6 +130,43 @@ managed version with additional features:
 - **Queue**: BullMQ + Redis
 - **Drag & Drop**: @dnd-kit
 
+## Claude Code Skills (AI Builder)
+
+TaskClaw ships with **Claude Code skills** that let you create boards, agents, skills, and knowledge bases through guided AI conversations. Just invoke a slash command and Claude walks you through a wizard, then generates a JSON manifest you can import.
+
+### Available Skills
+
+| Skill | Command | What it does |
+|-------|---------|-------------|
+| **TaskClaw Builder** | `/taskclaw-builder` | Orchestrates all builder skills — design a complete board + agents + skills in one session |
+| **Board Architect** | `/board-architect` | Design board workflows — pipeline stages, AI automation, routing |
+| **Skill Writer** | `/skill-writer` | Write AI skill instructions — persona, process, output format |
+| **Agent Designer** | `/agent-designer` | Design agent categories with optimal skill groupings |
+| **Knowledge Curator** | `/knowledge-curator` | Structure knowledge base documents for agents |
+| **Dev Setup** | `/dev-setup` | Set up a local development environment (Docker, Supabase, env config) |
+
+### How It Works
+
+1. Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and open the TaskClaw project
+2. Run a skill command (e.g. `/board-architect`)
+3. Claude guides you through a wizard-like Q&A
+4. It generates a JSON manifest in the [TaskClaw bundle format](./.claude/skills/taskclaw-shared/bundle_format.md)
+5. Go to **Import** in the TaskClaw sidebar (`/dashboard/import`) and drop your `.json` file
+6. Everything is provisioned automatically (boards, agents, skills, knowledge docs)
+
+### Creating Your Own Skill
+
+Skills live in `.claude/skills/<name>/` with this structure:
+
+```
+.claude/skills/my-skill/
+├── SKILL.md              # Required — main definition (YAML frontmatter + markdown)
+├── references/           # Optional — schemas, guides
+└── assets/               # Optional — examples, templates
+```
+
+See [.claude/skills/README.md](./.claude/skills/README.md) for the full authoring guide.
+
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.

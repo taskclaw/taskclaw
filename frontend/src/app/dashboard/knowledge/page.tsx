@@ -10,6 +10,7 @@ import {
   deleteKnowledgeDoc,
   uploadAttachment,
   removeAttachment,
+  getAttachmentContent,
 } from './actions';
 import {
   Star,
@@ -20,10 +21,15 @@ import {
   X,
   FileText,
   Paperclip,
-  Upload,
   File,
-  Loader2,
+  Download,
+  PenLine,
+  FolderUp,
 } from 'lucide-react';
+import { FileDropZone, type DroppedFile } from '@/components/ui/file-drop-zone';
+import { toast } from 'sonner';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
+import { cn } from '@/lib/utils';
 
 interface FileAttachment {
   name: string;
@@ -64,8 +70,100 @@ export default function KnowledgePage() {
     is_master: false,
   });
   const [showPreview, setShowPreview] = useState(false);
+  const [activeTab, setActiveTab] = useState<'write' | 'import'>('write');
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
-  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [removeAttTarget, setRemoveAttTarget] = useState<string | null>(null);
+  const [removeAttLoading, setRemoveAttLoading] = useState(false);
+
+  // File editor sidebar state
+  const [activeFile, setActiveFile] = useState<string>('__DOC_CONTENT__');
+  const [fileContents, setFileContents] = useState<Map<string, string>>(new Map());
+  const [modifiedFiles, setModifiedFiles] = useState<Set<string>>(new Set());
+  const [loadingFiles, setLoadingFiles] = useState<Set<string>>(new Set());
+  const [pendingFiles, setPendingFiles] = useState<DroppedFile[]>([]);
+
+  const TEXT_EXTENSIONS = new Set([
+    'md', 'txt', 'csv', 'json', 'xml', 'yaml', 'yml',
+    'js', 'ts', 'py', 'sh', 'html', 'css', 'sql',
+    'toml', 'ini', 'cfg', 'conf', 'env', 'log',
+  ]);
+
+  function isTextFile(filename: string): boolean {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    return TEXT_EXTENSIONS.has(ext);
+  }
+
+  function resetFileEditor() {
+    setActiveFile('__DOC_CONTENT__');
+    setFileContents(new Map());
+    setModifiedFiles(new Set());
+    setLoadingFiles(new Set());
+    setPendingFiles([]);
+  }
+
+  async function handleSelectFile(filename: string) {
+    if (filename === '__DOC_CONTENT__') {
+      setActiveFile(filename);
+      return;
+    }
+    // Already cached
+    if (fileContents.has(filename)) {
+      setActiveFile(filename);
+      return;
+    }
+    // For new docs, load from pendingFiles
+    if (!editingDoc) {
+      const pending = pendingFiles.find((f) => f.path === filename || f.name === filename);
+      if (pending) {
+        setFileContents((prev) => new Map(prev).set(filename, pending.content));
+        setActiveFile(filename);
+      }
+      return;
+    }
+    // Fetch from backend
+    setLoadingFiles((prev) => new Set(prev).add(filename));
+    try {
+      const result = await getAttachmentContent(editingDoc.id, filename);
+      setFileContents((prev) => new Map(prev).set(filename, result.content));
+      setActiveFile(filename);
+    } catch (error: any) {
+      toast.error(`Failed to load ${filename}: ${error.message}`);
+    } finally {
+      setLoadingFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(filename);
+        return next;
+      });
+    }
+  }
+
+  function handleEditorChange(value: string) {
+    if (activeFile === '__DOC_CONTENT__') {
+      setFormData((prev) => ({ ...prev, content: value }));
+    } else {
+      setFileContents((prev) => new Map(prev).set(activeFile, value));
+      setModifiedFiles((prev) => new Set(prev).add(activeFile));
+    }
+  }
+
+  const currentEditorContent =
+    activeFile === '__DOC_CONTENT__'
+      ? formData.content
+      : fileContents.get(activeFile) || '';
+
+  const sidebarFiles = editingDoc
+    ? attachments
+    : pendingFiles.map((f) => ({
+        name: f.path || f.name,
+        size: f.file.size,
+        type: f.file.type,
+        url: '',
+        uploaded_at: '',
+      }));
 
   useEffect(() => {
     loadData();
@@ -82,7 +180,7 @@ export default function KnowledgePage() {
       setCategories(categoriesData);
     } catch (error) {
       console.error('Error loading data:', error);
-      alert('Failed to load knowledge base');
+      toast.error('Failed to load knowledge base');
     } finally {
       setLoading(false);
     }
@@ -97,6 +195,10 @@ export default function KnowledgePage() {
     });
     setIsCreating(true);
     setEditingDoc(null);
+    setAttachments([]);
+    setShowPreview(false);
+    setActiveTab('write');
+    resetFileEditor();
   }
 
   function startEdit(doc: KnowledgeDoc) {
@@ -109,6 +211,9 @@ export default function KnowledgePage() {
     setAttachments(doc.file_attachments || []);
     setEditingDoc(doc);
     setIsCreating(false);
+    setShowPreview(false);
+    setActiveTab('write');
+    resetFileEditor();
   }
 
   function cancelEdit() {
@@ -116,12 +221,13 @@ export default function KnowledgePage() {
     setIsCreating(false);
     setFormData({ title: '', content: '', category_id: '', is_master: false });
     setAttachments([]);
+    resetFileEditor();
   }
 
   async function handleSave() {
     try {
       if (!formData.title.trim()) {
-        alert('Title is required');
+        toast.error('Title is required');
         return;
       }
 
@@ -133,16 +239,51 @@ export default function KnowledgePage() {
       };
 
       if (editingDoc) {
+        // Upload modified reference files first
+        for (const filename of modifiedFiles) {
+          const content = fileContents.get(filename);
+          if (content === undefined) continue;
+          try {
+            const blob = new Blob([content], { type: 'text/plain' });
+            const file = new window.File([blob], filename, { type: 'text/plain' });
+            const fd = new FormData();
+            fd.append('file', file, filename);
+            await uploadAttachment(editingDoc.id, fd);
+          } catch (err: any) {
+            toast.error(`Failed to save ${filename}: ${err.message}`);
+            return;
+          }
+        }
         await updateKnowledgeDoc(editingDoc.id, data);
       } else {
-        await createKnowledgeDoc(data);
+        // Create doc first, then upload pending files
+        const newDoc = await createKnowledgeDoc(data);
+        if (pendingFiles.length > 0 && newDoc?.id) {
+          for (const droppedFile of pendingFiles) {
+            try {
+              const fd = new FormData();
+              const fileKey = droppedFile.path || droppedFile.name;
+              const modifiedContent = fileContents.get(fileKey);
+              if (modifiedContent !== undefined) {
+                const blob = new Blob([modifiedContent], { type: 'text/plain' });
+                const file = new window.File([blob], fileKey, { type: 'text/plain' });
+                fd.append('file', file, fileKey);
+              } else {
+                fd.append('file', droppedFile.file, fileKey);
+              }
+              await uploadAttachment(newDoc.id, fd);
+            } catch (err: any) {
+              console.error(`Failed to upload ${droppedFile.name}:`, err);
+            }
+          }
+        }
       }
 
       await loadData();
       cancelEdit();
     } catch (error: any) {
       console.error('Error saving doc:', error);
-      alert(error.message || 'Failed to save doc');
+      toast.error(error.message || 'Failed to save doc');
     }
   }
 
@@ -152,77 +293,100 @@ export default function KnowledgePage() {
       await loadData();
     } catch (error: any) {
       console.error('Error setting master:', error);
-      alert(error.message || 'Failed to set as master doc');
+      toast.error(error.message || 'Failed to set as master doc');
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this document?')) {
-      return;
-    }
-
+  async function confirmDeleteDoc() {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
     try {
-      await deleteKnowledgeDoc(id);
-      await loadData();
+      await deleteKnowledgeDoc(deleteTarget);
+      setDeleteTarget(null);
+      setDeletingId(deleteTarget);
+      setTimeout(() => {
+        setDocs((prev) => prev.filter((d) => d.id !== deleteTarget));
+        setDeletingId(null);
+        toast.success('Document deleted');
+      }, 500);
     } catch (error: any) {
       console.error('Error deleting doc:', error);
-      alert(error.message || 'Failed to delete doc');
-    }
-  }
-
-  async function handleUploadAttachment(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !editingDoc) return;
-
-    // Reset the input so the same file can be re-selected
-    e.target.value = '';
-
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      alert('File is too large. Maximum size is 10MB.');
-      return;
-    }
-
-    const allowedExtensions = [
-      'pdf', 'txt', 'md', 'doc', 'docx', 'csv', 'json', 'png', 'jpg', 'jpeg',
-    ];
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (!ext || !allowedExtensions.includes(ext)) {
-      alert(`File type not allowed. Allowed types: ${allowedExtensions.join(', ')}`);
-      return;
-    }
-
-    try {
-      setUploadingFile(true);
-      const fd = new FormData();
-      fd.append('file', file);
-      const updatedDoc = await uploadAttachment(editingDoc.id, fd);
-      setAttachments(updatedDoc.file_attachments || []);
-      // Also update the doc in the list
-      setDocs((prev) =>
-        prev.map((d) => (d.id === editingDoc.id ? { ...d, file_attachments: updatedDoc.file_attachments } : d)),
-      );
-    } catch (error: any) {
-      console.error('Error uploading attachment:', error);
-      alert(error.message || 'Failed to upload attachment');
+      toast.error(error.message || 'Failed to delete doc');
     } finally {
-      setUploadingFile(false);
+      setDeleteLoading(false);
     }
   }
 
-  async function handleRemoveAttachment(filename: string) {
-    if (!editingDoc) return;
-    if (!confirm(`Remove attachment "${filename}"?`)) return;
+  async function handleFilesDropped(files: DroppedFile[]) {
+    if (editingDoc) {
+      // Edit mode: upload immediately
+      for (const droppedFile of files) {
+        const name = droppedFile.name;
+        setUploadingFiles((prev) => new Set(prev).add(name));
+        try {
+          const fd = new FormData();
+          fd.append('file', droppedFile.file);
+          const updatedDoc = await uploadAttachment(editingDoc.id, fd);
+          setAttachments(updatedDoc.file_attachments || []);
+          setDocs((prev) =>
+            prev.map((d) => (d.id === editingDoc.id ? { ...d, file_attachments: updatedDoc.file_attachments } : d)),
+          );
+        } catch (error: any) {
+          console.error(`Error uploading ${name}:`, error);
+          toast.error(`Failed to upload ${name}: ${error.message}`);
+        } finally {
+          setUploadingFiles((prev) => {
+            const next = new Set(prev);
+            next.delete(name);
+            return next;
+          });
+        }
+      }
+    } else {
+      // Create mode: queue files for upload after save
+      setPendingFiles((prev) => {
+        const existing = new Set(prev.map((f) => f.path || f.name));
+        const newFiles = files.filter((f) => !existing.has(f.path || f.name));
+        return [...prev, ...newFiles];
+      });
+    }
+  }
 
+  async function confirmRemoveAttachment() {
+    if (!removeAttTarget) return;
+
+    // Handle pending file removal (create mode)
+    if (!editingDoc) {
+      const filename = removeAttTarget;
+      setPendingFiles((prev) => prev.filter((f) => (f.path || f.name) !== filename));
+      // Clean up file editor caches
+      if (activeFile === filename) setActiveFile('__DOC_CONTENT__');
+      setFileContents((prev) => { const next = new Map(prev); next.delete(filename); return next; });
+      setModifiedFiles((prev) => { const next = new Set(prev); next.delete(filename); return next; });
+      setRemoveAttTarget(null);
+      toast.success('File removed');
+      return;
+    }
+
+    // Handle existing attachment removal (edit mode)
+    setRemoveAttLoading(true);
     try {
-      const updatedDoc = await removeAttachment(editingDoc.id, filename);
+      const updatedDoc = await removeAttachment(editingDoc.id, removeAttTarget);
       setAttachments(updatedDoc.file_attachments || []);
       setDocs((prev) =>
         prev.map((d) => (d.id === editingDoc.id ? { ...d, file_attachments: updatedDoc.file_attachments } : d)),
       );
+      // Clean up file editor caches
+      if (activeFile === removeAttTarget) setActiveFile('__DOC_CONTENT__');
+      setFileContents((prev) => { const next = new Map(prev); next.delete(removeAttTarget); return next; });
+      setModifiedFiles((prev) => { const next = new Set(prev); next.delete(removeAttTarget); return next; });
+      setRemoveAttTarget(null);
+      toast.success('Attachment removed');
     } catch (error: any) {
       console.error('Error removing attachment:', error);
-      alert(error.message || 'Failed to remove attachment');
+      toast.error(error.message || 'Failed to remove attachment');
+    } finally {
+      setRemoveAttLoading(false);
     }
   }
 
@@ -305,7 +469,10 @@ export default function KnowledgePage() {
                 return (
                   <div
                     key={doc.id}
-                    className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-white dark:bg-gray-800"
+                    className={cn(
+                      'border rounded-lg p-4 hover:shadow-md transition-shadow bg-white dark:bg-gray-800',
+                      deletingId === doc.id && 'animate-deleting',
+                    )}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -358,7 +525,7 @@ export default function KnowledgePage() {
                           <Edit className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDelete(doc.id)}
+                          onClick={() => setDeleteTarget(doc.id)}
                           className="p-2 text-gray-500 hover:text-red-600"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -376,7 +543,7 @@ export default function KnowledgePage() {
       {/* Editor Modal */}
       {(editingDoc || isCreating) && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-4xl max-h-[90vh] flex flex-col">
+          <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
             {/* Modal Header */}
             <div className="border-b p-4 flex justify-between items-center">
               <h2 className="text-xl font-bold">
@@ -387,35 +554,35 @@ export default function KnowledgePage() {
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Title</label>
-                <input
-                  type="text"
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
-                  placeholder="Document title..."
-                />
+            {/* Metadata Fields */}
+            <div className="px-4 pt-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Title</label>
+                  <input
+                    type="text"
+                    value={formData.title}
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+                    placeholder="Document title..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Category</label>
+                  <select
+                    value={formData.category_id}
+                    onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
+                  >
+                    <option value="">Uncategorized</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Category</label>
-                <select
-                  value={formData.category_id}
-                  onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
-                >
-                  <option value="">Uncategorized</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -428,103 +595,216 @@ export default function KnowledgePage() {
                   Set as Master Document (auto-loaded for category tasks)
                 </label>
               </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-sm font-medium">Content (Markdown)</label>
-                  <button
-                    onClick={() => setShowPreview(!showPreview)}
-                    className="text-xs text-blue-600 hover:underline"
-                  >
-                    {showPreview ? 'Show Editor' : 'Show Preview'}
-                  </button>
-                </div>
-                {showPreview ? (
-                  <div className="border rounded-md p-4 min-h-[300px] prose dark:prose-invert max-w-none">
-                    {formData.content || 'No content yet...'}
-                  </div>
-                ) : (
-                  <textarea
-                    value={formData.content}
-                    onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 font-mono text-sm"
-                    rows={15}
-                    placeholder="Write your knowledge doc in Markdown..."
-                  />
-                )}
-              </div>
             </div>
 
-            {/* Attachments Section (only shown when editing an existing doc) */}
-            {editingDoc && (
-              <div className="border-t px-4 py-4">
-                <div className="flex items-center justify-between mb-3">
-                  <label className="text-sm font-medium flex items-center gap-2">
-                    <Paperclip className="w-4 h-4" />
-                    Attachments
-                  </label>
-                  <label
-                    className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm border rounded-md cursor-pointer
-                      ${uploadingFile
-                        ? 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-700'
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-                      }`}
-                  >
-                    {uploadingFile ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Upload className="w-4 h-4" />
-                    )}
-                    {uploadingFile ? 'Uploading...' : 'Upload File'}
-                    <input
-                      type="file"
-                      className="hidden"
-                      onChange={handleUploadAttachment}
-                      disabled={uploadingFile}
-                      accept=".pdf,.txt,.md,.doc,.docx,.csv,.json,.png,.jpg,.jpeg"
-                    />
-                  </label>
-                </div>
-                <p className="text-xs text-gray-500 mb-3">
-                  Max 10MB. Allowed: pdf, txt, md, doc, docx, csv, json, png, jpg, jpeg
-                </p>
-                {attachments.length === 0 ? (
-                  <p className="text-sm text-gray-400 italic">No attachments yet.</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {attachments.map((att) => (
-                      <li
-                        key={att.name}
-                        className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded-md"
-                      >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <File className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                          <a
-                            href={att.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-blue-600 dark:text-blue-400 hover:underline truncate"
-                            title={att.name}
-                          >
-                            {att.name}
-                          </a>
-                          <span className="text-xs text-gray-500 flex-shrink-0">
-                            {formatFileSize(att.size)}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => handleRemoveAttachment(att.name)}
-                          className="p-1 text-gray-400 hover:text-red-600 flex-shrink-0"
-                          title="Remove attachment"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+            {/* Tabs */}
+            <div className="flex border-b px-4">
+              <button
+                onClick={() => setActiveTab('write')}
+                className={cn(
+                  'px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2',
+                  activeTab === 'write'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700',
                 )}
-              </div>
-            )}
+              >
+                <PenLine className="w-4 h-4" />
+                Write
+              </button>
+              <button
+                onClick={() => setActiveTab('import')}
+                className={cn(
+                  'px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2',
+                  activeTab === 'import'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700',
+                )}
+              >
+                <FolderUp className="w-4 h-4" />
+                Import
+                {(attachments.length > 0 || pendingFiles.length > 0) && (
+                  <span className="text-xs bg-gray-200 dark:bg-gray-600 rounded-full px-1.5 py-0.5">
+                    {attachments.length + pendingFiles.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Tab Content */}
+            <div className="flex-1 overflow-y-auto min-h-0">
+              {activeTab === 'write' ? (
+                <div className="p-4">
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-sm font-medium">
+                      Content
+                      {activeFile !== '__DOC_CONTENT__' && (
+                        <span className="text-gray-400 font-normal ml-2">— {activeFile}</span>
+                      )}
+                    </label>
+                    <button
+                      onClick={() => setShowPreview(!showPreview)}
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      {showPreview ? 'Show Editor' : 'Show Preview'}
+                    </button>
+                  </div>
+                  <div className="flex gap-0 border rounded-md overflow-hidden" style={{ height: '400px' }}>
+                    {/* File Sidebar */}
+                    {sidebarFiles.length > 0 && (
+                      <div className="w-48 flex-shrink-0 border-r bg-gray-50 dark:bg-gray-900 overflow-y-auto">
+                        {/* Main Document Content button */}
+                        <button
+                          onClick={() => handleSelectFile('__DOC_CONTENT__')}
+                          className={cn(
+                            'w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors',
+                            activeFile === '__DOC_CONTENT__' && 'bg-blue-50 dark:bg-blue-950/30 text-blue-600 border-r-2 border-blue-600',
+                          )}
+                        >
+                          <PenLine className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span className="truncate">Document Content</span>
+                        </button>
+
+                        {/* Reference Files Section */}
+                        <div className="px-3 py-1.5">
+                          <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
+                            Reference Files
+                          </p>
+                        </div>
+
+                        {sidebarFiles.map((att) => {
+                          const editable = isTextFile(att.name);
+                          const isActive = activeFile === att.name;
+                          const isLoading = loadingFiles.has(att.name);
+                          const isModified = modifiedFiles.has(att.name);
+
+                          return (
+                            <button
+                              key={att.name}
+                              onClick={() => editable && handleSelectFile(att.name)}
+                              disabled={!editable || isLoading}
+                              className={cn(
+                                'w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors',
+                                editable
+                                  ? 'hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer'
+                                  : 'opacity-50 cursor-not-allowed',
+                                isActive && 'bg-blue-50 dark:bg-blue-950/30 text-blue-600 border-r-2 border-blue-600',
+                              )}
+                              title={editable ? att.name : `${att.name} (binary, not editable)`}
+                            >
+                              {isLoading ? (
+                                <div className="w-3.5 h-3.5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                              ) : (
+                                <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                              )}
+                              <span className="truncate">{att.name}</span>
+                              {isModified && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0 ml-auto" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Editor / Preview */}
+                    {showPreview ? (
+                      <div className="flex-1 px-3 py-2 overflow-y-auto prose dark:prose-invert max-w-none min-w-0">
+                        {currentEditorContent || 'No content yet...'}
+                      </div>
+                    ) : (
+                      <textarea
+                        value={currentEditorContent}
+                        onChange={(e) => handleEditorChange(e.target.value)}
+                        className="flex-1 px-3 py-2 dark:bg-gray-700 font-mono text-sm resize-none focus:outline-none min-w-0"
+                        placeholder={activeFile === '__DOC_CONTENT__' ? 'Write your knowledge doc in Markdown...' : `Edit ${activeFile}...`}
+                      />
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* Import Tab */
+                <div className="p-4 space-y-3">
+                  <FileDropZone
+                    onFilesDropped={handleFilesDropped}
+                    accept=".pdf,.txt,.md,.doc,.docx,.csv,.json,.png,.jpg,.jpeg"
+                    disabled={uploadingFiles.size > 0}
+                  />
+                  {(attachments.length > 0 || pendingFiles.length > 0 || uploadingFiles.size > 0) && (
+                    <div className="space-y-1">
+                      {/* Existing attachments (edit mode) */}
+                      {attachments.map((att) => (
+                        <div
+                          key={att.name}
+                          className="flex items-center justify-between px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <File className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            <span className="truncate">{att.name}</span>
+                            <span className="text-xs text-gray-400 flex-shrink-0">
+                              {formatFileSize(att.size)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                            <a
+                              href={att.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1 text-gray-400 hover:text-blue-500"
+                              title="Download"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                            <button
+                              onClick={() => setRemoveAttTarget(att.name)}
+                              className="p-1 text-gray-400 hover:text-red-500"
+                              title="Remove"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      {/* Pending files (create mode) */}
+                      {pendingFiles.map((f) => {
+                        const fileKey = f.path || f.name;
+                        return (
+                          <div
+                            key={fileKey}
+                            className="flex items-center justify-between px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <File className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                              <span className="truncate">{fileKey}</span>
+                              <span className="text-xs text-gray-400 flex-shrink-0">
+                                {formatFileSize(f.file.size)}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => setRemoveAttTarget(fileKey)}
+                              className="p-1 text-gray-400 hover:text-red-500 ml-2 flex-shrink-0"
+                              title="Remove"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                      {/* Uploading files spinner */}
+                      {[...uploadingFiles].map((name) => (
+                        <div
+                          key={name}
+                          className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm text-gray-400"
+                        >
+                          <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                          <span className="truncate">Uploading {name}...</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Modal Footer */}
             <div className="border-t p-4 flex justify-end gap-2">
@@ -545,6 +825,25 @@ export default function KnowledgePage() {
           </div>
         </div>
       )}
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+        onConfirm={confirmDeleteDoc}
+        title="Delete document?"
+        description="This knowledge document will be permanently deleted."
+        loading={deleteLoading}
+      />
+
+      <ConfirmDeleteDialog
+        open={!!removeAttTarget}
+        onOpenChange={(open) => { if (!open) setRemoveAttTarget(null) }}
+        onConfirm={confirmRemoveAttachment}
+        title="Remove attachment?"
+        description={`Remove "${removeAttTarget || ''}" from this document?`}
+        confirmLabel="Remove"
+        loading={removeAttLoading}
+      />
     </div>
   );
 }

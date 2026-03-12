@@ -1,0 +1,30 @@
+{
+  "bundle_version": "1.0",
+  "name": "TaskClaw Default Boards",
+  "description": "Default seed boards for new TaskClaw accounts. Includes the X Content Pipeline and Personal Board with all required categories, skills, and agent configurations.",
+  "created_at": "2026-03-12",
+  "author": "system@taskclaw.co",
+
+  "boards": [
+    { "$ref": "./x-content-pipeline.json" },
+    { "$ref": "./personal-board.json" }
+  ],
+
+  "_readme": {
+    "how_slugs_work": "Every entity uses a deterministic slug for cross-referencing. When imported, the system creates UUIDs but maintains slug-based lookups so categories, skills, and board steps stay connected.",
+    "import_order": "1) Categories → 2) Skills → 3) category_skills junction → 4) Board template → 5) Board instance + steps with linked_category_id resolved from slugs",
+    "entity_relationships": {
+      "board.default_category_slug": "References a category by slug. Resolved to default_category_id on import.",
+      "step.linked_category_slug": "References a category by slug. Resolved to linked_category_id on import.",
+      "category.skills[].slug": "Skills embedded in the category. Created and linked via category_skills junction.",
+      "category.knowledge_docs[]": "Knowledge docs embedded in the category. Created with category_id FK."
+    },
+    "slug_conventions": {
+      "boards": "kebab-case, globally unique per account (e.g., x-content-pipeline)",
+      "categories": "kebab-case, unique per account (e.g., x-copywriter, personal-secretary)",
+      "skills": "kebab-case, unique per account (e.g., x-post-writer, personal-task-planner)",
+      "steps": "kebab-case, unique per board (e.g., idea, drafting, inbox, planning)"
+    },
+    "extending": "To add a new seed board: create a new JSON file following the manifest_version 1.0 schema, add it to the boards array, and run the seed migration."
+  }
+}

@@ -47,6 +47,21 @@ export class KnowledgeController {
     return this.knowledgeService.findMasterForCategory(req.accessToken, accountId, categoryId);
   }
 
+  @Get(':id/attachments/:filename/content')
+  getAttachmentContent(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') docId: string,
+    @Param('filename') filename: string,
+  ) {
+    return this.knowledgeService.getAttachmentContent(
+      req.accessToken,
+      accountId,
+      docId,
+      filename,
+    );
+  }
+
   @Get(':id')
   findOne(@Request() req, @Param('accountId') accountId: string, @Param('id') id: string) {
     return this.knowledgeService.findOne(req.accessToken, accountId, id);

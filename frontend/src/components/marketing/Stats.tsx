@@ -70,7 +70,7 @@ const Stats = () => {
       <div className="section-container">
         <div className="mb-12">
           <div className="inline-flex items-center justify-center mb-3 px-3 py-1 rounded-full bg-foreground/5 border border-foreground/10 text-xs text-foreground/70">
-            <span className="mr-2 size-2 rounded-full bg-red-500"></span>
+            <span className="mr-2 size-2 rounded-full bg-claw-red"></span>
             The Problem
           </div>
           <h2 className="section-title reveal">
@@ -90,7 +90,7 @@ const Stats = () => {
               style={{ animationDelay: `${index * 0.1}s` }}
             >
               <div className="flex flex-col h-full">
-                <div className="mb-4 w-12 h-12 rounded-full flex items-center justify-center bg-red-500/10 text-red-400">
+                <div className="mb-4 w-12 h-12 rounded-full flex items-center justify-center bg-claw-red/10 text-claw-red">
                   {problem.icon}
                 </div>
                 <h3 className="text-xl font-bold mb-3 text-foreground">{problem.title}</h3>

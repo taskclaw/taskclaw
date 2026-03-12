@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,14 +25,26 @@ import {
     SelectValue,
 } from '@/components/ui/select'
 import {
+    Tabs,
+    TabsContent,
+    TabsList,
+    TabsTrigger,
+} from '@/components/ui/tabs'
+import {
     Loader2, Plus, Pencil, Trash2, Eye, EyeOff,
     CheckCircle, XCircle, Link2, Unlink, Filter,
-    GripVertical,
+    GripVertical, RefreshCw, Brain, BookOpen, X, Settings2,
 } from 'lucide-react'
 import {
     getCategories, createCategory, updateCategory, deleteCategory,
     getSources, updateSource, getSourceProperties,
 } from './actions'
+import { toast } from 'sonner'
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
+import { cn } from '@/lib/utils'
+import { getSkills, getSkillsForCategory, getCategorySkillsMap, linkSkillToCategory, unlinkSkillFromCategory } from '../skills/actions'
+import { getAgentSyncStatus, triggerSync, type SyncStatusDetail } from '../agent-sync/actions'
+import { getKnowledgeDocs } from '../../knowledge/actions'
 
 // ============================================================================
 // Types
@@ -45,6 +58,20 @@ interface Category {
     visible: boolean
     account_id: string
     created_at: string
+}
+
+interface Skill {
+    id: string
+    name: string
+    description: string
+    is_active: boolean
+}
+
+interface KnowledgeDoc {
+    id: string
+    title: string
+    category_id: string | null
+    is_master: boolean
 }
 
 interface Source {
@@ -158,27 +185,99 @@ export default function CategoriesPage() {
     const [editingCategory, setEditingCategory] = useState<Category | null>(null)
     const [filterSourceId, setFilterSourceId] = useState<string | null>(null)
     const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+    const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+    const [deleteLoading, setDeleteLoading] = useState(false)
+    const [deletingId, setDeletingId] = useState<string | null>(null)
 
-    const loadData = useCallback(async () => {
+    // Background-loaded data (non-blocking)
+    const [syncDetails, setSyncDetails] = useState<Map<string, SyncStatusDetail>>(new Map())
+    const [categorySkills, setCategorySkills] = useState<Map<string, Skill[]>>(new Map())
+
+    // Edit dialog lazy-loaded data
+    const [editLoading, setEditLoading] = useState(false)
+    const [allSkills, setAllSkills] = useState<Skill[]>([])
+    const [allKnowledgeDocs, setAllKnowledgeDocs] = useState<KnowledgeDoc[]>([])
+    const [editCategorySkills, setEditCategorySkills] = useState<Skill[]>([])
+
+    const [linkingCategory, setLinkingCategory] = useState<string | null>(null)
+    const searchParams = useSearchParams()
+
+    // ── Step 1: Fast initial load — only categories + sources ──
+    const loadListData = useCallback(async () => {
         setLoading(true)
-        const [catData, srcData] = await Promise.all([getCategories(), getSources()])
+        const [catData, srcData] = await Promise.all([
+            getCategories(),
+            getSources(),
+        ])
         setCategories(catData)
         setSources(srcData)
         setLoading(false)
+        return catData
     }, [])
 
-    useEffect(() => { loadData() }, [loadData])
+    useEffect(() => { loadListData() }, [loadListData])
+
+    // ── Step 2: Background load sync status + skill chips (non-blocking) ──
+    useEffect(() => {
+        // Load sync status in background
+        getAgentSyncStatus().then((syncData) => {
+            if (syncData?.details) {
+                const map = new Map<string, SyncStatusDetail>()
+                for (const d of syncData.details) map.set(d.category_id, d)
+                setSyncDetails(map)
+            }
+        }).catch(() => {})
+
+        // Load category skills map in background (1 call replaces N)
+        getCategorySkillsMap().then((map) => {
+            const skillsMap = new Map<string, Skill[]>()
+            for (const [catId, skills] of Object.entries(map)) {
+                if (skills.length > 0) skillsMap.set(catId, skills)
+            }
+            setCategorySkills(skillsMap)
+        }).catch(() => {})
+    }, [])
+
+    // ── Step 3: Lazy load edit data when dialog opens ──
+    const loadEditData = useCallback(async (categoryId: string) => {
+        setEditLoading(true)
+        const [skillsData, knowledgeData, catSkills] = await Promise.all([
+            getSkills(),
+            getKnowledgeDocs().catch(() => []),
+            getSkillsForCategory(categoryId).catch(() => []),
+        ])
+        setAllSkills(skillsData || [])
+        setAllKnowledgeDocs(knowledgeData || [])
+        setEditCategorySkills(catSkills || [])
+        setEditLoading(false)
+    }, [])
+
+    const openEditDialog = useCallback((cat: Category) => {
+        setEditingCategory(cat)
+        loadEditData(cat.id)
+    }, [loadEditData])
+
+    // Auto-open edit dialog when navigating with ?edit=categoryId
+    useEffect(() => {
+        const editId = searchParams.get('edit')
+        if (editId && categories.length > 0 && !editingCategory) {
+            const cat = categories.find((c) => c.id === editId)
+            if (cat) openEditDialog(cat)
+        }
+    }, [searchParams, categories]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Targeted mutations (no full reload) ──
 
     const handleToggleVisibility = async (cat: Category) => {
         const result = await updateCategory(cat.id, { visible: !cat.visible })
         if (result.error) {
             setAlert({ type: 'error', message: result.error })
         } else {
-            loadData()
+            setCategories((prev) => prev.map((c) => c.id === cat.id ? { ...c, visible: !c.visible } : c))
         }
     }
 
-    const handleDelete = async (catId: string) => {
+    const requestDelete = (catId: string) => {
         const linkedSources = sources.filter((s) => s.category_id === catId)
         if (linkedSources.length > 0) {
             setAlert({
@@ -187,13 +286,86 @@ export default function CategoriesPage() {
             })
             return
         }
-        if (!confirm('Delete this category? Tasks in this category will lose their assignment.')) return
-        const result = await deleteCategory(catId)
-        if (result.error) {
-            setAlert({ type: 'error', message: result.error })
-        } else {
-            setAlert({ type: 'success', message: 'Category deleted.' })
-            loadData()
+        setDeleteTarget(catId)
+    }
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return
+        setDeleteLoading(true)
+        try {
+            const result = await deleteCategory(deleteTarget)
+            if (result.error) {
+                toast.error(result.error)
+            } else {
+                setDeleteTarget(null)
+                setDeletingId(deleteTarget)
+                setTimeout(() => {
+                    setCategories((prev) => prev.filter((c) => c.id !== deleteTarget))
+                    setCategorySkills((prev) => {
+                        const next = new Map(prev)
+                        next.delete(deleteTarget)
+                        return next
+                    })
+                    setDeletingId(null)
+                    toast.success('Category deleted')
+                }, 500)
+            }
+        } catch (e: any) {
+            toast.error(e.message || 'Failed to delete category')
+        } finally {
+            setDeleteLoading(false)
+        }
+    }
+
+    const handleLinkSkill = async (categoryId: string, skillId: string) => {
+        try {
+            await linkSkillToCategory(skillId, categoryId)
+            setLinkingCategory(null)
+            // Update edit dialog skills
+            const skill = allSkills.find((s) => s.id === skillId)
+            if (skill) {
+                setEditCategorySkills((prev) => [...prev, skill])
+                setCategorySkills((prev) => {
+                    const next = new Map(prev)
+                    const existing = next.get(categoryId) || []
+                    next.set(categoryId, [...existing, skill])
+                    return next
+                })
+            }
+        } catch (e: any) {
+            setAlert({ type: 'error', message: e.message || 'Failed to link skill' })
+        }
+    }
+
+    const handleUnlinkSkill = async (categoryId: string, skillId: string) => {
+        try {
+            await unlinkSkillFromCategory(skillId, categoryId)
+            // Update edit dialog skills
+            setEditCategorySkills((prev) => prev.filter((s) => s.id !== skillId))
+            setCategorySkills((prev) => {
+                const next = new Map(prev)
+                const existing = next.get(categoryId) || []
+                next.set(categoryId, existing.filter((s) => s.id !== skillId))
+                return next
+            })
+        } catch (e: any) {
+            setAlert({ type: 'error', message: e.message || 'Failed to unlink skill' })
+        }
+    }
+
+    const handleSyncCategory = async (categoryId: string) => {
+        try {
+            await triggerSync(categoryId)
+            setAlert({ type: 'success', message: 'Sync triggered successfully.' })
+            // Refresh sync status only
+            const syncData = await getAgentSyncStatus()
+            if (syncData?.details) {
+                const map = new Map<string, SyncStatusDetail>()
+                for (const d of syncData.details) map.set(d.category_id, d)
+                setSyncDetails(map)
+            }
+        } catch (e: any) {
+            setAlert({ type: 'error', message: e.message || 'Sync failed' })
         }
     }
 
@@ -242,10 +414,19 @@ export default function CategoriesPage() {
                             category={cat}
                             linkedSources={directSources}
                             sharedSources={sharedSources}
+                            linkedSkills={categorySkills.get(cat.id) || []}
+                            allSkills={allSkills}
+                            syncDetail={syncDetails.get(cat.id)}
+                            isLinking={linkingCategory === cat.id}
                             onToggleVisibility={() => handleToggleVisibility(cat)}
-                            onEdit={() => setEditingCategory(cat)}
-                            onDelete={() => handleDelete(cat.id)}
+                            isAnimatingDelete={deletingId === cat.id}
+                            onEdit={() => openEditDialog(cat)}
+                            onDelete={() => requestDelete(cat.id)}
                             onConfigureFilters={(sourceId) => setFilterSourceId(sourceId)}
+                            onLinkSkill={(skillId) => handleLinkSkill(cat.id, skillId)}
+                            onUnlinkSkill={(skillId) => handleUnlinkSkill(cat.id, skillId)}
+                            onToggleLinking={() => setLinkingCategory(linkingCategory === cat.id ? null : cat.id)}
+                            onSync={() => handleSyncCategory(cat.id)}
                         />
                     )
                 })}
@@ -274,15 +455,24 @@ export default function CategoriesPage() {
                     if (!open) {
                         setShowCreateDialog(false)
                         setEditingCategory(null)
+                        setEditCategorySkills([])
                     }
                 }}
                 category={editingCategory}
+                editLoading={editLoading}
                 linkedSources={editingCategory ? sources.filter((s) => s.category_id === editingCategory.id) : undefined}
                 allSources={sources}
+                allSkills={allSkills}
+                linkedSkills={editingCategory ? editCategorySkills : []}
+                allKnowledgeDocs={allKnowledgeDocs}
+                onLinkSkill={(skillId) => editingCategory && handleLinkSkill(editingCategory.id, skillId)}
+                onUnlinkSkill={(skillId) => editingCategory && handleUnlinkSkill(editingCategory.id, skillId)}
                 onSaved={() => {
                     setShowCreateDialog(false)
                     setEditingCategory(null)
-                    loadData()
+                    setEditCategorySkills([])
+                    // Only reload list data (fast)
+                    loadListData()
                     setAlert({ type: 'success', message: editingCategory ? 'Category updated.' : 'Category created.' })
                 }}
             />
@@ -295,11 +485,20 @@ export default function CategoriesPage() {
                     onOpenChange={(open) => { if (!open) setFilterSourceId(null) }}
                     onSaved={() => {
                         setFilterSourceId(null)
-                        loadData()
+                        loadListData()
                         setAlert({ type: 'success', message: 'Source filters updated.' })
                     }}
                 />
             )}
+
+            <ConfirmDeleteDialog
+                open={!!deleteTarget}
+                onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+                onConfirm={confirmDelete}
+                title="Delete category?"
+                description="Tasks in this category will lose their assignment."
+                loading={deleteLoading}
+            />
         </div>
     )
 }
@@ -308,20 +507,58 @@ export default function CategoriesPage() {
 // Category Card
 // ============================================================================
 
-function CategoryCard({ category, linkedSources, sharedSources, onToggleVisibility, onEdit, onDelete, onConfigureFilters }: {
+function SyncBadge({ status }: { status?: string }) {
+    switch (status) {
+        case 'synced':
+            return <Badge className="text-[10px] px-1.5 py-0 bg-green-600/20 text-green-400 border-green-600/30">Synced</Badge>
+        case 'syncing':
+            return <Badge className="text-[10px] px-1.5 py-0 bg-blue-600/20 text-blue-400 border-blue-600/30">Syncing</Badge>
+        case 'pending':
+        case 'stale':
+            return <Badge className="text-[10px] px-1.5 py-0 bg-yellow-600/20 text-yellow-400 border-yellow-600/30">Pending</Badge>
+        case 'error':
+            return <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Error</Badge>
+        default:
+            return null
+    }
+}
+
+function CategoryCard({
+    category, linkedSources, sharedSources, linkedSkills, allSkills,
+    syncDetail, isLinking, isAnimatingDelete, onToggleVisibility, onEdit, onDelete,
+    onConfigureFilters, onLinkSkill, onUnlinkSkill, onToggleLinking, onSync,
+}: {
     category: Category
     linkedSources: Source[]
     sharedSources: Source[]
+    linkedSkills: Skill[]
+    allSkills: Skill[]
+    syncDetail?: SyncStatusDetail
+    isLinking: boolean
+    isAnimatingDelete: boolean
     onToggleVisibility: () => void
     onEdit: () => void
     onDelete: () => void
     onConfigureFilters: (sourceId: string) => void
+    onLinkSkill: (skillId: string) => void
+    onUnlinkSkill: (skillId: string) => void
+    onToggleLinking: () => void
+    onSync: () => void
 }) {
+    const [syncing, setSyncing] = useState(false)
     const color = category.color || '#71717a'
     const allSources = [...linkedSources, ...sharedSources]
+    const linkedSkillIds = new Set(linkedSkills.map((s) => s.id))
+    const availableSkills = allSkills.filter((s) => !linkedSkillIds.has(s.id) && s.is_active)
+
+    const handleSync = async () => {
+        setSyncing(true)
+        await onSync()
+        setSyncing(false)
+    }
 
     return (
-        <Card className={!category.visible ? 'opacity-60' : ''}>
+        <Card className={cn(!category.visible && 'opacity-60', isAnimatingDelete && 'animate-deleting')}>
             <CardContent className="py-4">
                 <div className="flex items-center gap-4">
                     {/* Color indicator */}
@@ -339,6 +576,9 @@ function CategoryCard({ category, linkedSources, sharedSources, onToggleVisibili
                                     <EyeOff className="h-3 w-3 mr-1" />
                                     Hidden
                                 </Badge>
+                            )}
+                            {syncDetail && syncDetail.sync_status !== 'none' && (
+                                <SyncBadge status={syncDetail.sync_status} />
                             )}
                         </div>
 
@@ -379,10 +619,90 @@ function CategoryCard({ category, linkedSources, sharedSources, onToggleVisibili
                                 No sources linked — local tasks only
                             </p>
                         )}
+
+                        {/* Linked Skills */}
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                            {linkedSkills.length > 0 && (
+                                <>
+                                    <Brain className="h-3 w-3 text-indigo-400 shrink-0" />
+                                    {linkedSkills.map((skill) => (
+                                        <div
+                                            key={skill.id}
+                                            className="flex items-center gap-1 text-[11px] rounded-md px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                                        >
+                                            <span>{skill.name}</span>
+                                            <button
+                                                onClick={() => onUnlinkSkill(skill.id)}
+                                                className="hover:text-red-400 transition-colors"
+                                                title={`Unlink ${skill.name}`}
+                                            >
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </>
+                            )}
+                            {syncDetail?.has_knowledge && (
+                                <div className="flex items-center gap-1 text-[11px] rounded-md px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                    <BookOpen className="h-3 w-3" />
+                                    <span>Knowledge</span>
+                                </div>
+                            )}
+                            <button
+                                onClick={onToggleLinking}
+                                className="flex items-center gap-1 text-[11px] rounded-md px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border border-dashed border-border"
+                            >
+                                <Plus className="h-3 w-3" />
+                                <span>Skill</span>
+                            </button>
+                        </div>
+
+                        {/* Skill linking dropdown */}
+                        {isLinking && availableSkills.length > 0 && (
+                            <div className="mt-2 p-2 rounded-lg border bg-card space-y-1">
+                                <p className="text-xs text-muted-foreground mb-1">Link a skill:</p>
+                                {availableSkills.map((skill) => (
+                                    <button
+                                        key={skill.id}
+                                        onClick={() => onLinkSkill(skill.id)}
+                                        className="flex items-center gap-2 w-full text-left text-xs rounded px-2 py-1.5 hover:bg-accent transition-colors"
+                                    >
+                                        <Brain className="h-3 w-3 text-indigo-400" />
+                                        <span>{skill.name}</span>
+                                        {skill.description && (
+                                            <span className="text-muted-foreground truncate">— {skill.description}</span>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {isLinking && availableSkills.length === 0 && (
+                            <div className="mt-2 p-2 rounded-lg border bg-card">
+                                <p className="text-xs text-muted-foreground">
+                                    No more skills available to link. Create new skills in Settings &gt; Skills.
+                                </p>
+                            </div>
+                        )}
                     </div>
 
                     {/* Actions */}
                     <div className="flex items-center gap-2 shrink-0">
+                        {(linkedSkills.length > 0 || syncDetail?.has_knowledge) && (
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={handleSync}
+                                disabled={syncing}
+                                title="Sync to provider"
+                            >
+                                {syncing ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                    <RefreshCw className="h-3.5 w-3.5" />
+                                )}
+                            </Button>
+                        )}
                         <div className="flex items-center gap-2 mr-2">
                             <Label htmlFor={`vis-${category.id}`} className="text-xs text-muted-foreground sr-only">
                                 Visible
@@ -420,13 +740,19 @@ function CategoryCard({ category, linkedSources, sharedSources, onToggleVisibili
 // Create/Edit Category Dialog (with inline source filters)
 // ============================================================================
 
-function CategoryDialog({ open, onOpenChange, category, onSaved, linkedSources, allSources }: {
+function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, linkedSources, allSources, allSkills, linkedSkills, allKnowledgeDocs, onLinkSkill, onUnlinkSkill }: {
     open: boolean
     onOpenChange: (open: boolean) => void
     category: Category | null
     onSaved: () => void
+    editLoading?: boolean
     linkedSources?: Source[]
     allSources?: Source[]
+    allSkills?: Skill[]
+    linkedSkills?: Skill[]
+    allKnowledgeDocs?: KnowledgeDoc[]
+    onLinkSkill?: (skillId: string) => void
+    onUnlinkSkill?: (skillId: string) => void
 }) {
     const isEdit = !!category
     const [name, setName] = useState('')
@@ -613,7 +939,7 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, linkedSources, 
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className={hasLinkedSources ? 'sm:max-w-2xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-md'}>
+            <DialogContent className={isEdit || hasLinkedSources ? 'sm:max-w-2xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-md'}>
                 <DialogHeader>
                     <DialogTitle>{isEdit ? 'Edit Category' : 'New Category'}</DialogTitle>
                     <DialogDescription>
@@ -630,242 +956,348 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, linkedSources, 
                     </Alert>
                 )}
 
-                <div className="space-y-5 py-2">
-                    {/* Basic info */}
-                    <div className="space-y-4">
+                {!isEdit ? (
+                    /* ── Create mode: simple form, no tabs ── */
+                    <div className="space-y-4 py-2">
                         <div className="space-y-2">
                             <Label>Name</Label>
-                            <Input
-                                placeholder="e.g. Personal, Work, Side Projects"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                            />
+                            <Input placeholder="e.g. Personal, Work, Side Projects" value={name} onChange={(e) => setName(e.target.value)} />
                         </div>
-
                         <div className="space-y-2">
                             <Label>Color</Label>
                             <div className="flex flex-wrap gap-2">
                                 {CATEGORY_COLORS.map((c) => (
-                                    <button
-                                        key={c}
-                                        onClick={() => setColor(c)}
-                                        className={`w-7 h-7 rounded-full border-2 transition-all ${color === c
-                                            ? 'border-foreground scale-110'
-                                            : 'border-transparent hover:scale-105'
-                                            }`}
-                                        style={{ backgroundColor: c }}
-                                    />
+                                    <button key={c} onClick={() => setColor(c)} className={`w-7 h-7 rounded-full border-2 transition-all ${color === c ? 'border-foreground scale-110' : 'border-transparent hover:scale-105'}`} style={{ backgroundColor: c }} />
                                 ))}
                             </div>
                         </div>
-
                         <div className="space-y-2">
                             <Label>Icon (optional emoji)</Label>
-                            <Input
-                                placeholder="📁"
-                                value={icon}
-                                onChange={(e) => setIcon(e.target.value)}
-                                className="w-20"
-                            />
+                            <Input placeholder="📁" value={icon} onChange={(e) => setIcon(e.target.value)} className="w-20" />
                         </div>
                     </div>
+                ) : (
+                    /* ── Edit mode: tabbed layout ── */
+                    <Tabs defaultValue="general" className="w-full">
+                        <TabsList className="w-full grid grid-cols-4">
+                            <TabsTrigger value="general" className="text-xs gap-1.5">
+                                <Settings2 className="h-3.5 w-3.5" />
+                                General
+                            </TabsTrigger>
+                            <TabsTrigger value="skills" className="text-xs gap-1.5">
+                                <Brain className="h-3.5 w-3.5" />
+                                Skills
+                                {(linkedSkills || []).length > 0 && (
+                                    <Badge variant="secondary" className="text-[9px] px-1 py-0 ml-0.5">{(linkedSkills || []).length}</Badge>
+                                )}
+                            </TabsTrigger>
+                            <TabsTrigger value="knowledge" className="text-xs gap-1.5">
+                                <BookOpen className="h-3.5 w-3.5" />
+                                Knowledge
+                            </TabsTrigger>
+                            <TabsTrigger value="integration" className="text-xs gap-1.5">
+                                <Link2 className="h-3.5 w-3.5" />
+                                Integration
+                                {sources.length > 0 && (
+                                    <Badge variant="secondary" className="text-[9px] px-1 py-0 ml-0.5">{sources.length}</Badge>
+                                )}
+                            </TabsTrigger>
+                        </TabsList>
 
-                    {/* Source Integration & Filters (edit mode only) */}
-                    {isEdit && (hasLinkedSources || hasAvailableSources) && (
-                        <div className="border-t pt-5 space-y-4">
+                        {/* ── Tab: General ── */}
+                        <TabsContent value="general" className="space-y-4 mt-4">
+                            <div className="space-y-2">
+                                <Label>Name</Label>
+                                <Input placeholder="e.g. Personal, Work, Side Projects" value={name} onChange={(e) => setName(e.target.value)} />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Color</Label>
+                                <div className="flex flex-wrap gap-2">
+                                    {CATEGORY_COLORS.map((c) => (
+                                        <button key={c} onClick={() => setColor(c)} className={`w-7 h-7 rounded-full border-2 transition-all ${color === c ? 'border-foreground scale-110' : 'border-transparent hover:scale-105'}`} style={{ backgroundColor: c }} />
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Icon (optional emoji)</Label>
+                                <Input placeholder="📁" value={icon} onChange={(e) => setIcon(e.target.value)} className="w-20" />
+                            </div>
+                        </TabsContent>
+
+                        {/* ── Tab: Skills ── */}
+                        <TabsContent value="skills" className="space-y-4 mt-4">
                             <div>
-                                <Label className="text-sm font-semibold flex items-center gap-2">
-                                    <Link2 className="h-4 w-4" />
-                                    {hasLinkedSources ? 'Linked Integration' : 'Connect to Source'}
-                                    {sources.length > 1 && (
-                                        <Badge variant="secondary" className="text-[10px]">{sources.length} sources</Badge>
-                                    )}
-                                </Label>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                    {hasLinkedSources
-                                        ? 'Configure which tasks sync from your external source.'
-                                        : 'Link this category to an existing integration to sync tasks.'}
+                                <p className="text-xs text-muted-foreground">
+                                    Skills linked to this category are used as AI instructions when working on its tasks.
                                 </p>
                             </div>
 
-                            {/* If no sources at all, show picker for other available sources */}
-                            {sources.length === 0 && hasAvailableSources && !selectedLinkSourceId && (
-                                <div className="space-y-2">
-                                    <Select
-                                        value=""
-                                        onValueChange={(v) => {
-                                            setSelectedLinkSourceId(v)
-                                            const src = otherAvailableSources.find((s) => s.id === v)
-                                            if (src) {
-                                                setSourceFilters({ ...sourceFilters, [v]: src.sync_filters || [] })
-                                                setSourceCategoryProps({ ...sourceCategoryProps, [v]: src.category_property || '' })
-                                                setActiveSourceId(v)
-                                                loadPropertiesForSource(v)
-                                            }
-                                        }}
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Select a source to configure..." />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {otherAvailableSources.map((src) => (
-                                                <SelectItem key={src.id} value={src.id}>
-                                                    <div className="flex items-center gap-2">
-                                                        <span>{src.provider === 'notion' ? '📝' : '⚡'}</span>
-                                                        <span className="capitalize">{src.provider}</span>
-                                                        {src.categories && (
-                                                            <span className="text-muted-foreground text-xs">
-                                                                (linked to {src.categories.name})
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
+                            {editLoading ? (
+                                <div className="flex items-center justify-center py-8">
+                                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                                    <span className="text-sm text-muted-foreground">Loading skills...</span>
                                 </div>
-                            )}
+                            ) : (
+                                <>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {(linkedSkills || []).map((skill) => (
+                                            <div key={skill.id} className="flex items-center gap-1.5 text-xs rounded-md px-2 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                                <Brain className="h-3 w-3" />
+                                                <span>{skill.name}</span>
+                                                <button onClick={() => onUnlinkSkill?.(skill.id)} className="hover:text-red-400 transition-colors ml-1" title={`Unlink ${skill.name}`}>
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {(!linkedSkills || linkedSkills.length === 0) && (
+                                            <div className="w-full text-center py-6 border border-dashed rounded-lg bg-accent/30">
+                                                <Brain className="h-6 w-6 text-muted-foreground mx-auto mb-1.5" />
+                                                <p className="text-xs text-muted-foreground">No skills linked yet.</p>
+                                                <p className="text-[10px] text-muted-foreground mt-0.5">Use the picker below to add skills.</p>
+                                            </div>
+                                        )}
+                                    </div>
 
-                            {/* Source tabs (if multiple) */}
-                            {sources.length > 1 && (
-                                <div className="flex gap-2">
-                                    {sources.map((src) => {
-                                        const isShared = !directSources.find((ds) => ds.id === src.id)
+                                    {(() => {
+                                        const linkedIds = new Set((linkedSkills || []).map(s => s.id))
+                                        const available = (allSkills || []).filter(s => !linkedIds.has(s.id) && s.is_active)
+                                        if (available.length === 0) return null
                                         return (
-                                            <Button
-                                                key={src.id}
-                                                variant={activeSourceId === src.id ? 'default' : 'outline'}
-                                                size="sm"
-                                                onClick={() => handleSourceTabClick(src.id)}
-                                                className={`text-xs ${isShared ? 'border-dashed' : ''}`}
-                                            >
-                                                {src.provider === 'notion' ? '📝' : '⚡'} {src.provider}
-                                                {isShared && <span className="text-muted-foreground ml-1">(shared)</span>}
-                                            </Button>
+                                            <Select value="" onValueChange={(v) => { if (v) onLinkSkill?.(v) }}>
+                                                <SelectTrigger className="h-9 text-xs w-full">
+                                                    <SelectValue placeholder="+ Add a skill to this category..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {available.map((skill) => (
+                                                        <SelectItem key={skill.id} value={skill.id}>
+                                                            <div className="flex items-center gap-2">
+                                                                <Brain className="h-3 w-3 text-indigo-400" />
+                                                                <span>{skill.name}</span>
+                                                                {skill.description && (
+                                                                    <span className="text-muted-foreground text-[10px] truncate max-w-48">— {skill.description}</span>
+                                                                )}
+                                                            </div>
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
                                         )
-                                    })}
-                                </div>
+                                    })()}
+                                </>
                             )}
+                        </TabsContent>
 
-                            {/* Source info badge */}
-                            {activeSourceId && (() => {
-                                const activeSrc = sources.find(s => s.id === activeSourceId)
-                                const isShared = !directSources.find((ds) => ds.id === activeSourceId)
+                        {/* ── Tab: Knowledge ── */}
+                        <TabsContent value="knowledge" className="space-y-4 mt-4">
+                            <div>
+                                <p className="text-xs text-muted-foreground">
+                                    Master knowledge docs linked to this category provide context to the AI.
+                                </p>
+                            </div>
+
+                            {editLoading ? (
+                                <div className="flex items-center justify-center py-8">
+                                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                                    <span className="text-sm text-muted-foreground">Loading knowledge docs...</span>
+                                </div>
+                            ) : (() => {
+                                const catDocs = (allKnowledgeDocs || []).filter((d) => d.category_id === category?.id)
+                                const masterDoc = catDocs.find((d) => d.is_master)
+                                const otherDocs = catDocs.filter((d) => !d.is_master)
+
+                                if (catDocs.length === 0) {
+                                    return (
+                                        <div className="text-center py-6 border border-dashed rounded-lg bg-accent/30">
+                                            <BookOpen className="h-6 w-6 text-muted-foreground mx-auto mb-1.5" />
+                                            <p className="text-xs text-muted-foreground">No knowledge docs linked to this category.</p>
+                                            <p className="text-[10px] text-muted-foreground mt-0.5">Go to Knowledge Base to create and assign docs to this category.</p>
+                                        </div>
+                                    )
+                                }
+
                                 return (
-                                    <div className={`flex items-center gap-2 text-xs rounded-md px-3 py-2 ${isShared ? 'bg-accent/50 border border-dashed border-border' : 'bg-accent'}`}>
-                                        <span>{activeSrc?.provider === 'notion' ? '📝' : '⚡'}</span>
-                                        <span className="capitalize font-medium">{activeSrc?.provider}</span>
-                                        <span className="text-muted-foreground">
-                                            {isShared ? 'shared source' : 'source connected'}
-                                        </span>
-                                        {isShared && activeSrc?.categories && (
-                                            <Badge variant="outline" className="text-[10px] px-1 py-0 text-muted-foreground">
-                                                via {activeSrc.categories.name}
-                                            </Badge>
+                                    <div className="space-y-2">
+                                        {masterDoc && (
+                                            <div className="flex items-center gap-2 text-xs rounded-md px-3 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                <BookOpen className="h-3.5 w-3.5" />
+                                                <span className="font-medium">{masterDoc.title}</span>
+                                                <Badge className="text-[9px] px-1 py-0 bg-emerald-600/20 text-emerald-400 border-emerald-600/30">Master</Badge>
+                                            </div>
                                         )}
-                                        {activeSrc?.sync_status === 'syncing' && (
-                                            <Badge variant="secondary" className="text-[10px]">
-                                                <Loader2 className="h-2.5 w-2.5 animate-spin mr-1" />
-                                                Syncing
-                                            </Badge>
-                                        )}
+                                        {otherDocs.map((doc) => (
+                                            <div key={doc.id} className="flex items-center gap-2 text-xs rounded-md px-3 py-2 bg-accent/50 text-muted-foreground border border-border">
+                                                <BookOpen className="h-3.5 w-3.5" />
+                                                <span>{doc.title}</span>
+                                            </div>
+                                        ))}
                                     </div>
                                 )
                             })()}
+                        </TabsContent>
 
-                            {loadingProps ? (
-                                <div className="flex items-center justify-center py-8">
-                                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                                    <span className="text-sm text-muted-foreground">
-                                        Loading properties from {sources.find(s => s.id === activeSourceId)?.provider}...
-                                    </span>
-                                </div>
-                            ) : activeSourceId && properties.length > 0 ? (
-                                <div className="space-y-5">
-                                    {/* Category Property Mapping */}
-                                    <div className="space-y-2">
-                                        <Label className="text-xs font-medium">Category Property Mapping</Label>
-                                        <p className="text-xs text-muted-foreground">
-                                            Which property auto-assigns tasks to categories?
-                                        </p>
-                                        <Select
-                                            value={sourceCategoryProps[activeSourceId] || '__none'}
-                                            onValueChange={(v) =>
-                                                setSourceCategoryProps({ ...sourceCategoryProps, [activeSourceId]: v })
-                                            }
-                                        >
-                                            <SelectTrigger className="h-9">
-                                                <SelectValue placeholder="Select a property..." />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="__none">None (use source default)</SelectItem>
-                                                {selectProperties.map((p) => (
-                                                    <SelectItem key={p.id} value={p.name}>
-                                                        <div className="flex items-center gap-2">
-                                                            <Badge variant="outline" className="text-[10px] px-1 py-0">{p.type}</Badge>
-                                                            {p.name}
-                                                        </div>
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-
-                                    {/* Pre-Filters */}
-                                    <div className="space-y-3">
-                                        <div className="flex items-center justify-between">
-                                            <div>
-                                                <Label className="text-xs font-medium flex items-center gap-1.5">
-                                                    <Filter className="h-3.5 w-3.5" />
-                                                    Sync Filters
-                                                </Label>
-                                                <p className="text-xs text-muted-foreground mt-0.5">
-                                                    Only sync tasks matching ALL conditions below.
-                                                </p>
-                                            </div>
-                                            <Button variant="outline" size="sm" onClick={addFilter} className="h-7 text-xs">
-                                                <Plus className="h-3 w-3 mr-1" />
-                                                Add Filter
-                                            </Button>
-                                        </div>
-
-                                        {activeFilters.length === 0 && (
-                                            <div className="text-center py-4 border border-dashed rounded-lg bg-accent/30">
-                                                <Filter className="h-6 w-6 text-muted-foreground mx-auto mb-1.5" />
-                                                <p className="text-xs text-muted-foreground">
-                                                    No filters — all tasks will be synced
-                                                </p>
-                                                <Button variant="ghost" size="sm" onClick={addFilter} className="mt-2 h-7 text-xs">
-                                                    <Plus className="h-3 w-3 mr-1" />
-                                                    Add your first filter
-                                                </Button>
-                                            </div>
-                                        )}
-
-                                        <div className="space-y-2">
-                                            {activeFilters.map((filter, idx) => (
-                                                <FilterRow
-                                                    key={idx}
-                                                    filter={filter}
-                                                    properties={filterableProperties}
-                                                    onChange={(updates) => updateFilter(idx, updates)}
-                                                    onRemove={() => removeFilter(idx)}
-                                                />
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            ) : activeSourceId && properties.length === 0 && !loadingProps ? (
-                                <div className="text-center py-6 border border-dashed rounded-lg">
-                                    <XCircle className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
-                                    <p className="text-sm text-muted-foreground">
-                                        Could not load properties from source
+                        {/* ── Tab: Integration ── */}
+                        <TabsContent value="integration" className="space-y-4 mt-4">
+                            {(hasLinkedSources || hasAvailableSources) ? (
+                                <>
+                                    <p className="text-xs text-muted-foreground">
+                                        {hasLinkedSources
+                                            ? 'Configure which tasks sync from your external source.'
+                                            : 'Link this category to an existing integration to sync tasks.'}
                                     </p>
+
+                                    {/* If no sources at all, show picker for other available sources */}
+                                    {sources.length === 0 && hasAvailableSources && !selectedLinkSourceId && (
+                                        <div className="space-y-2">
+                                            <Select
+                                                value=""
+                                                onValueChange={(v) => {
+                                                    setSelectedLinkSourceId(v)
+                                                    const src = otherAvailableSources.find((s) => s.id === v)
+                                                    if (src) {
+                                                        setSourceFilters({ ...sourceFilters, [v]: src.sync_filters || [] })
+                                                        setSourceCategoryProps({ ...sourceCategoryProps, [v]: src.category_property || '' })
+                                                        setActiveSourceId(v)
+                                                        loadPropertiesForSource(v)
+                                                    }
+                                                }}
+                                            >
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Select a source to configure..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {otherAvailableSources.map((src) => (
+                                                        <SelectItem key={src.id} value={src.id}>
+                                                            <div className="flex items-center gap-2">
+                                                                <span>{src.provider === 'notion' ? '📝' : '⚡'}</span>
+                                                                <span className="capitalize">{src.provider}</span>
+                                                                {src.categories && (
+                                                                    <span className="text-muted-foreground text-xs">(linked to {src.categories.name})</span>
+                                                                )}
+                                                            </div>
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    )}
+
+                                    {/* Source tabs (if multiple) */}
+                                    {sources.length > 1 && (
+                                        <div className="flex gap-2">
+                                            {sources.map((src) => {
+                                                const isShared = !directSources.find((ds) => ds.id === src.id)
+                                                return (
+                                                    <Button key={src.id} variant={activeSourceId === src.id ? 'default' : 'outline'} size="sm" onClick={() => handleSourceTabClick(src.id)} className={`text-xs ${isShared ? 'border-dashed' : ''}`}>
+                                                        {src.provider === 'notion' ? '📝' : '⚡'} {src.provider}
+                                                        {isShared && <span className="text-muted-foreground ml-1">(shared)</span>}
+                                                    </Button>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
+
+                                    {/* Source info badge */}
+                                    {activeSourceId && (() => {
+                                        const activeSrc = sources.find(s => s.id === activeSourceId)
+                                        const isShared = !directSources.find((ds) => ds.id === activeSourceId)
+                                        return (
+                                            <div className={`flex items-center gap-2 text-xs rounded-md px-3 py-2 ${isShared ? 'bg-accent/50 border border-dashed border-border' : 'bg-accent'}`}>
+                                                <span>{activeSrc?.provider === 'notion' ? '📝' : '⚡'}</span>
+                                                <span className="capitalize font-medium">{activeSrc?.provider}</span>
+                                                <span className="text-muted-foreground">{isShared ? 'shared source' : 'source connected'}</span>
+                                                {isShared && activeSrc?.categories && (
+                                                    <Badge variant="outline" className="text-[10px] px-1 py-0 text-muted-foreground">via {activeSrc.categories.name}</Badge>
+                                                )}
+                                                {activeSrc?.sync_status === 'syncing' && (
+                                                    <Badge variant="secondary" className="text-[10px]"><Loader2 className="h-2.5 w-2.5 animate-spin mr-1" />Syncing</Badge>
+                                                )}
+                                            </div>
+                                        )
+                                    })()}
+
+                                    {loadingProps ? (
+                                        <div className="flex items-center justify-center py-8">
+                                            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                                            <span className="text-sm text-muted-foreground">Loading properties from {sources.find(s => s.id === activeSourceId)?.provider}...</span>
+                                        </div>
+                                    ) : activeSourceId && properties.length > 0 ? (
+                                        <div className="space-y-5">
+                                            {/* Category Property Mapping */}
+                                            <div className="space-y-2">
+                                                <Label className="text-xs font-medium">Category Property Mapping</Label>
+                                                <p className="text-xs text-muted-foreground">Which property auto-assigns tasks to categories?</p>
+                                                <Select
+                                                    value={sourceCategoryProps[activeSourceId] || '__none'}
+                                                    onValueChange={(v) => setSourceCategoryProps({ ...sourceCategoryProps, [activeSourceId]: v })}
+                                                >
+                                                    <SelectTrigger className="h-9">
+                                                        <SelectValue placeholder="Select a property..." />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="__none">None (use source default)</SelectItem>
+                                                        {selectProperties.map((p) => (
+                                                            <SelectItem key={p.id} value={p.name}>
+                                                                <div className="flex items-center gap-2">
+                                                                    <Badge variant="outline" className="text-[10px] px-1 py-0">{p.type}</Badge>
+                                                                    {p.name}
+                                                                </div>
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+
+                                            {/* Pre-Filters */}
+                                            <div className="space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <Label className="text-xs font-medium flex items-center gap-1.5">
+                                                            <Filter className="h-3.5 w-3.5" />
+                                                            Sync Filters
+                                                        </Label>
+                                                        <p className="text-xs text-muted-foreground mt-0.5">Only sync tasks matching ALL conditions below.</p>
+                                                    </div>
+                                                    <Button variant="outline" size="sm" onClick={addFilter} className="h-7 text-xs">
+                                                        <Plus className="h-3 w-3 mr-1" />
+                                                        Add Filter
+                                                    </Button>
+                                                </div>
+
+                                                {activeFilters.length === 0 && (
+                                                    <div className="text-center py-4 border border-dashed rounded-lg bg-accent/30">
+                                                        <Filter className="h-6 w-6 text-muted-foreground mx-auto mb-1.5" />
+                                                        <p className="text-xs text-muted-foreground">No filters — all tasks will be synced</p>
+                                                        <Button variant="ghost" size="sm" onClick={addFilter} className="mt-2 h-7 text-xs">
+                                                            <Plus className="h-3 w-3 mr-1" />
+                                                            Add your first filter
+                                                        </Button>
+                                                    </div>
+                                                )}
+
+                                                <div className="space-y-2">
+                                                    {activeFilters.map((filter, idx) => (
+                                                        <FilterRow key={idx} filter={filter} properties={filterableProperties} onChange={(updates) => updateFilter(idx, updates)} onRemove={() => removeFilter(idx)} />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : activeSourceId && properties.length === 0 && !loadingProps ? (
+                                        <div className="text-center py-6 border border-dashed rounded-lg">
+                                            <XCircle className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
+                                            <p className="text-sm text-muted-foreground">Could not load properties from source</p>
+                                        </div>
+                                    ) : null}
+                                </>
+                            ) : (
+                                <div className="text-center py-6 border border-dashed rounded-lg bg-accent/30">
+                                    <Link2 className="h-6 w-6 text-muted-foreground mx-auto mb-1.5" />
+                                    <p className="text-xs text-muted-foreground">No integrations configured.</p>
+                                    <p className="text-[10px] text-muted-foreground mt-0.5">Go to Integrations to connect an external source.</p>
                                 </div>
-                            ) : null}
-                        </div>
-                    )}
-                </div>
+                            )}
+                        </TabsContent>
+                    </Tabs>
+                )}
 
                 <DialogFooter>
                     <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

@@ -135,6 +135,8 @@ export async function createTask(data: {
     priority?: string
     status?: string
     notes?: string
+    board_instance_id?: string
+    current_step_id?: string
 }): Promise<{ success?: boolean; task?: Task; error?: string }> {
     const headers = await getAuthHeaders()
     if (!headers) return { error: 'Not authenticated' }
@@ -173,6 +175,8 @@ export async function updateTask(
         notes: string
         due_date: string
         time_spent: number
+        current_step_id: string
+        override_category_id: string | null
     }>
 ): Promise<{ success?: boolean; task?: Task; error?: string }> {
     const headers = await getAuthHeaders()

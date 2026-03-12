@@ -7,17 +7,17 @@ import {
     Settings2,
     MessageCircle,
     Brain,
-    LayoutGrid,
     Wand2,
     Plug,
-    GalleryHorizontalEnd,
-    Columns3,
     Tags,
+    Bot,
+    Import,
 } from "lucide-react"
 
 import { isCloudEdition } from "@/lib/edition"
 import { BrandLogo } from "@/components/brand-logo"
 import { NavMain } from "@/components/nav-main"
+import { NavBoards } from "@/components/nav-boards"
 import { NavProjects } from "@/components/nav-projects"
 import { NavUser } from "@/components/nav-user"
 import { TeamSwitcher } from "@/components/team-switcher"
@@ -33,24 +33,6 @@ import {
 // Navigation data for the sidebar
 const data = {
     navMain: [
-        {
-            title: "Task Board",
-            url: "/dashboard/tasks",
-            icon: LayoutGrid,
-            isActive: true,
-            items: [
-                {
-                    title: "Gallery",
-                    url: "/dashboard/tasks?view=category",
-                    icon: GalleryHorizontalEnd,
-                },
-                {
-                    title: "Kanban",
-                    url: "/dashboard/tasks?view=kanban",
-                    icon: Columns3,
-                },
-            ],
-        },
         {
             title: "AI Chat",
             url: "/dashboard/chat",
@@ -73,6 +55,18 @@ const data = {
             title: "Skills",
             url: "/dashboard/settings/skills",
             icon: Wand2,
+            items: [],
+        },
+        {
+            title: "Agents",
+            url: "/dashboard/agents",
+            icon: Bot,
+            items: [],
+        },
+        {
+            title: "Import",
+            url: "/dashboard/import",
+            icon: Import,
             items: [],
         },
         {
@@ -142,7 +136,7 @@ export function AppSidebar({ user, teams, activeTeam, projects, allowMultiplePro
     return (
         <Sidebar collapsible="icon" {...props}>
             <SidebarHeader>
-                <BrandLogo />
+                <BrandLogo className="justify-center py-4 [&_img]:h-auto [&_img]:w-[90%]" />
                 <TeamSwitcher
                     teams={teamsWithIcons}
                     activeTeam={activeTeamWithIcon}
@@ -150,6 +144,7 @@ export function AppSidebar({ user, teams, activeTeam, projects, allowMultiplePro
                 />
             </SidebarHeader>
             <SidebarContent>
+                <NavBoards />
                 <NavMain items={data.navMain} />
                 {allowMultipleProjects && (
                     <NavProjects projects={projectsWithIcons} activeTeamId={activeTeam?.id} />

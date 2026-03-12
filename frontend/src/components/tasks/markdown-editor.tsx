@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { Bold, Italic, Heading2, List, ListChecks, Quote, Eye, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -16,10 +16,15 @@ export function MarkdownEditor({ value, onSave, placeholder = 'Add a description
     const [draft, setDraft] = useState(value)
     const [showPreview, setShowPreview] = useState(false)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
+    const prevValueRef = useRef(value)
 
-    // Sync draft with external value when not editing
+    // Sync draft with external value only when value actually changes
+    // (e.g. server refetch, switching tasks) — NOT when editing state changes
     useEffect(() => {
-        if (!editing) setDraft(value)
+        if (value !== prevValueRef.current) {
+            prevValueRef.current = value
+            if (!editing) setDraft(value)
+        }
     }, [value, editing])
 
     // Auto-focus and resize on edit start
@@ -71,9 +76,10 @@ export function MarkdownEditor({ value, onSave, placeholder = 'Add a description
         { icon: Quote, action: () => insertMarkdown('> '), title: 'Quote' },
     ]
 
-    // View mode
+    // View mode — show draft (preserves just-saved text before server refetch)
     if (!editing) {
-        if (readOnly && !value.trim()) return null
+        const display = draft
+        if (readOnly && !display.trim()) return null
 
         return (
             <div
@@ -83,8 +89,8 @@ export function MarkdownEditor({ value, onSave, placeholder = 'Add a description
                     !readOnly && 'cursor-pointer hover:border-primary/30 transition-colors group',
                 )}
             >
-                {value.trim() ? (
-                    <MarkdownRenderer content={value} />
+                {display.trim() ? (
+                    <MarkdownRenderer content={display} />
                 ) : (
                     <p className="text-muted-foreground/50 italic flex items-center gap-2">
                         {placeholder}

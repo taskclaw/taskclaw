@@ -6,7 +6,7 @@ const faqs = [
   {
     question: 'Do I need my own OpenClaw instance?',
     answer:
-      'Yes. Onset orchestrates the task flow, but the AI execution happens on your OpenClaw — running on your own VPS or machine. This means your data stays private, and you control the compute. We\'ll provide setup guides to make it easy.',
+      'Yes. TaskClaw orchestrates the task flow, but the AI execution happens on your OpenClaw — running on your own VPS or machine. This means your data stays private, and you control the compute. We\'ll provide setup guides to make it easy.',
   },
   {
     question: 'Which task management tools are supported?',
@@ -21,7 +21,7 @@ const faqs = [
   {
     question: 'Is my data safe?',
     answer:
-      'Absolutely. Onset syncs task metadata (titles, status, categories) to display your board. But all AI processing happens on YOUR OpenClaw instance — on your machine, your VPS, your rules. We never see or store the output of your AI work.',
+      'Absolutely. TaskClaw syncs task metadata (titles, status, categories) to display your board. But all AI processing happens on YOUR OpenClaw instance — on your machine, your VPS, your rules. We never see or store the output of your AI work.',
   },
   {
     question: 'How much will it cost?',
@@ -71,7 +71,7 @@ const Pricing = () => {
       <div className="section-container">
         <div className="text-center mb-12">
           <div className="inline-flex items-center justify-center mb-3 px-3 py-1 rounded-full bg-foreground/5 border border-foreground/10 text-xs text-foreground/70 reveal">
-            <span className="mr-2 size-2 rounded-full bg-brand-purple"></span>
+            <span className="mr-2 size-2 rounded-full bg-claw-red"></span>
             FAQ
           </div>
           <h2 className="section-title reveal" style={{ animationDelay: '0.05s' }}>
@@ -90,7 +90,7 @@ const Pricing = () => {
                 onClick={() => toggleFaq(index)}
                 className="w-full flex items-center justify-between py-5 text-left group"
               >
-                <span className="text-base font-semibold text-foreground group-hover:text-brand-purple transition-colors pr-4">
+                <span className="text-base font-semibold text-foreground group-hover:text-claw-red transition-colors pr-4">
                   {faq.question}
                 </span>
                 <svg

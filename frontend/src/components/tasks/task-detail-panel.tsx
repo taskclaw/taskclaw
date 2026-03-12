@@ -13,21 +13,43 @@ import {
     Pencil,
     Coins,
     AlertCircle,
+    Trash2,
+    ChevronDown,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { useTaskStore } from '@/hooks/use-task-store'
-import { useTaskDetail, useTaskContent, useTaskComments, useTaskUsage, useUpdateTask, useCompleteTask, useAiProviderConfig } from '@/hooks/use-tasks'
+import { useTaskDetail, useTaskContent, useTaskComments, useTaskUsage, useUpdateTask, useCompleteTask, useDeleteTask, useMoveTask, useAiProviderConfig } from '@/hooks/use-tasks'
+import { useMoveTaskToStep } from '@/hooks/use-boards'
 import { usePomodoroStore } from '@/hooks/use-pomodoro'
-import { PRIORITY_COLORS, STATUS_COLORS } from '@/types/task'
+import { PRIORITY_COLORS, STATUS_COLORS, KANBAN_COLUMNS } from '@/types/task'
 import type { Category } from '@/types/task'
+import type { BoardStep } from '@/types/board'
 import { cn } from '@/lib/utils'
 import { TaskAIChat } from './task-ai-chat'
 import { MarkdownEditor } from './markdown-editor'
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface TaskDetailPanelProps {
     categories?: Category[]
+    boardSteps?: BoardStep[]
 }
 
-export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
+export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanelProps) {
     const selectedTaskId = useTaskStore((s) => s.selectedTaskId)
     const setSelectedTaskId = useTaskStore((s) => s.setSelectedTaskId)
     const { data: task, isLoading } = useTaskDetail(selectedTaskId)
@@ -37,11 +59,15 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
     const { data: aiConfig } = useAiProviderConfig()
     const updateTask = useUpdateTask()
     const completeTask = useCompleteTask()
+    const deleteTask = useDeleteTask()
+    const moveTask = useMoveTask()
+    const moveTaskToStep = useMoveTaskToStep()
     const pomodoroStore = usePomodoroStore()
 
     const [showAIChat, setShowAIChat] = useState(false)
     const [editingTitle, setEditingTitle] = useState(false)
     const [titleValue, setTitleValue] = useState('')
+    const [showDeleteDialog, setShowDeleteDialog] = useState(false)
     const titleInputRef = useRef<HTMLInputElement>(null)
 
     const aiConfigured = !!aiConfig && !!aiConfig.api_url
@@ -50,6 +76,7 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
     useEffect(() => {
         setShowAIChat(false)
         setEditingTitle(false)
+        setShowDeleteDialog(false)
     }, [selectedTaskId])
 
     // Sync title with task data
@@ -74,9 +101,11 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
 
     const handleStartPomodoro = () => {
         if (!task) return
+        try { new Audio('/sounds/start.wav').play().catch(() => {}) } catch {}
         pomodoroStore.setActiveTask(task.id, task.title)
         pomodoroStore.setMode('focus')
         pomodoroStore.setRunning(true)
+        setSelectedTaskId(null)
     }
 
     const saveTitle = () => {
@@ -97,6 +126,39 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
         updateTask.mutate({ id: selectedTaskId, notes })
     }
 
+    const handleStatusChange = (status: string, stepId?: string) => {
+        if (!selectedTaskId || status === task?.status) return
+        if (stepId && boardSteps) {
+            moveTaskToStep.mutate({ taskId: selectedTaskId, stepId, stepName: status })
+        } else {
+            moveTask.mutate({ id: selectedTaskId, status })
+        }
+    }
+
+    const handleCategoryChange = (categoryId: string | null) => {
+        if (!selectedTaskId) return
+        updateTask.mutate({ id: selectedTaskId, category_id: categoryId || '' })
+    }
+
+    const handleAgentOverride = (categoryId: string | null) => {
+        if (!selectedTaskId) return
+        updateTask.mutate({ id: selectedTaskId, override_category_id: categoryId } as any)
+    }
+
+    const handleDelete = () => {
+        if (!selectedTaskId) return
+        deleteTask.mutate(selectedTaskId, {
+            onSuccess: () => {
+                toast.success('Task deleted')
+                setSelectedTaskId(null)
+            },
+            onError: () => {
+                toast.error('Failed to delete task')
+            },
+        })
+        setShowDeleteDialog(false)
+    }
+
     // Resolve category
     const category = categories.find((c) => c.id === task?.category_id)
     const categoryColor = category?.color || '#71717a'
@@ -105,12 +167,14 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
     const priorityColor = task?.priority
         ? PRIORITY_COLORS[task.priority]
         : '#71717a'
-    const statusColor = task?.status
-        ? STATUS_COLORS[task.status]
-        : '#71717a'
+    const currentBoardStep = boardSteps?.find((s) => s.name === task?.status || s.id === (task as any)?.current_step_id)
+    const statusColor = currentBoardStep?.color
+        || (task?.status ? STATUS_COLORS[task.status] : '#71717a')
+        || '#71717a'
 
     // Is this a manually created task (no external source)?
     const isManualTask = !task?.source_id
+    const sourceProvider = task?.sources?.provider
 
     return (
         <>
@@ -132,12 +196,21 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
                         </span>
                     </div>
                 </div>
-                <button
-                    onClick={() => setSelectedTaskId(null)}
-                    className="p-1.5 hover:bg-accent rounded text-muted-foreground hover:text-foreground transition-colors"
-                >
-                    <X className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={() => setShowDeleteDialog(true)}
+                        className="p-1.5 hover:bg-destructive/10 rounded text-muted-foreground hover:text-destructive transition-colors"
+                        title="Delete task"
+                    >
+                        <Trash2 className="w-4 h-4" />
+                    </button>
+                    <button
+                        onClick={() => setSelectedTaskId(null)}
+                        className="p-1.5 hover:bg-accent rounded text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
+                </div>
             </div>
 
             {isLoading || !task ? (
@@ -180,24 +253,73 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
 
                         {/* Metadata */}
                         <div className="px-8 py-4 grid grid-cols-2 gap-y-4 gap-x-8 border-b border-border">
+                            {/* Status - clickable dropdown */}
                             <div className="space-y-1">
                                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                                     Status
                                 </label>
-                                <div
-                                    className="flex items-center gap-2 w-fit px-2 py-1 rounded text-xs font-semibold"
-                                    style={{
-                                        color: statusColor,
-                                        backgroundColor: `${statusColor}20`,
-                                        border: `1px solid ${statusColor}30`,
-                                    }}
-                                >
-                                    <span
-                                        className="w-1.5 h-1.5 rounded-full"
-                                        style={{ backgroundColor: statusColor }}
-                                    />
-                                    {task.status || 'To-Do'}
-                                </div>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <button
+                                            className="flex items-center gap-2 w-fit px-2 py-1 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity"
+                                            style={{
+                                                color: statusColor,
+                                                backgroundColor: `${statusColor}20`,
+                                                border: `1px solid ${statusColor}30`,
+                                            }}
+                                        >
+                                            <span
+                                                className="w-1.5 h-1.5 rounded-full"
+                                                style={{ backgroundColor: statusColor }}
+                                            />
+                                            {task.status || 'To-Do'}
+                                            <ChevronDown className="w-3 h-3 opacity-60" />
+                                        </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" className="min-w-[160px]">
+                                        {boardSteps ? (
+                                            boardSteps.map((step) => {
+                                                const stepColor = step.color || '#71717a'
+                                                return (
+                                                    <DropdownMenuItem
+                                                        key={step.id}
+                                                        onClick={() => handleStatusChange(step.name, step.id)}
+                                                        className={cn(
+                                                            'flex items-center gap-2 text-xs cursor-pointer',
+                                                            task.status === step.name && 'bg-accent',
+                                                        )}
+                                                    >
+                                                        <span
+                                                            className="w-2 h-2 rounded-full shrink-0"
+                                                            style={{ backgroundColor: stepColor }}
+                                                        />
+                                                        {step.name}
+                                                    </DropdownMenuItem>
+                                                )
+                                            })
+                                        ) : (
+                                            KANBAN_COLUMNS.map((status) => {
+                                                const color = STATUS_COLORS[status] || '#71717a'
+                                                return (
+                                                    <DropdownMenuItem
+                                                        key={status}
+                                                        onClick={() => handleStatusChange(status)}
+                                                        className={cn(
+                                                            'flex items-center gap-2 text-xs cursor-pointer',
+                                                            task.status === status && 'bg-accent',
+                                                        )}
+                                                    >
+                                                        <span
+                                                            className="w-2 h-2 rounded-full shrink-0"
+                                                            style={{ backgroundColor: color }}
+                                                        />
+                                                        {status}
+                                                    </DropdownMenuItem>
+                                                )
+                                            })
+                                        )}
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
                             </div>
 
                             <div className="space-y-1">
@@ -216,19 +338,53 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
                                 </div>
                             </div>
 
+                            {/* Category - clickable dropdown */}
                             <div className="space-y-1">
                                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                                     Category
                                 </label>
-                                <span
-                                    className="text-[10px] px-2 py-0.5 rounded font-bold uppercase inline-block"
-                                    style={{
-                                        color: categoryColor,
-                                        backgroundColor: `${categoryColor}15`,
-                                    }}
-                                >
-                                    {categoryName}
-                                </span>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <button
+                                            className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded font-bold uppercase cursor-pointer hover:opacity-80 transition-opacity"
+                                            style={{
+                                                color: categoryColor,
+                                                backgroundColor: `${categoryColor}15`,
+                                            }}
+                                        >
+                                            {categoryName}
+                                            <ChevronDown className="w-3 h-3 opacity-60" />
+                                        </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" className="min-w-[160px]">
+                                        <DropdownMenuItem
+                                            onClick={() => handleCategoryChange(null)}
+                                            className={cn(
+                                                'flex items-center gap-2 text-xs cursor-pointer',
+                                                !task.category_id && 'bg-accent',
+                                            )}
+                                        >
+                                            <span className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/40" />
+                                            None
+                                        </DropdownMenuItem>
+                                        {categories.map((cat) => (
+                                            <DropdownMenuItem
+                                                key={cat.id}
+                                                onClick={() => handleCategoryChange(cat.id)}
+                                                className={cn(
+                                                    'flex items-center gap-2 text-xs cursor-pointer',
+                                                    task.category_id === cat.id && 'bg-accent',
+                                                )}
+                                            >
+                                                <span
+                                                    className="w-2 h-2 rounded-full shrink-0"
+                                                    style={{ backgroundColor: cat.color || '#71717a' }}
+                                                />
+                                                {cat.name}
+                                            </DropdownMenuItem>
+                                        ))}
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
                             </div>
 
                             <div className="space-y-1">
@@ -245,6 +401,60 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
                                 >
                                     {task.priority || 'None'}
                                 </div>
+                            </div>
+
+                            {/* Agent Override */}
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                    Agent
+                                </label>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <button
+                                            className={cn(
+                                                'flex items-center gap-1.5 text-xs px-2 py-1 rounded w-fit cursor-pointer hover:opacity-80 transition-opacity',
+                                                task.override_category_id
+                                                    ? 'bg-primary/10 text-primary border border-primary/20'
+                                                    : 'bg-accent/50 text-muted-foreground border border-border',
+                                            )}
+                                        >
+                                            <Bot className="w-3 h-3" />
+                                            {task.override_category?.name || task.categories?.name || 'Auto'}
+                                            {task.override_category_id && (
+                                                <span className="text-[9px] bg-primary/20 px-1 rounded">Card</span>
+                                            )}
+                                            <ChevronDown className="w-3 h-3 opacity-60" />
+                                        </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" className="min-w-[180px]">
+                                        <DropdownMenuItem
+                                            onClick={() => handleAgentOverride(null)}
+                                            className={cn(
+                                                'flex items-center gap-2 text-xs cursor-pointer',
+                                                !task.override_category_id && 'bg-accent',
+                                            )}
+                                        >
+                                            <span className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/40" />
+                                            Auto (inherit from column/board)
+                                        </DropdownMenuItem>
+                                        {categories.map((cat) => (
+                                            <DropdownMenuItem
+                                                key={cat.id}
+                                                onClick={() => handleAgentOverride(cat.id)}
+                                                className={cn(
+                                                    'flex items-center gap-2 text-xs cursor-pointer',
+                                                    task.override_category_id === cat.id && 'bg-accent',
+                                                )}
+                                            >
+                                                <span
+                                                    className="w-2 h-2 rounded-full shrink-0"
+                                                    style={{ backgroundColor: cat.color || '#71717a' }}
+                                                />
+                                                {cat.name}
+                                            </DropdownMenuItem>
+                                        ))}
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
                             </div>
 
                             {task.time_spent !== null && task.time_spent > 0 && (
@@ -285,39 +495,26 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
                             )}
                         </div>
 
-                        {/* Description — Manual tasks: editable markdown, Source tasks: read-only */}
-                        {isManualTask ? (
-                            <div className="px-8 py-6 space-y-3 border-b border-border">
-                                <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
-                                    Description
-                                </h4>
+                        {/* Description — editable for all tasks, syncs to integration */}
+                        <div className="px-8 py-6 space-y-3 border-b border-border">
+                            <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
+                                Description
+                            </h4>
+                            {!isManualTask && isContentLoading ? (
+                                <div className="bg-accent/50 border border-border rounded-xl p-4 text-sm min-h-[80px] flex items-center justify-center text-muted-foreground">
+                                    <div className="flex items-center gap-2">
+                                        <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                                        Loading content...
+                                    </div>
+                                </div>
+                            ) : (
                                 <MarkdownEditor
-                                    value={task.notes || ''}
+                                    value={task.notes || (!isManualTask && pageContent ? pageContent : '') || ''}
                                     onSave={handleSaveNotes}
                                     placeholder="Click to add a description... (Markdown supported)"
                                 />
-                            </div>
-                        ) : (isContentLoading || (pageContent && pageContent.trim().length > 0)) ? (
-                            <div className="px-8 py-6 space-y-3 border-b border-border">
-                                <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
-                                    Description
-                                </h4>
-                                {isContentLoading ? (
-                                    <div className="bg-accent/50 border border-border rounded-xl p-4 text-sm min-h-[80px] flex items-center justify-center text-muted-foreground">
-                                        <div className="flex items-center gap-2">
-                                            <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                                            Loading content...
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <MarkdownEditor
-                                        value={pageContent || ''}
-                                        onSave={() => {}}
-                                        readOnly
-                                    />
-                                )}
-                            </div>
-                        ) : null}
+                            )}
+                        </div>
 
                         {/* Comments (from Notion/ClickUp) */}
                         {task.source_id && (
@@ -472,6 +669,30 @@ export function TaskDetailPanel({ categories = [] }: TaskDetailPanelProps) {
                 </>
             )}
         </aside>
+
+        {/* Delete confirmation dialog */}
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Delete task</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        {isManualTask
+                            ? 'This will permanently delete this task. This action cannot be undone.'
+                            : `This will remove the task from TaskClaw. The original task in ${sourceProvider === 'clickup' ? 'ClickUp' : sourceProvider === 'notion' ? 'Notion' : 'the integration'} will not be deleted.`
+                        }
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                        onClick={handleDelete}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                        Delete
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
         </>
     )
 }

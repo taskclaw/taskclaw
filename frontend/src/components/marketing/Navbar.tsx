@@ -38,11 +38,11 @@ const Navbar = () => {
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center space-x-8">
-            <a href="#features" className="text-sm text-foreground/80 hover:text-foreground transition-colors">Features</a>
-            <a href="#process" className="text-sm text-foreground/80 hover:text-foreground transition-colors">How It Works</a>
-            <a href="#pricing" className="text-sm text-foreground/80 hover:text-foreground transition-colors">Pricing</a>
-            <a href="#testimonials" className="text-sm text-foreground/80 hover:text-foreground transition-colors">Success Stories</a>
-            <a href="#about" className="text-sm text-foreground/80 hover:text-foreground transition-colors">About</a>
+            <a href="#features" className="text-sm text-foreground/80 hover:text-claw-red transition-colors">Features</a>
+            <a href="#how" className="text-sm text-foreground/80 hover:text-claw-red transition-colors">How It Works</a>
+            <a href="#faq" className="text-sm text-foreground/80 hover:text-claw-red transition-colors">FAQ</a>
+            <a href="#solution" className="text-sm text-foreground/80 hover:text-claw-red transition-colors">Solution</a>
+            <a href="#waitlist" className="text-sm text-foreground/80 hover:text-claw-red transition-colors">Waitlist</a>
           </nav>
 
           {/* CTA Buttons and Theme Toggle */}
@@ -79,11 +79,11 @@ const Navbar = () => {
         )}
       >
         <div className="px-4 py-3 space-y-1">
-          <a href="#features" className="block py-2 text-foreground/80 hover:text-foreground">Features</a>
-          <a href="#process" className="block py-2 text-foreground/80 hover:text-foreground">How It Works</a>
-          <a href="#pricing" className="block py-2 text-foreground/80 hover:text-foreground">Pricing</a>
-          <a href="#testimonials" className="block py-2 text-foreground/80 hover:text-foreground">Success Stories</a>
-          <a href="#about" className="block py-2 text-foreground/80 hover:text-foreground">About</a>
+          <a href="#features" className="block py-2 text-foreground/80 hover:text-claw-red">Features</a>
+          <a href="#how" className="block py-2 text-foreground/80 hover:text-claw-red">How It Works</a>
+          <a href="#faq" className="block py-2 text-foreground/80 hover:text-claw-red">FAQ</a>
+          <a href="#solution" className="block py-2 text-foreground/80 hover:text-claw-red">Solution</a>
+          <a href="#waitlist" className="block py-2 text-foreground/80 hover:text-claw-red">Waitlist</a>
           <div className="pt-2 pb-3 grid grid-cols-2 gap-2">
             <Button variant="outline" size="sm" className="w-full">Sign In</Button>
             <Button size="sm" className="w-full">Sign Up</Button>

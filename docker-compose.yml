@@ -165,6 +165,42 @@ services:
       - kong
     restart: unless-stopped
 
+  storage:
+    image: public.ecr.aws/supabase/storage-api:v1.35.3
+    profiles: [supabase]
+    environment:
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET:-change-me-generate-a-secret-at-least-32-chars-long}
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+    volumes:
+      - storage_data:/var/lib/storage   # must be named volume (not bind mount) for xattr support on macOS
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    restart: unless-stopped
+
+  imgproxy:
+    image: darthsim/imgproxy:v3.8.0
+    profiles: [supabase]
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_USE_ETAG: "true"
+      IMGPROXY_ENABLE_WEBP_DETECTION: "true"
+    volumes:
+      - storage_data:/var/lib/storage
+    restart: unless-stopped
+
   meta:
     image: supabase/postgres-meta:v0.84.2
     profiles: [supabase]
@@ -183,3 +219,4 @@ services:
 volumes:
   redis_data:
   db_data:
+  storage_data:

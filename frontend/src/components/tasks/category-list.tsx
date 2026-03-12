@@ -1,10 +1,12 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import type { Task, Category } from '@/types/task'
 import { PRIORITY_COLORS } from '@/types/task'
 import { useTaskStore } from '@/hooks/use-task-store'
 import { cn } from '@/lib/utils'
+import { Settings } from 'lucide-react'
 import { NewTaskDialog } from './new-task-dialog'
 
 interface CategoryListProps {
@@ -54,6 +56,13 @@ export function CategoryList({ tasks, categories }: CategoryListProps) {
                                         {catTasks.length}
                                     </span>
                                 </div>
+                                <Link
+                                    href={`/dashboard/settings/categories?edit=${cat.id}`}
+                                    className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                                    title={`${cat.name} settings`}
+                                >
+                                    <Settings className="h-3.5 w-3.5" />
+                                </Link>
                             </div>
 
                             {/* Tasks */}

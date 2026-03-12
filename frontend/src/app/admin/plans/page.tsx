@@ -13,12 +13,17 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { toast } from "sonner"
 import { PlanDialog } from './plan-dialog'
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog"
+import { cn } from "@/lib/utils"
 
 export default function PlansPage() {
     const [plans, setPlans] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
     const [selectedPlan, setSelectedPlan] = useState<any>(null)
     const [isDialogOpen, setIsDialogOpen] = useState(false)
+    const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+    const [deleteLoading, setDeleteLoading] = useState(false)
+    const [deletingId, setDeletingId] = useState<string | null>(null)
 
     const fetchPlans = async () => {
         setLoading(true)
@@ -43,15 +48,26 @@ export default function PlansPage() {
         setIsDialogOpen(true)
     }
 
-    const handleDelete = async (id: string) => {
-        if (!confirm('Are you sure you want to delete this plan?')) return
-
-        const res = await deletePlan(id)
-        if (res.error) {
-            toast.error("Error", { description: res.error })
-        } else {
-            toast.success("Success", { description: "Plan deleted successfully" })
-            fetchPlans()
+    const confirmDelete = async () => {
+        if (!deleteTarget) return
+        setDeleteLoading(true)
+        try {
+            const res = await deletePlan(deleteTarget.id)
+            if (res.error) {
+                toast.error("Error", { description: res.error })
+            } else {
+                setDeleteTarget(null)
+                setDeletingId(deleteTarget.id)
+                setTimeout(() => {
+                    setDeletingId(null)
+                    toast.success("Success", { description: "Plan deleted successfully" })
+                    fetchPlans()
+                }, 500)
+            }
+        } catch (error: any) {
+            toast.error(error.message || 'Failed to delete plan')
+        } finally {
+            setDeleteLoading(false)
         }
     }
 
@@ -80,7 +96,7 @@ export default function PlansPage() {
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {plans.map((plan) => (
-                        <div key={plan.id} className={`flex flex-col gap-6 rounded-xl border bg-card p-6 relative ${plan.is_default ? 'ring-2 ring-primary/20 border-primary' : ''}`}>
+                        <div key={plan.id} className={cn('flex flex-col gap-6 rounded-xl border bg-card p-6 relative', plan.is_default && 'ring-2 ring-primary/20 border-primary', deletingId === plan.id && 'animate-deleting')}>
                             <div className="flex flex-col gap-1">
                                 <div className="flex items-center justify-between flex-wrap gap-1">
                                     <h2 className="text-lg font-bold leading-tight">{plan.name}</h2>
@@ -135,7 +151,7 @@ export default function PlansPage() {
                                         <DropdownMenuItem onClick={() => handleEdit(plan)}>
                                             <Edit className="mr-2 h-4 w-4" /> Edit Details
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(plan.id)}>
+                                        <DropdownMenuItem className="text-destructive" onClick={() => setDeleteTarget({ id: plan.id, name: plan.name })}>
                                             <Trash className="mr-2 h-4 w-4" /> Delete Plan
                                         </DropdownMenuItem>
                                     </DropdownMenuContent>
@@ -151,6 +167,15 @@ export default function PlansPage() {
                 open={isDialogOpen}
                 onOpenChange={(open) => !open && handleDialogClose(false)}
                 onClose={() => handleDialogClose(true)}
+            />
+
+            <ConfirmDeleteDialog
+                open={!!deleteTarget}
+                onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+                onConfirm={confirmDelete}
+                title="Delete plan?"
+                description={`This will permanently delete the "${deleteTarget?.name}" plan.`}
+                loading={deleteLoading}
             />
         </div>
     )
