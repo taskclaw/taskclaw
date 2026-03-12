@@ -151,7 +151,7 @@ export class ConversationsService {
 
     const { data, error } = await client
       .from('conversations')
-      .select('*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, source_id, category_id, current_step_id, board_instance_id, override_category_id, sources(id, provider), categories(id, name, color, icon))')
+      .select('*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, source_id, category_id, current_step_id, board_instance_id, override_category_id, sources(id, provider), categories:categories!category_id(id, name, color, icon), override_category:categories!override_category_id(id, name, color, icon))')
       .eq('id', conversationId)
       .eq('user_id', userId)
       .eq('account_id', accountId)
