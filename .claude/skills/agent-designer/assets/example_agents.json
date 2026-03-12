@@ -1,0 +1,65 @@
+[
+  {
+    "slug": "x-idea-generator",
+    "name": "X Idea Generator",
+    "color": "#8b5cf6",
+    "icon": "lightbulb",
+    "skills": [
+      {
+        "slug": "x-trend-research",
+        "name": "X Trend Research",
+        "description": "Researches trending topics and hashtags on X to generate post ideas."
+      },
+      {
+        "slug": "x-content-angle-finder",
+        "name": "Content Angle Finder",
+        "description": "Takes a raw topic and finds unique angles, hooks, and perspectives."
+      }
+    ],
+    "knowledge_docs": [],
+    "linked_to_steps": ["idea"],
+    "_notes": "This agent handles the creative brainstorming phase. Two skills: one for trends, one for angles."
+  },
+  {
+    "slug": "x-copywriter",
+    "name": "X Copywriter",
+    "color": "#3b82f6",
+    "icon": "pen-tool",
+    "skills": [
+      {
+        "slug": "x-post-writer",
+        "name": "X Post Writer",
+        "description": "Writes compelling X posts with optimized hooks and CTAs."
+      },
+      {
+        "slug": "x-thread-writer",
+        "name": "X Thread Writer",
+        "description": "Structures long-form content into engaging X threads."
+      }
+    ],
+    "knowledge_docs": [],
+    "linked_to_steps": ["drafting"],
+    "_notes": "This agent does the actual writing. Two skills for different content formats."
+  },
+  {
+    "slug": "x-editor",
+    "name": "X Editor & Optimizer",
+    "color": "#f59e0b",
+    "icon": "check-circle",
+    "skills": [
+      {
+        "slug": "x-post-reviewer",
+        "name": "X Post Reviewer",
+        "description": "Reviews posts for engagement, clarity, and best practices."
+      },
+      {
+        "slug": "x-engagement-optimizer",
+        "name": "Engagement Optimizer",
+        "description": "Optimizes posts for maximum reach using X algorithm best practices."
+      }
+    ],
+    "knowledge_docs": [],
+    "linked_to_steps": ["review"],
+    "_notes": "Quality control agent. Reviews and optimizes before publishing."
+  }
+]

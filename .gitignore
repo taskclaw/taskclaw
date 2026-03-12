@@ -141,7 +141,6 @@ build
 .cursor/
 
 # AI/Dev tooling
-.claude/
 .bmad-core/
 
 # PEM files
