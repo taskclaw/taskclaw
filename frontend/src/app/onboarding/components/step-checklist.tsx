@@ -65,8 +65,8 @@ export function StepChecklist({
 
                     <ChecklistItem
                         icon={<FolderOpen className="w-4 h-4" />}
-                        label="Define Categories"
-                        description="Organize your workflow into distinct buckets like 'Client Work', 'Internal', and 'Personal'."
+                        label="Define Agents"
+                        description="Create agents to organize your workflow into distinct areas like 'Client Work', 'Internal', and 'Personal'."
                         status={categoriesDefined ? 'completed' : 'required'}
                         badge={categoriesDefined ? 'Completed' : 'Required'}
                         badgeVariant={categoriesDefined ? 'completed' : 'required'}

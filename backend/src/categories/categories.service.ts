@@ -31,7 +31,7 @@ export class CategoriesService {
       .order('created_at', { ascending: false });
 
     if (error) {
-      throw new Error(`Failed to fetch categories: ${error.message}`);
+      throw new Error(`Failed to fetch agents: ${error.message}`);
     }
 
     return data;
@@ -55,7 +55,7 @@ export class CategoriesService {
       .single();
 
     if (error || !data) {
-      throw new NotFoundException(`Category with ID ${id} not found`);
+      throw new NotFoundException(`Agent with ID ${id} not found`);
     }
 
     return data;
@@ -86,7 +86,7 @@ export class CategoriesService {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create category: ${error.message}`);
+      throw new Error(`Failed to create agent: ${error.message}`);
     }
 
     return data;
@@ -118,7 +118,7 @@ export class CategoriesService {
       .select();
 
     if (error) {
-      throw new Error(`Failed to create categories: ${error.message}`);
+      throw new Error(`Failed to create agents: ${error.message}`);
     }
 
     return data;
@@ -152,7 +152,7 @@ export class CategoriesService {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update category: ${error.message}`);
+      throw new Error(`Failed to update agent: ${error.message}`);
     }
 
     return data;
@@ -178,9 +178,9 @@ export class CategoriesService {
       .eq('account_id', accountId);
 
     if (error) {
-      throw new Error(`Failed to delete category: ${error.message}`);
+      throw new Error(`Failed to delete agent: ${error.message}`);
     }
 
-    return { message: 'Category deleted successfully' };
+    return { message: 'Agent deleted successfully' };
   }
 }

@@ -588,11 +588,11 @@ function SystemPromptTab({ systemPrompt, setSystemPrompt, hasCategory, categoryN
                 <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-amber-500/5 border border-amber-500/10 mb-4">
                     <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
                     <div className="text-xs">
-                        <span className="text-muted-foreground">The category </span>
+                        <span className="text-muted-foreground">The agent </span>
                         <span className="font-semibold text-amber-500">{categoryName}</span>
                         <span className="text-muted-foreground"> may also have its own system prompt. This step-level prompt will be </span>
                         <span className="font-semibold text-foreground">appended</span>
-                        <span className="text-muted-foreground"> to the category prompt.</span>
+                        <span className="text-muted-foreground"> to the agent prompt.</span>
                     </div>
                 </div>
             )}

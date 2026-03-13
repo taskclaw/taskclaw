@@ -33,19 +33,24 @@ Guide developers through setting up a complete local TaskClaw development enviro
 
 ## Table of Contents
 
-- [Quick Start](#quick-start)
+- [Execution Mode](#execution-mode)
 - [Wizard Flow](#wizard-flow)
 - [Environment Reference](#environment-reference)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
-## Quick Start
+## Execution Mode
 
-1. Ask the developer about their current setup (OS, Docker, Node version)
-2. Determine setup path: Cloud Supabase vs Local Supabase (Docker)
-3. Walk through each step, verifying success before moving on
-4. Get all services running and verified
+**IMPORTANT**: Run this setup as autonomously as possible. Do NOT stop to ask the user after each step. Instead:
+
+1. Run all prerequisite checks in parallel (Phase 1) — report results, only stop if something critical is missing
+2. Ask the setup path question ONCE (Cloud vs Local) — this is the ONLY required user decision
+3. Execute Phases 3–7 back-to-back without pausing. Run commands, check results, fix issues automatically
+4. Only ask the user for input when you genuinely need external information (e.g., Supabase cloud URL/keys for Option A)
+5. At the end, present a single summary table showing all steps and their status (OK / FAILED with details)
+
+The goal is: one user decision (Cloud vs Local), then everything runs to completion.
 
 ---
 
@@ -53,7 +58,7 @@ Guide developers through setting up a complete local TaskClaw development enviro
 
 ### Phase 1: Prerequisites Check
 
-Ask the user (or check automatically using the Bash tool):
+Run all of these checks automatically using the Bash tool (do NOT ask the user to check manually):
 
 ```bash
 # Check Node.js version (need 20+)
@@ -83,19 +88,19 @@ If any prerequisite is missing, guide the user through installing it before proc
 
 ### Phase 2: Setup Path
 
-Ask: "How do you want to run Supabase?"
+This is the **only question** you need to ask the user. Use AskUserQuestion with these options:
 
 **Option A: Cloud Supabase** (faster, simpler)
 - User needs a Supabase project (free tier works)
 - Get URL, anon key, and service role key from Supabase dashboard
 - No Docker needed for database
 
-**Option B: Local Supabase via Docker** (zero external dependencies)
+**Option B: Local Supabase via Docker** (zero external dependencies, recommended)
 - Runs PostgreSQL, Auth, Storage, Studio all locally
 - Requires Docker with sufficient resources
 - More representative of production
 
-Recommend **Option B** for full-stack development, **Option A** for frontend-only work.
+Recommend **Option B** for full-stack development, **Option A** for frontend-only work. After this answer, execute all remaining phases without stopping.
 
 ### Phase 3: Clone & Install
 
@@ -207,12 +212,49 @@ pnpm run dev
 
 #### Option B: Local Supabase
 
+**Important**: If the developer has any leftover data from a previous attempt, they MUST clean the volumes first. The PostgreSQL init scripts (auth schema, roles, JWT settings) only run when the data directory is empty:
+
 ```bash
+# ONLY if retrying after a failed first attempt:
+docker compose --profile supabase down -v
+
 # Start all services including Supabase
 docker compose --profile supabase up -d
+```
 
-# Wait for services to be healthy
-docker compose ps
+After running `up -d`, **wait** for all services to become healthy. Docker Compose will start services in dependency order: db → auth/rest/kong/meta → storage/studio.
+
+```bash
+# Watch services come up (repeat until all show "healthy" or "running")
+docker compose --profile supabase ps
+```
+
+**Automatic verification** — run these checks and handle failures automatically. Do NOT ask the user to verify manually; run the commands yourself:
+
+```bash
+# 1. Check PostgreSQL is healthy
+docker compose exec db pg_isready -U postgres -h localhost
+
+# 2. Check auth schema was created (critical — if missing, init scripts didn't run)
+docker compose exec db psql -U postgres -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'auth';"
+
+# 3. Check GoTrue (auth) is healthy
+curl -sf http://localhost:9999/health || docker compose logs auth --tail 20
+
+# 4. Check Kong API gateway
+curl -sf http://localhost:7431/rest/v1/ -H "apikey: placeholder" || true
+
+# 5. Check storage service
+docker compose logs storage --tail 10
+```
+
+**If auth schema is missing** (GoTrue fails with "schema auth does not exist"):
+This means the init scripts didn't run because the data volume already had data from a previous attempt. Fix:
+
+```bash
+# Destroy volumes and recreate
+docker compose --profile supabase down -v
+docker compose --profile supabase up -d
 ```
 
 Verify all services are running:
@@ -223,12 +265,17 @@ Verify all services are running:
 | Backend | 3001 | `curl http://localhost:3001/health` |
 | Supabase Studio | 7430 | Open http://localhost:7430 |
 | Kong (API Gateway) | 7431 | `curl http://localhost:7431/rest/v1/` |
-| PostgreSQL | 7433 | `docker compose exec db psql -U postgres` |
+| PostgreSQL | 5432 | `docker compose exec db psql -U postgres` |
 | Redis | 6379 | `docker compose exec redis redis-cli ping` |
 
 ### Phase 6: Database Setup
 
-If using **local Supabase**, migrations run automatically on container startup.
+If using **local Supabase**, the auth/storage schemas are created automatically by the Postgres image init scripts. Application migrations need to be applied separately:
+
+```bash
+cd backend
+npx supabase db push --db-url "postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@localhost:${POSTGRES_PORT:-5432}/postgres"
+```
 
 If using **cloud Supabase**, apply migrations:
 ```bash
@@ -246,13 +293,14 @@ pnpm run setup:super-admin
 
 ### Phase 7: Verify
 
-Run through this checklist:
+Run through this checklist automatically — execute each command and report results:
 
 1. **Backend health**: `curl http://localhost:3001/health` → `{ "status": "ok" }`
-2. **Frontend loads**: Open http://localhost:3000 → login page appears
-3. **Database connected**: Backend logs show successful Supabase connection
-4. **Login works**: Sign in with the super admin credentials
-5. **Kanban loads**: Tasks page shows the Kanban board
+2. **Frontend loads**: `curl -sf -o /dev/null -w "%{http_code}" http://localhost:3000` → `200`
+3. **Auth service**: `curl -sf http://localhost:9999/health` → `{"description":"GoTrue",...}`
+4. **Database connected**: `docker compose logs backend --tail 20` → look for successful connection
+5. **Login works**: Sign in with the super admin credentials at http://localhost:3000
+6. **Kanban loads**: Tasks page shows the Kanban board
 
 If any step fails, see the [Troubleshooting](#troubleshooting) section.
 
@@ -282,7 +330,7 @@ All containers are prefixed with `ott-supabase-*` and use the `supabase_network_
 | backend | Built from `./backend/Dockerfile` | default |
 | frontend | Built from `./frontend/Dockerfile` | default |
 | redis | `redis:7-alpine` | default |
-| db | `supabase/postgres:17` | supabase |
+| db | `supabase/postgres:15.8` | supabase |
 | kong | `kong:2` | supabase |
 | auth (GoTrue) | `supabase/gotrue` | supabase |
 | rest (PostgREST) | `postgrest/postgrest` | supabase |
@@ -299,11 +347,14 @@ All containers are prefixed with `ott-supabase-*` and use the `supabase_network_
 
 | Issue | Solution |
 |-------|----------|
+| GoTrue: "schema auth does not exist" | Init scripts only run on fresh data dir. Run: `docker compose --profile supabase down -v` then `up -d` |
+| Auth service keeps restarting | Check logs: `docker compose logs auth --tail 30`. Usually means auth schema is missing (see above) |
+| Storage: "permission denied for database" | Auth must be healthy first. Storage depends on auth. Fix auth first, then `docker compose restart storage` |
+| Studio won't start / unhealthy | Studio depends on auth + meta. Fix auth first |
 | `Port 3001 already in use` | Kill stale processes: `lsof -ti:3001 \| xargs kill -9` |
 | `Port 3000 already in use` | Kill stale processes: `lsof -ti:3000 \| xargs kill -9` |
 | Backend can't connect to Supabase | Check `SUPABASE_URL` — use `kong:8000` for Docker, cloud URL otherwise |
 | Frontend shows "Failed to fetch" | Verify `NEXT_PUBLIC_API_URL=http://localhost:3001` (must be accessible from browser) |
-| Supabase Studio won't load | Check db container: `docker compose ps`, verify `POSTGRES_PASSWORD` consistency |
 | Storage upload fails with RLS error | Run: `GRANT authenticator TO supabase_storage_admin;` in PostgreSQL |
 | Storage upload fails silently | Storage volume must be a named Docker volume (not bind mount) on macOS |
 | `Cannot find module` errors | Run `pnpm install` from the project root |
@@ -330,8 +381,8 @@ docker compose exec db psql -U postgres postgres
 # Open Supabase Studio
 open http://localhost:7430
 
-# Rebuild from scratch
-docker compose down -v
+# Rebuild from scratch (--profile supabase ensures db volumes are also removed)
+docker compose --profile supabase down -v
 rm -rf node_modules backend/node_modules frontend/node_modules
 pnpm install
 docker compose --profile supabase up -d

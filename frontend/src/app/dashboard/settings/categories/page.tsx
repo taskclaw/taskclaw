@@ -177,7 +177,7 @@ const FILTER_CONDITIONS: Record<string, { label: string; value: string }[]> = {
 // Main Page
 // ============================================================================
 
-export default function CategoriesPage() {
+export default function AgentsSettingsPage() {
     const [categories, setCategories] = useState<Category[]>([])
     const [sources, setSources] = useState<Source[]>([])
     const [loading, setLoading] = useState(true)
@@ -282,7 +282,7 @@ export default function CategoriesPage() {
         if (linkedSources.length > 0) {
             setAlert({
                 type: 'error',
-                message: 'Cannot delete a category with linked sources. Unlink or delete sources first.',
+                message: 'Cannot delete an agent with linked sources. Unlink or delete sources first.',
             })
             return
         }
@@ -307,11 +307,11 @@ export default function CategoriesPage() {
                         return next
                     })
                     setDeletingId(null)
-                    toast.success('Category deleted')
+                    toast.success('Agent deleted')
                 }, 500)
             }
         } catch (e: any) {
-            toast.error(e.message || 'Failed to delete category')
+            toast.error(e.message || 'Failed to delete agent')
         } finally {
             setDeleteLoading(false)
         }
@@ -380,14 +380,14 @@ export default function CategoriesPage() {
     return (
         <div className="container max-w-4xl mx-auto py-8 px-4">
             <div className="flex items-center justify-between mb-2">
-                <h1 className="text-3xl font-bold">Categories</h1>
+                <h1 className="text-3xl font-bold">Agents</h1>
                 <Button onClick={() => setShowCreateDialog(true)}>
                     <Plus className="h-4 w-4 mr-2" />
-                    New Category
+                    New Agent
                 </Button>
             </div>
             <p className="text-muted-foreground mb-6">
-                Manage your board categories, control visibility, and link them to external properties.
+                Manage your agents, control visibility, and link skills for AI-powered task processing.
             </p>
 
             {alert && (
@@ -435,14 +435,14 @@ export default function CategoriesPage() {
             {categories.length === 0 && (
                 <Card className="border-dashed">
                     <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                        <div className="text-4xl mb-4">📂</div>
-                        <h3 className="text-lg font-semibold mb-2">No categories yet</h3>
+                        <div className="text-4xl mb-4">🤖</div>
+                        <h3 className="text-lg font-semibold mb-2">No agents yet</h3>
                         <p className="text-muted-foreground mb-4">
-                            Create categories to organize your tasks across sources.
+                            Create agents to organize your tasks and power them with AI skills.
                         </p>
                         <Button onClick={() => setShowCreateDialog(true)}>
                             <Plus className="h-4 w-4 mr-2" />
-                            Create First Category
+                            Create First Agent
                         </Button>
                     </CardContent>
                 </Card>
@@ -473,7 +473,7 @@ export default function CategoriesPage() {
                     setEditCategorySkills([])
                     // Only reload list data (fast)
                     loadListData()
-                    setAlert({ type: 'success', message: editingCategory ? 'Category updated.' : 'Category created.' })
+                    setAlert({ type: 'success', message: editingCategory ? 'Agent updated.' : 'Agent created.' })
                 }}
             />
 
@@ -495,8 +495,8 @@ export default function CategoriesPage() {
                 open={!!deleteTarget}
                 onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
                 onConfirm={confirmDelete}
-                title="Delete category?"
-                description="Tasks in this category will lose their assignment."
+                title="Delete agent?"
+                description="Tasks assigned to this agent will lose their assignment."
                 loading={deleteLoading}
             />
         </div>
@@ -679,7 +679,7 @@ function CategoryCard({
                         {isLinking && availableSkills.length === 0 && (
                             <div className="mt-2 p-2 rounded-lg border bg-card">
                                 <p className="text-xs text-muted-foreground">
-                                    No more skills available to link. Create new skills in Settings &gt; Skills.
+                                    No more skills available to link. Create new skills in the Skill Library.
                                 </p>
                             </div>
                         )}
@@ -941,11 +941,11 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className={isEdit || hasLinkedSources ? 'sm:max-w-2xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-md'}>
                 <DialogHeader>
-                    <DialogTitle>{isEdit ? 'Edit Category' : 'New Category'}</DialogTitle>
+                    <DialogTitle>{isEdit ? 'Edit Agent' : 'New Agent'}</DialogTitle>
                     <DialogDescription>
                         {isEdit
-                            ? 'Update category details and configure sync filters.'
-                            : 'Create a new category for your board.'}
+                            ? 'Update agent details and configure skills, knowledge, and sync filters.'
+                            : 'Create a new agent to organize tasks and power them with AI skills.'}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -1028,7 +1028,7 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
                         <TabsContent value="skills" className="space-y-4 mt-4">
                             <div>
                                 <p className="text-xs text-muted-foreground">
-                                    Skills linked to this category are used as AI instructions when working on its tasks.
+                                    Skills linked to this agent are used as AI instructions when working on its tasks.
                                 </p>
                             </div>
 
@@ -1065,7 +1065,7 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
                                         return (
                                             <Select value="" onValueChange={(v) => { if (v) onLinkSkill?.(v) }}>
                                                 <SelectTrigger className="h-9 text-xs w-full">
-                                                    <SelectValue placeholder="+ Add a skill to this category..." />
+                                                    <SelectValue placeholder="+ Add a skill to this agent..." />
                                                 </SelectTrigger>
                                                 <SelectContent>
                                                     {available.map((skill) => (
@@ -1091,7 +1091,7 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
                         <TabsContent value="knowledge" className="space-y-4 mt-4">
                             <div>
                                 <p className="text-xs text-muted-foreground">
-                                    Master knowledge docs linked to this category provide context to the AI.
+                                    Master knowledge docs linked to this agent provide context to the AI.
                                 </p>
                             </div>
 
@@ -1109,8 +1109,8 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
                                     return (
                                         <div className="text-center py-6 border border-dashed rounded-lg bg-accent/30">
                                             <BookOpen className="h-6 w-6 text-muted-foreground mx-auto mb-1.5" />
-                                            <p className="text-xs text-muted-foreground">No knowledge docs linked to this category.</p>
-                                            <p className="text-[10px] text-muted-foreground mt-0.5">Go to Knowledge Base to create and assign docs to this category.</p>
+                                            <p className="text-xs text-muted-foreground">No knowledge docs linked to this agent.</p>
+                                            <p className="text-[10px] text-muted-foreground mt-0.5">Go to Knowledge Base to create and assign docs to this agent.</p>
                                         </div>
                                     )
                                 }
@@ -1222,10 +1222,10 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
                                         </div>
                                     ) : activeSourceId && properties.length > 0 ? (
                                         <div className="space-y-5">
-                                            {/* Category Property Mapping */}
+                                            {/* Agent Property Mapping */}
                                             <div className="space-y-2">
-                                                <Label className="text-xs font-medium">Category Property Mapping</Label>
-                                                <p className="text-xs text-muted-foreground">Which property auto-assigns tasks to categories?</p>
+                                                <Label className="text-xs font-medium">Agent Property Mapping</Label>
+                                                <p className="text-xs text-muted-foreground">Which property auto-assigns tasks to agents?</p>
                                                 <Select
                                                     value={sourceCategoryProps[activeSourceId] || '__none'}
                                                     onValueChange={(v) => setSourceCategoryProps({ ...sourceCategoryProps, [activeSourceId]: v })}
@@ -1303,7 +1303,7 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
                     <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
                     <Button onClick={handleSave} disabled={saving}>
                         {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                        {isEdit ? 'Save Changes' : 'Create Category'}
+                        {isEdit ? 'Save Changes' : 'Create Agent'}
                     </Button>
                 </DialogFooter>
             </DialogContent>
@@ -1312,7 +1312,7 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
 }
 
 // ============================================================================
-// Source Filter Dialog (Pre-Filters + Category Property Mapping)
+// Source Filter Dialog (Pre-Filters + Agent Property Mapping)
 // ============================================================================
 
 function SourceFilterDialog({ source, open, onOpenChange, onSaved }: {
@@ -1427,12 +1427,12 @@ function SourceFilterDialog({ source, open, onOpenChange, onSaved }: {
                     </div>
                 ) : (
                     <div className="space-y-6 py-2">
-                        {/* Category Property Mapping */}
+                        {/* Agent Property Mapping */}
                         <div className="space-y-3">
                             <div>
-                                <Label className="text-sm font-semibold">Category Property Mapping</Label>
+                                <Label className="text-sm font-semibold">Agent Property Mapping</Label>
                                 <p className="text-xs text-muted-foreground mt-0.5">
-                                    Which property in {source.provider === 'notion' ? 'Notion' : 'ClickUp'} maps to your OTT categories?
+                                    Which property in {source.provider === 'notion' ? 'Notion' : 'ClickUp'} maps to your agents?
                                     When a task&apos;s property value matches a category name, it will be auto-assigned.
                                 </p>
                             </div>
@@ -1456,7 +1456,7 @@ function SourceFilterDialog({ source, open, onOpenChange, onSaved }: {
                             </Select>
                             {categoryProperty && categoryProperty !== '__none' && (
                                 <div className="text-xs text-muted-foreground bg-accent rounded-md p-2">
-                                    Values of <strong>{categoryProperty}</strong> will be matched to your OTT category names.
+                                    Values of <strong>{categoryProperty}</strong> will be matched to your agent names.
                                     {(() => {
                                         const prop = properties.find((p) => p.name === categoryProperty)
                                         if (prop?.options) {

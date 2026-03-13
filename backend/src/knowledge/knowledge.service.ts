@@ -143,7 +143,7 @@ export class KnowledgeService {
         );
         if (existingMaster) {
           throw new ConflictException(
-            `Category already has a master doc: "${existingMaster.title}". Please unset it first or set is_master=false.`,
+            `Agent already has a master doc: "${existingMaster.title}". Please unset it first or set is_master=false.`,
           );
         }
       }
@@ -207,7 +207,7 @@ export class KnowledgeService {
           );
           if (existingMaster && existingMaster.id !== id) {
             throw new ConflictException(
-              `Category already has a master doc: "${existingMaster.title}". Cannot set multiple masters.`,
+              `Agent already has a master doc: "${existingMaster.title}". Cannot set multiple masters.`,
             );
           }
         }
@@ -255,7 +255,7 @@ export class KnowledgeService {
       const doc = await this.findOne(accessToken, accountId, id);
 
       if (!doc.category_id) {
-        throw new ConflictException('Cannot set uncategorized doc as master');
+        throw new ConflictException('Cannot set unassigned doc as master');
       }
 
       // Update triggers will handle unsetting others

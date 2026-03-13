@@ -404,7 +404,7 @@ export default function KnowledgePage() {
     <div className="flex h-[calc(100vh-4rem)]">
       {/* Sidebar: Category Filter */}
       <div className="w-64 border-r bg-gray-50 dark:bg-gray-900 p-4 overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-4">Categories</h2>
+        <h2 className="text-lg font-semibold mb-4">Agents</h2>
         <button
           onClick={() => setSelectedCategory(null)}
           className={`w-full text-left px-3 py-2 rounded-md mb-1 ${
@@ -568,7 +568,7 @@ export default function KnowledgePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Category</label>
+                  <label className="block text-sm font-medium mb-1">Agent</label>
                   <select
                     value={formData.category_id}
                     onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
