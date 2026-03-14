@@ -84,15 +84,32 @@ export class AiProviderService {
       'admin',
     ]);
 
+    // If api_key or api_url not provided, reuse existing encrypted values
+    let existingEncrypted: Record<string, any> | null = null;
+    if (!dto.api_key || !dto.api_url) {
+      const { data: existing } = await client
+        .from('ai_provider_configs')
+        .select('*')
+        .eq('account_id', accountId)
+        .maybeSingle();
+      existingEncrypted = existing;
+    }
+
     // Encrypt sensitive fields
     const encryptedData: Record<string, any> = {
       account_id: accountId,
       provider_type: dto.provider_type || 'openclaw',
-      api_url: encrypt(dto.api_url),
-      api_key: encrypt(dto.api_key),
+      api_url: dto.api_url ? encrypt(dto.api_url) : existingEncrypted?.api_url,
+      api_key: dto.api_key ? encrypt(dto.api_key) : existingEncrypted?.api_key,
       agent_id: dto.agent_id,
       is_active: dto.is_active ?? true,
     };
+
+    if (!encryptedData.api_url || !encryptedData.api_key) {
+      throw new BadRequestException(
+        'API URL and API key are required. Please provide them or ensure an existing configuration exists.',
+      );
+    }
 
     // Sprint 7: Extended OpenClaw credentials
     if (dto.openrouter_api_key !== undefined) {
@@ -130,8 +147,10 @@ export class AiProviderService {
     // Return with decrypted but masked values
     return {
       ...data,
-      api_url: dto.api_url, // Return plain URL
-      api_key: maskSensitiveValue(dto.api_key),
+      api_url: dto.api_url || decrypt(data.api_url),
+      api_key: dto.api_key
+        ? maskSensitiveValue(dto.api_key)
+        : maskSensitiveValue(decrypt(data.api_key)),
       api_key_masked: true,
       openrouter_api_key: dto.openrouter_api_key
         ? maskSensitiveValue(dto.openrouter_api_key)

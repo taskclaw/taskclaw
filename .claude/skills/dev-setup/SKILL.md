@@ -31,6 +31,33 @@ Guide developers through setting up a complete local TaskClaw development enviro
 
 ---
 
+## Key Architecture Facts
+
+**IMPORTANT — Read these before executing any phase:**
+
+### Environment Files Structure
+The project has **two** `.env` files for the application, and an **optional third** for Docker Compose:
+
+| File | Purpose | Always needed? |
+|------|---------|----------------|
+| `backend/.env` | Backend (NestJS) config: Supabase keys, JWT secret, Redis, API keys | Yes |
+| `frontend/.env` | Frontend (Next.js) config: public Supabase URL/key, API URL, branding | Yes |
+| `.env` (root) | Docker Compose variable substitution for Supabase services only | Only for local Supabase (`--profile supabase`) |
+
+The root `.env` is **NOT** an application config file. It exists solely because `docker-compose.yml` references `${JWT_SECRET}`, `${ANON_KEY}`, `${SERVICE_ROLE_KEY}`, and `${POSTGRES_PASSWORD}` for the Supabase service containers (db, auth, rest, storage, studio). Without it, those services will get empty or default values and fail.
+
+### Dev Server Commands
+The backend and frontend use **different script names**:
+
+| Package | Dev command | Notes |
+|---------|------------|-------|
+| `frontend/` | `npm run dev` / `next dev` | Has a `dev` script — Turborepo picks it up |
+| `backend/` | `npm run start:dev` / `nest start --watch` | Has `start:dev`, **NOT** `dev` — Turborepo **skips** it |
+
+**CRITICAL**: Running `pnpm run dev` from the project root (Turborepo) only starts the **frontend** and `@taskclaw/taskclaw-sync` packages. The backend must be started separately with `pnpm --filter taskclaw-backend run start:dev` or `cd backend && npm run start:dev`.
+
+---
+
 ## Table of Contents
 
 - [Execution Mode](#execution-mode)
@@ -126,10 +153,11 @@ Ask the user how they want to run the backend and frontend. Use AskUserQuestion:
 Options:
 
 **Option A: Local terminal (Recommended for development)**
-- Run `pnpm run dev` from the project root
+- Run `pnpm run dev` (frontend) + `pnpm --filter taskclaw-backend run start:dev` (backend) — two separate processes
 - Hot-reload, direct debugging, faster iteration
 - Only Docker is used for infrastructure (Supabase, Redis)
 - Ports 3000 and 3001 must be free on the host
+- Note: the backend has `start:dev` not `dev`, so Turborepo doesn't pick it up — it must be started separately
 
 **Option B: Docker containers**
 - Backend and frontend run inside Docker via `docker compose up`
@@ -196,20 +224,20 @@ docker compose up redis -d
 
 #### Option B: Local Supabase
 
-**Step 6a**: Create root `.env` if it doesn't exist.
+**Step 6a**: Create root `.env` for Docker Compose variable substitution.
 
-The root `.env` is used by docker-compose.yml for Supabase services. It needs `JWT_SECRET`, `ANON_KEY`, and `SERVICE_ROLE_KEY` that are consistent with what's in `backend/.env`.
+The root `.env` is **NOT** an application config file — it only provides variable substitution for `docker-compose.yml`. The Supabase containers (db, auth, rest, storage, studio) reference `${JWT_SECRET}`, `${ANON_KEY}`, `${SERVICE_ROLE_KEY}`, and `${POSTGRES_PASSWORD}`. Without this file, those services get empty values and fail.
 
-Read `backend/.env` to extract the `JWT_SECRET`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`, then write the root `.env`:
+Read `backend/.env` to extract the values, then create the root `.env` with just these Docker Compose variables:
 
 ```env
-TASKCLAW_VERSION=latest
 POSTGRES_PASSWORD=postgres
-JWT_SECRET=<from backend/.env>
+JWT_SECRET=<JWT_SECRET from backend/.env>
 ANON_KEY=<SUPABASE_ANON_KEY from backend/.env>
 SERVICE_ROLE_KEY=<SUPABASE_SERVICE_ROLE_KEY from backend/.env>
-DOMAIN=localhost
 ```
+
+**Do NOT add application variables here** — those belong in `backend/.env` and `frontend/.env`.
 
 **CRITICAL — JWT Validation**: Before proceeding, verify that the `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` JWTs are actually signed with the `JWT_SECRET`. Run this check:
 
@@ -397,11 +425,21 @@ ON CONFLICT DO NOTHING;
 
 If the user chose **local terminal** in Phase 3:
 
+**IMPORTANT**: The backend does NOT have a `dev` script — it uses `start:dev`. Turborepo's `pnpm run dev` only starts the frontend and `@taskclaw/taskclaw-sync`. You must start the backend separately.
+
+Start both in parallel (two separate background commands):
+
 ```bash
+# Terminal 1: Frontend + taskclaw-sync via Turborepo
 pnpm run dev
+
+# Terminal 2: Backend (must be started separately — has `start:dev`, not `dev`)
+pnpm --filter taskclaw-backend run start:dev
 ```
 
-This starts both backend (port 3001) and frontend (port 3000) via Turborepo.
+Wait for both to be ready:
+- Frontend: look for "Ready in XXXms" in output
+- Backend: look for "Nest application successfully started" in output, then verify with `curl -sf http://localhost:3001/health`
 
 If the user chose **Docker containers**, they are already running from Phase 6.
 
@@ -579,7 +617,7 @@ All containers are prefixed with `taskclaw-*` and use the `taskclaw_default` Doc
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | JWT mismatch between secret and tokens | Tokens were signed with a different secret | Regenerate tokens with the correct `JWT_SECRET` (see [JWT Key Generation](#jwt-key-generation)) |
-| `invalid JWT` errors in PostgREST | `JWT_SECRET` in `.env` doesn't match the one in Postgres | Ensure root `.env` `JWT_SECRET` matches `backend/.env` `JWT_SECRET` |
+| `invalid JWT` errors in PostgREST | `JWT_SECRET` in root `.env` (Docker Compose) doesn't match `backend/.env` | Ensure root `.env` `JWT_SECRET` matches `backend/.env` `JWT_SECRET` — both are used by different services |
 | Login fails silently | Anon key mismatch between frontend and backend | Ensure `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `frontend/.env` matches `SUPABASE_ANON_KEY` in `backend/.env` |
 
 ### Port / Network Issues
