@@ -69,7 +69,7 @@ export const PRIORITY_COLORS: Record<string, string> = {
   Low: '#22c55e',
 }
 
-export const DEFAULT_CATEGORY_COLORS: Record<string, string> = {
+export const DEFAULT_AGENT_COLORS: Record<string, string> = {
   Pessoal: '#6366f1',
   '8FAI': '#22c55e',
   Microfactory: '#ec4899',

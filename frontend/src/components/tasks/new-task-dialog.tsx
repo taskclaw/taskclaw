@@ -65,7 +65,7 @@ export function NewTaskDialog({
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
-                                Category
+                                Agent
                             </Label>
                             <select
                                 value={categoryId}

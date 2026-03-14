@@ -352,7 +352,7 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
   async previewInstructions(accountId: string, categoryId: string) {
     const compiled = await this.compiler.compileForCategory(accountId, categoryId);
     if (!compiled) {
-      return { content: null, message: 'No skills or knowledge linked to this category' };
+      return { content: null, message: 'No skills or knowledge linked to this agent' };
     }
     return {
       content: compiled.content,

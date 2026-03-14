@@ -259,7 +259,7 @@ function SortableStep({
                                 ? 'text-primary hover:text-primary/80'
                                 : 'text-muted-foreground/30 hover:text-muted-foreground opacity-0 group-hover:opacity-100',
                         )}
-                        title={step.linked_category_id ? 'Change linked category' : 'Link a category'}
+                        title={step.linked_category_id ? 'Change assigned agent' : 'Assign an agent'}
                     >
                         <Link2 className="w-3.5 h-3.5" />
                     </button>
@@ -269,7 +269,7 @@ function SortableStep({
                             <div className="fixed inset-0 z-10" onClick={() => setShowCategoryPicker(false)} />
                             <div className="absolute right-0 top-full mt-1 w-52 bg-popover border border-border rounded-lg shadow-xl z-20 py-1 max-h-52 overflow-y-auto">
                                 <div className="px-3 py-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                    Link Category
+                                    Assign Agent
                                 </div>
                                 {step.linked_category_id && (
                                     <button
@@ -287,7 +287,7 @@ function SortableStep({
                                 <div className="border-t border-border my-1" />
                                 {categories.length === 0 ? (
                                     <div className="px-3 py-2 text-xs text-muted-foreground">
-                                        No categories found
+                                        No agents found
                                     </div>
                                 ) : (
                                     categories.map((cat: any) => (
@@ -335,7 +335,7 @@ function SortableStep({
                         style={{ backgroundColor: step.linked_category_color || '#71717a' }}
                     />
                     <span className="text-primary/70 font-medium">{step.linked_category_name}</span>
-                    <span>— inherits AI config</span>
+                    <span>— AI agent assigned</span>
                 </div>
             )}
         </div>
@@ -604,7 +604,7 @@ export function CreateBoardDialog({ open, onClose }: CreateBoardDialogProps) {
                                         Default Agent
                                     </Label>
                                     <p className="text-[10px] text-muted-foreground/60 mb-2">
-                                        Fallback agent for steps without a linked category.
+                                        Fallback agent for steps without an assigned agent.
                                     </p>
                                     <div className="relative">
                                         <button
@@ -723,7 +723,7 @@ export function CreateBoardDialog({ open, onClose }: CreateBoardDialogProps) {
                                     Steps ({steps.length})
                                 </Label>
                                 <p className="text-[10px] text-muted-foreground/60 mb-2">
-                                    Drag to reorder. Click <Link2 className="w-3 h-3 inline" /> to link a category (inherits AI config).
+                                    Drag to reorder. Click <Link2 className="w-3 h-3 inline" /> to assign an agent to a step.
                                 </p>
                                 <div className="space-y-1.5">
                                     <DndContext

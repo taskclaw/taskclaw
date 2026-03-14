@@ -316,7 +316,7 @@ export class SkillsService {
         .single();
 
       if (!category) {
-        throw new NotFoundException('Category not found');
+        throw new NotFoundException('Agent not found');
       }
 
       // Insert association
@@ -329,7 +329,7 @@ export class SkillsService {
       if (error) {
         if (error.code === '23505') {
           // Unique violation
-          throw new ConflictException('Skill already linked to this category');
+          throw new ConflictException('Skill already linked to this agent');
         }
         this.logger.error(`Failed to link skill to category: ${error.message}`);
         throw new Error(error.message);
@@ -372,7 +372,7 @@ export class SkillsService {
         this.logger.warn(`Failed to trigger sync after unlinking skill: ${err.message}`);
       });
 
-      return { message: 'Skill unlinked from category successfully' };
+      return { message: 'Skill unlinked from agent successfully' };
     } catch (error) {
       this.logger.error('Error unlinking skill from category:', error);
       throw error;
@@ -624,19 +624,18 @@ export class SkillsService {
     // 1. Get all categories that have at least one linked skill
     const { data: categorySkills, error: csError } = await client
       .from('category_skills')
-      .select('category_id, skill:skills(id, name, is_active)')
-      .eq('skills.account_id', accountId);
+      .select('category_id, skill:skills(id, name, is_active, account_id)');
 
     if (csError) {
       this.logger.error(`Failed to fetch category skills: ${csError.message}`);
       return [];
     }
 
-    // Group skills by category
+    // Group skills by category (filter by account_id in JS — PostgREST can't filter nested relations)
     const categorySkillMap: Record<string, { skillCount: number; skillNames: string[] }> = {};
     for (const cs of categorySkills || []) {
       const skill = (cs as any).skill;
-      if (!skill || !skill.is_active) continue;
+      if (!skill || !skill.is_active || skill.account_id !== accountId) continue;
       if (!categorySkillMap[cs.category_id]) {
         categorySkillMap[cs.category_id] = { skillCount: 0, skillNames: [] };
       }
@@ -648,11 +647,15 @@ export class SkillsService {
     if (categoryIds.length === 0) return [];
 
     // 2. Get category details
-    const { data: categories } = await client
+    const { data: categories, error: catError } = await client
       .from('categories')
-      .select('id, name, color, icon, description')
+      .select('id, name, color, icon')
       .eq('account_id', accountId)
       .in('id', categoryIds);
+
+    if (catError) {
+      this.logger.error(`[AgentsDashboard] categories query failed: ${catError.message}`);
+    }
 
     // 3. Get provider_agents sync status
     const { data: providerAgents } = await client
@@ -766,7 +769,6 @@ export class SkillsService {
         name: cat.name,
         color: cat.color,
         icon: cat.icon,
-        description: cat.description,
         status,
         skill_count: skills.skillCount,
         skill_names: skills.skillNames,

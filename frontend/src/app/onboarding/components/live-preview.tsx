@@ -40,7 +40,7 @@ export function LivePreview({ notionConnected, categoriesSelected }: LivePreview
                         {categoriesSelected.length > 0 ? (
                             <>
                                 <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-                                    Categories
+                                    Agents
                                 </p>
                                 {categoriesSelected.slice(0, 3).map((cat, i) => (
                                     <div

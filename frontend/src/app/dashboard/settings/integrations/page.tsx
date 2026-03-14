@@ -826,9 +826,9 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
                 {step === 'category' && (
                     <div className="space-y-4 py-2">
                         <div className="space-y-2">
-                            <Label>Default Category</Label>
+                            <Label>Default Agent</Label>
                             <p className="text-xs text-muted-foreground mb-2">
-                                Synced tasks will be assigned to this category. Tasks with matching category metadata from the source will be auto-mapped.
+                                Synced tasks will be assigned to this agent. Tasks with matching agent metadata from the source will be auto-mapped.
                             </p>
                             <Select value={selectedCategory} onValueChange={setSelectedCategory}>
                                 <SelectTrigger>

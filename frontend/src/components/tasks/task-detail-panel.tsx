@@ -338,10 +338,10 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
                                 </div>
                             </div>
 
-                            {/* Category - clickable dropdown */}
+                            {/* Agent - clickable dropdown */}
                             <div className="space-y-1">
                                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                    Category
+                                    Agent
                                 </label>
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>

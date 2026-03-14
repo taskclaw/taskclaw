@@ -118,7 +118,7 @@ export class TasksService {
         .single();
 
       if (categoryError || !category) {
-        throw new BadRequestException('Invalid category_id for this account');
+        throw new BadRequestException('Invalid agent ID for this account');
       }
     }
 
@@ -202,7 +202,7 @@ export class TasksService {
         .single();
 
       if (categoryError || !category) {
-        throw new BadRequestException('Invalid category_id for this account');
+        throw new BadRequestException('Invalid agent ID for this account');
       }
     }
 

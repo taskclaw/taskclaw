@@ -6,8 +6,8 @@ export class CreateAiProviderDto {
   api_url: string;
 
   @IsString()
-  @IsNotEmpty()
-  api_key: string;
+  @IsOptional()
+  api_key?: string;
 
   @IsString()
   @IsOptional()

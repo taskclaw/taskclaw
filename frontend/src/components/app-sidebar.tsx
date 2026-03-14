@@ -7,11 +7,10 @@ import {
     Settings2,
     MessageCircle,
     Brain,
-    Wand2,
     Plug,
-    Tags,
     Bot,
     Import,
+    Library,
 } from "lucide-react"
 
 import { isCloudEdition } from "@/lib/edition"
@@ -46,21 +45,15 @@ const data = {
             items: [],
         },
         {
-            title: "Categories",
-            url: "/dashboard/settings/categories",
-            icon: Tags,
-            items: [],
-        },
-        {
-            title: "Skills",
-            url: "/dashboard/settings/skills",
-            icon: Wand2,
-            items: [],
-        },
-        {
             title: "Agents",
             url: "/dashboard/agents",
             icon: Bot,
+            items: [],
+        },
+        {
+            title: "Skill Library",
+            url: "/dashboard/settings/skills",
+            icon: Library,
             items: [],
         },
         {
