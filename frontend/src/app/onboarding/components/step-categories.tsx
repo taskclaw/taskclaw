@@ -85,7 +85,7 @@ export function StepCategories({
                     How would you like to organize your life?
                 </h1>
                 <p className="text-slate-400 text-sm leading-relaxed">
-                    Select or create categories to keep your tasks and goals separated.
+                    Select or create agents to keep your tasks and goals separated.
                     You can change these later.
                 </p>
             </div>
@@ -120,13 +120,13 @@ export function StepCategories({
                     className="w-full border border-dashed border-[#334155] rounded-xl p-4 text-slate-500 hover:border-[#FF4500] hover:text-[#FF4500] transition-all flex items-center justify-center gap-2 mb-6"
                 >
                     <Plus className="w-5 h-5" />
-                    Add New Category
+                    Add New Agent
                 </button>
             ) : (
                 <div className="border border-[#334155] rounded-xl p-4 bg-[#1E293B] mb-6 space-y-3">
                     <input
                         type="text"
-                        placeholder="Category name..."
+                        placeholder="Agent name..."
                         value={newName}
                         onChange={(e) => setNewName(e.target.value)}
                         onKeyDown={(e) => {
@@ -211,7 +211,7 @@ export function StepCategories({
 
             {/* Helper text */}
             <p className="text-center text-xs text-slate-500 mt-3">
-                You can always add or remove categories later in Settings.
+                You can always add or remove agents later.
             </p>
         </div>
     )

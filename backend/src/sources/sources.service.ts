@@ -110,7 +110,7 @@ export class SourcesService {
       .single();
 
     if (categoryError || !category) {
-      throw new BadRequestException('Invalid category_id for this account');
+      throw new BadRequestException('Invalid agent ID for this account');
     }
 
     // Validate config using the appropriate adapter
@@ -175,7 +175,7 @@ export class SourcesService {
         .single();
 
       if (categoryError || !category) {
-        throw new BadRequestException('Invalid category_id for this account');
+        throw new BadRequestException('Invalid agent ID for this account');
       }
     }
 

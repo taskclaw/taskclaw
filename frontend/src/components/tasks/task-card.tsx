@@ -37,7 +37,7 @@ export function TaskCard({ task, isDone, categories = [] }: TaskCardProps) {
     // Resolve category color from categories list or use default
     const category = categories.find((c) => c.id === task.category_id)
     const categoryColor = category?.color || '#71717a'
-    const categoryName = category?.name || task.category || 'Uncategorized'
+    const categoryName = category?.name || task.category || 'Unassigned'
 
     const priorityColor = task.priority
         ? PRIORITY_COLORS[task.priority]

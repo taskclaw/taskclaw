@@ -403,7 +403,7 @@ export default function SkillsPage() {
           <div>
             <h1 className="text-3xl font-bold">Skills Management</h1>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              Create custom AI behaviors with instruction sets. Link skills to categories for automatic provider sync.
+              Create custom AI behaviors with instruction sets. Link skills to agents for automatic provider sync.
             </p>
           </div>
           <button
@@ -492,7 +492,7 @@ export default function SkillsPage() {
                           );
                         })
                       ) : (
-                        <span className="text-xs text-gray-400">No categories linked</span>
+                        <span className="text-xs text-gray-400">No agents linked</span>
                       )}
                       <button
                         onClick={() => setLinkingSkillId(linkingSkillId === skill.id ? null : skill.id)}
@@ -508,7 +508,7 @@ export default function SkillsPage() {
                       <div className="mb-3 p-2 rounded-lg border bg-gray-50 dark:bg-gray-800 space-y-1">
                         {unlinkedCategories.length > 0 ? (
                           <>
-                            <p className="text-xs text-gray-500 mb-1">Link to category:</p>
+                            <p className="text-xs text-gray-500 mb-1">Link to agent:</p>
                             {unlinkedCategories.map((cat) => (
                               <button
                                 key={cat.id}
@@ -526,7 +526,7 @@ export default function SkillsPage() {
                           </>
                         ) : (
                           <p className="text-xs text-gray-500">
-                            Already linked to all categories.
+                            Already linked to all agents.
                           </p>
                         )}
                       </div>

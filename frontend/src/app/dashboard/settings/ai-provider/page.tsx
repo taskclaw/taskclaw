@@ -265,7 +265,7 @@ function AgentSyncPanel() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50">
-                    <th className="text-left p-3 font-medium">Category</th>
+                    <th className="text-left p-3 font-medium">Agent</th>
                     <th className="text-left p-3 font-medium">Status</th>
                     <th className="text-left p-3 font-medium hidden sm:table-cell">Skills</th>
                     <th className="text-left p-3 font-medium hidden sm:table-cell">Last Synced</th>

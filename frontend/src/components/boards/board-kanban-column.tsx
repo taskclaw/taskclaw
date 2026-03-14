@@ -103,7 +103,7 @@ export function BoardKanbanColumn({
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => setShowCategoryPicker(true)}>
                                 <Link2 className="text-muted-foreground" />
-                                <span>{step.linked_category_id ? 'Change Category' : 'Link Category'}</span>
+                                <span>{step.linked_category_id ? 'Change Agent' : 'Assign Agent'}</span>
                             </DropdownMenuItem>
                         </DropdownMenuContent>
                     </DropdownMenu>
@@ -188,7 +188,7 @@ export function BoardKanbanColumn({
                     <div className="fixed inset-0 z-20" onClick={() => setShowCategoryPicker(false)} />
                     <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-64 bg-popover border border-border rounded-lg shadow-xl py-1 max-h-80 overflow-y-auto">
                         <div className="px-3 py-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                            Link Category to &ldquo;{step.name}&rdquo;
+                            Assign Agent to &ldquo;{step.name}&rdquo;
                         </div>
                         {step.linked_category_id && (
                             <button
@@ -196,7 +196,7 @@ export function BoardKanbanColumn({
                                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors"
                             >
                                 <Unlink className="w-3.5 h-3.5" />
-                                Unlink category
+                                Remove agent
                             </button>
                         )}
                         <div className="border-t border-border my-1" />

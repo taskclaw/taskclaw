@@ -197,7 +197,7 @@ export default function AgentsPage() {
                         <Bot className="w-12 h-12 mb-4 opacity-30" />
                         <h3 className="text-sm font-semibold mb-1">No agents configured</h3>
                         <p className="text-xs text-center max-w-sm">
-                            Agents are categories with linked skills. Create a category, then link skills to it in Settings &gt; Skills.
+                            Create an agent and link skills to it to enable AI-powered task processing.
                         </p>
                     </div>
                 ) : view === 'grid' ? (

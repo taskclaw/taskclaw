@@ -13,47 +13,54 @@ export interface RpcResponse<T = any> {
 }
 
 /**
- * HTTP client for calling TaskClaw plugin RPC endpoints on the OpenClaw gateway.
+ * HTTP client for calling TaskClaw plugin endpoints on the OpenClaw gateway.
  * Uses the same gateway URL + auth token already stored in ai_provider_configs.
+ *
+ * Endpoints (on the OpenClaw gateway):
+ *   POST /api/taskclaw/sync-skill
+ *   POST /api/taskclaw/delete-skill
+ *   POST /api/taskclaw/verify-skill
+ *   GET  /api/taskclaw/list-skills
+ *   GET  /api/taskclaw/health
  */
 @Injectable()
 export class OpenClawRpcClient {
   private readonly logger = new Logger(OpenClawRpcClient.name);
 
   /**
-   * Call a taskclaw.* RPC method on the OpenClaw gateway.
+   * Call a TaskClaw plugin HTTP endpoint on the OpenClaw gateway.
    */
   async call<T = any>(
     config: OpenClawConfig,
-    method: string,
+    route: string,
+    method: 'GET' | 'POST' = 'POST',
     body?: Record<string, any>,
   ): Promise<RpcResponse<T>> {
-    const endpoint = `${config.api_url}/rpc/${method}`;
+    const endpoint = `${config.api_url}/api/taskclaw/${route}`;
 
-    this.logger.debug(`RPC call: ${method} → ${endpoint}`);
+    this.logger.debug(`RPC call: ${route} → ${method} ${endpoint}`);
 
     try {
       const response = await fetch(endpoint, {
-        method: 'POST',
+        method,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.api_key}`,
         },
-        body: body ? JSON.stringify(body) : undefined,
+        body: method === 'POST' && body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(15000),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
         this.logger.error(
-          `RPC ${method} failed (HTTP ${response.status}): ${errorText}`,
+          `RPC ${route} failed (HTTP ${response.status}): ${errorText}`,
         );
         return { ok: false, error: `HTTP ${response.status}: ${errorText}` };
       }
 
       const data = await response.json();
 
-      // OpenClaw RPC wraps the response — unwrap the respond(success, payload)
       if (data && typeof data === 'object') {
         if (data.ok === false && data.error) {
           return { ok: false, error: data.error };
@@ -64,10 +71,10 @@ export class OpenClawRpcClient {
       return { ok: true, data: data as T };
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        this.logger.error(`RPC ${method} timed out after 15s`);
+        this.logger.error(`RPC ${route} timed out after 15s`);
         return { ok: false, error: 'Request timed out after 15 seconds' };
       }
-      this.logger.error(`RPC ${method} error: ${err.message}`);
+      this.logger.error(`RPC ${route} error: ${err.message}`);
       return { ok: false, error: err.message };
     }
   }
@@ -81,7 +88,7 @@ export class OpenClawRpcClient {
     content: string,
     hash: string,
   ): Promise<RpcResponse<{ path: string; hash: string }>> {
-    return this.call(config, 'taskclaw.syncSkill', {
+    return this.call(config, 'sync-skill', 'POST', {
       categorySlug,
       content,
       hash,
@@ -95,7 +102,7 @@ export class OpenClawRpcClient {
     config: OpenClawConfig,
     categorySlug: string,
   ): Promise<RpcResponse<{ deleted: boolean }>> {
-    return this.call(config, 'taskclaw.deleteSkill', { categorySlug });
+    return this.call(config, 'delete-skill', 'POST', { categorySlug });
   }
 
   /**
@@ -105,7 +112,7 @@ export class OpenClawRpcClient {
     config: OpenClawConfig,
     categorySlug: string,
   ): Promise<RpcResponse<{ exists: boolean; hash: string | null }>> {
-    return this.call(config, 'taskclaw.verifySkill', { categorySlug });
+    return this.call(config, 'verify-skill', 'POST', { categorySlug });
   }
 
   /**
@@ -119,7 +126,7 @@ export class OpenClawRpcClient {
       skills: Array<{ categorySlug: string; hash: string | null }>;
     }>
   > {
-    return this.call(config, 'taskclaw.listSkills');
+    return this.call(config, 'list-skills', 'GET');
   }
 
   /**
@@ -134,6 +141,6 @@ export class OpenClawRpcClient {
       managedSkillCount: number;
     }>
   > {
-    return this.call(config, 'taskclaw.health');
+    return this.call(config, 'health', 'GET');
   }
 }

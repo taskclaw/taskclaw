@@ -249,7 +249,7 @@ export function StepEditor({ boardId, steps }: StepEditorProps) {
                                                 ? 'text-primary hover:text-primary/80'
                                                 : 'text-muted-foreground/30 hover:text-muted-foreground opacity-0 group-hover:opacity-100',
                                         )}
-                                        title={step.linked_category_id ? 'Change linked category' : 'Link a category'}
+                                        title={step.linked_category_id ? 'Change assigned agent' : 'Assign an agent'}
                                     >
                                         <Link2 className="w-3.5 h-3.5" />
                                     </button>
@@ -260,7 +260,7 @@ export function StepEditor({ boardId, steps }: StepEditorProps) {
                                             <div className="fixed inset-0 z-20" onClick={() => setCategoryPickerOpen(null)} />
                                             <div className="absolute right-0 top-full mt-1 w-56 bg-popover border border-border rounded-lg shadow-xl z-30 py-1 max-h-64 overflow-y-auto">
                                                 <div className="px-3 py-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                                    Link Category
+                                                    Assign Agent
                                                 </div>
                                                 {step.linked_category_id && (
                                                     <button
@@ -268,7 +268,7 @@ export function StepEditor({ boardId, steps }: StepEditorProps) {
                                                         className="w-full flex items-center gap-2 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors"
                                                     >
                                                         <Unlink className="w-3.5 h-3.5" />
-                                                        Unlink category
+                                                        Remove agent
                                                     </button>
                                                 )}
                                                 <div className="border-t border-border my-1" />

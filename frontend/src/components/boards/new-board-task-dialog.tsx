@@ -89,14 +89,14 @@ export function NewBoardTaskDialog({
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
-                                Category
+                                Agent
                             </Label>
                             <select
                                 value={categoryId}
                                 onChange={(e) => setCategoryId(e.target.value)}
                                 className="w-full bg-accent/50 border border-border rounded-lg px-3 py-2 text-xs outline-none"
                             >
-                                <option value="">No category</option>
+                                <option value="">No agent</option>
                                 {categories.map((cat) => (
                                     <option key={cat.id} value={cat.id}>
                                         {cat.name}

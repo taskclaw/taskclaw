@@ -84,7 +84,7 @@ export function DefaultCategoriesEditor({
         // Validate
         const valid = categories.filter((c) => c.name.trim())
         if (valid.length === 0) {
-            toast.error('At least one category with a name is required')
+            toast.error('At least one agent with a name is required')
             return
         }
 
@@ -103,10 +103,10 @@ export function DefaultCategoriesEditor({
             if (result.error) {
                 toast.error(result.error)
             } else {
-                toast.success('Default categories updated successfully')
+                toast.success('Default agents updated successfully')
             }
         } catch {
-            toast.error('Failed to save categories')
+            toast.error('Failed to save agents')
         } finally {
             setSaving(false)
         }
@@ -130,7 +130,7 @@ export function DefaultCategoriesEditor({
                         <Input
                             value={cat.name}
                             onChange={(e) => updateCategory(index, 'name', e.target.value)}
-                            placeholder="Category name"
+                            placeholder="Agent name"
                             className="h-8 text-sm"
                         />
                     </div>
@@ -190,7 +190,7 @@ export function DefaultCategoriesEditor({
             <div className="flex items-center gap-3 pt-2">
                 <Button variant="outline" size="sm" onClick={addCategory}>
                     <Plus className="mr-1.5 h-3.5 w-3.5" />
-                    Add Category
+                    Add Agent
                 </Button>
 
                 <Button size="sm" onClick={handleSave} disabled={saving}>
@@ -209,7 +209,7 @@ export function DefaultCategoriesEditor({
             </div>
 
             <p className="text-xs text-muted-foreground">
-                These categories will be shown as defaults during new user onboarding.
+                These agents will be shown as defaults during new user onboarding.
                 Users can customize them before completing setup.
             </p>
         </div>

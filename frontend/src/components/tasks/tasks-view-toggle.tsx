@@ -19,7 +19,7 @@ export function TasksViewToggle() {
                 )}
             >
                 <LayoutList className="w-3.5 h-3.5" />
-                Category
+                By Agent
             </button>
             <button
                 onClick={() => setViewMode('kanban')}

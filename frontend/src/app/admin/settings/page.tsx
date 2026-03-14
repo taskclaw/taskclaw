@@ -125,10 +125,10 @@ export default function AdminSettingsPage() {
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                         <FolderOpen className="h-5 w-5" />
-                        Default Onboarding Categories
+                        Default Onboarding Agents
                     </CardTitle>
                     <CardDescription>
-                        Configure the default categories shown to new users during onboarding.
+                        Configure the default agents shown to new users during onboarding.
                         Users can customize these before completing their setup.
                     </CardDescription>
                 </CardHeader>

@@ -1,5 +1,5 @@
 {
-  "name": "@taskclaw/openclaw-plugin",
+  "name": "@taskclaw/taskclaw-sync",
   "version": "1.0.0",
   "description": "TaskClaw sync plugin for OpenClaw — manages skills and knowledge base on the gateway via RPC",
   "main": "dist/index.js",

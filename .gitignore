@@ -155,7 +155,8 @@ next-env.d.ts
 # Legacy workspace (deprecated)
 apps/
 
-# Docker volumes (local data — keep docker/volumes/api/kong.yml tracked)
-docker/volumes/db/
+# Docker volumes (local data — keep init scripts tracked)
+docker/volumes/db/data/
+docker/volumes/db/init/
 docker/volumes/storage/
 docker-compose.supabase-local.yml
