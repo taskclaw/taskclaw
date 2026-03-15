@@ -117,6 +117,7 @@ export async function updateBoard(
         display_order: number
         is_archived: boolean
         default_category_id: string | null
+        settings_override: Record<string, any>
     }>
 ): Promise<{ success?: boolean; board?: Board; error?: string }> {
     const headers = await getAuthHeaders()

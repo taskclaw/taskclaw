@@ -163,6 +163,7 @@ export class TasksService {
         due_date: createTaskDto.due_date || null,
         board_instance_id: createTaskDto.board_instance_id || null,
         current_step_id: createTaskDto.current_step_id || null,
+        card_data: createTaskDto.card_data || {},
       })
       .select('*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)')
       .single();
@@ -212,6 +213,12 @@ export class TasksService {
       updateData.completed_at = new Date().toISOString();
     } else if (updateTaskDto.completed === false) {
       updateData.completed_at = null;
+    }
+
+    // Merge card_data: preserve prior step data, overwrite at step_key level
+    if (updateTaskDto.card_data) {
+      const existingCardData = existingTask.card_data || {};
+      updateData.card_data = { ...existingCardData, ...updateTaskDto.card_data };
     }
 
     // Auto-sync status when current_step_id changes (board tasks)
@@ -362,7 +369,7 @@ export class TasksService {
     userId: string,
     accountId: string,
     taskId: string,
-    body: { notes_append: string; conversation_id?: string },
+    body: { notes_append: string; conversation_id?: string; card_data?: Record<string, any> },
     accessToken?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
@@ -377,12 +384,20 @@ export class TasksService {
     const separator = `\n\n--- AI Findings (${timestamp}) ---\n`;
     const updatedNotes = (existingTask.notes || '') + separator + body.notes_append;
 
+    const updatePayload: any = {
+      notes: updatedNotes,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Merge card_data if provided by AI
+    if (body.card_data) {
+      const existingCardData = existingTask.card_data || {};
+      updatePayload.card_data = { ...existingCardData, ...body.card_data };
+    }
+
     const { data, error } = await client
       .from('tasks')
-      .update({
-        notes: updatedNotes,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', taskId)
       .eq('account_id', accountId)
       .select('*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)')

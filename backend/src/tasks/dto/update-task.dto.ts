@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsISO8601,
   IsNumber,
+  IsObject,
   ValidateIf,
 } from 'class-validator';
 
@@ -50,4 +51,8 @@ export class UpdateTaskDto {
   @ValidateIf((_o, v) => v !== null)
   @IsUUID()
   override_category_id?: string | null;
+
+  @IsOptional()
+  @IsObject()
+  card_data?: Record<string, any>;
 }

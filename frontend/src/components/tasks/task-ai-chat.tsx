@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, X, Loader2, FileDown, CheckCircle, ExternalLink, BrainCircuit, Play } from 'lucide-react'
+import { useMemo } from 'react'
 import { getOrCreateConversation, sendMessageBackground, getMessages, saveAiToTask } from '@/app/dashboard/chat/actions'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
@@ -12,6 +13,60 @@ interface Message {
     content: string
     created_at?: string
     metadata?: Record<string, any>
+}
+
+/** Lightweight markdown-to-HTML for AI chat messages */
+function renderMarkdown(text: string): string {
+    // Remove output_json blocks (already parsed by backend)
+    let html = text.replace(/```output_json[\s\S]*?```/g, '')
+
+    // Code blocks
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) =>
+        `<pre class="bg-accent/80 border border-border rounded-lg px-3 py-2 my-2 overflow-x-auto text-xs font-mono whitespace-pre">${escapeHtml(code.trim())}</pre>`)
+
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, '<code class="bg-accent/80 px-1.5 py-0.5 rounded text-xs font-mono">$1</code>')
+
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<h4 class="font-bold text-sm mt-3 mb-1">$1</h4>')
+    html = html.replace(/^## (.+)$/gm, '<h3 class="font-bold text-sm mt-3 mb-1">$1</h3>')
+    html = html.replace(/^# (.+)$/gm, '<h3 class="font-bold text-base mt-3 mb-1">$1</h3>')
+
+    // Bold + italic
+    html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
+
+    // Horizontal rule
+    html = html.replace(/^---$/gm, '<hr class="border-border my-2" />')
+
+    // Unordered lists
+    html = html.replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+
+    // Numbered lists
+    html = html.replace(/^\d+[./] (.+)$/gm, '<li class="ml-4 list-decimal">$1</li>')
+
+    // Wrap consecutive <li> tags
+    html = html.replace(/((?:<li[^>]*>.*<\/li>\s*)+)/g, '<ul class="my-1 space-y-0.5">$1</ul>')
+
+    // Line breaks (double newline = paragraph, single = br)
+    html = html.replace(/\n\n/g, '</p><p class="mt-2">')
+    html = html.replace(/\n/g, '<br />')
+
+    // Wrap in paragraph
+    html = `<p>${html}</p>`
+
+    // Clean up empty paragraphs
+    html = html.replace(/<p>\s*<\/p>/g, '')
+
+    return html
+}
+
+function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
 }
 
 interface TaskAIChatProps {
@@ -284,9 +339,9 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
     }
 
     return (
-        <div className="flex flex-col border border-primary/20 rounded-xl bg-background/80 backdrop-blur-sm overflow-hidden">
+        <div className="flex flex-col h-full overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-2.5 bg-primary/10 border-b border-primary/20">
+            <div className="flex items-center justify-between px-4 py-2.5 bg-primary/5 border-b border-border">
                 <div className="flex items-center gap-2">
                     <div className={cn(
                         'w-2 h-2 rounded-full',
@@ -317,7 +372,7 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
             </div>
 
             {/* Messages */}
-            <div className="flex-1 max-h-[300px] overflow-y-auto p-3 space-y-3">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
                 {isInitializing && (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
@@ -356,15 +411,22 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
                         <div key={messageId}>
                             <div
                                 className={cn(
-                                    'text-sm rounded-lg px-3 py-2 max-w-[90%]',
+                                    'text-sm rounded-lg px-4 py-3',
                                     msg.role === 'user'
-                                        ? 'bg-primary/20 text-primary ml-auto'
-                                        : 'bg-accent/50 border border-border',
+                                        ? 'bg-primary/15 text-primary ml-auto max-w-[85%]'
+                                        : 'bg-accent/30 border border-border',
                                 )}
                             >
-                                <div className="whitespace-pre-wrap break-words">
-                                    {msg.content}
-                                </div>
+                                {msg.role === 'assistant' ? (
+                                    <div
+                                        className="prose-chat break-words text-sm leading-relaxed [&_strong]:font-semibold [&_em]:italic [&_h3]:text-foreground [&_h4]:text-foreground [&_li]:text-sm [&_code]:text-[13px]"
+                                        dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }}
+                                    />
+                                ) : (
+                                    <div className="whitespace-pre-wrap break-words">
+                                        {msg.content}
+                                    </div>
+                                )}
                             </div>
                             {/* Save to task button for assistant messages */}
                             {msg.role === 'assistant' && msg.content.length > 50 && (
