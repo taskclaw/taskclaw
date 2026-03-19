@@ -25,6 +25,7 @@ import { BoardSettingsForm } from '@/components/boards/board-settings-form'
 import { StepEditor } from '@/components/boards/step-editor'
 import { BoardIntegrationDialog } from '@/components/boards/board-integration-dialog'
 import { AddIntegrationDialog } from '@/components/boards/add-integration-dialog'
+import { IntegrationManager } from '@/components/integrations/integration-manager'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
 import { toast } from 'sonner'
 import type { IntegrationStatus } from '@/types/board'
@@ -41,6 +42,7 @@ export default function BoardSettingsPage() {
     const [integrations, setIntegrations] = useState<IntegrationStatus[]>([])
     const [selectedIntegration, setSelectedIntegration] = useState<IntegrationStatus | null>(null)
     const [showAddIntegration, setShowAddIntegration] = useState(false)
+    const [showIntegrationManager, setShowIntegrationManager] = useState(false)
     const [removingSlug, setRemovingSlug] = useState<string | null>(null)
 
     const loadIntegrations = useCallback(async () => {
@@ -166,10 +168,38 @@ export default function BoardSettingsPage() {
                         </div>
                     </section>
 
-                    {/* Integrations */}
+                    {/* New Integration Marketplace */}
                     <section>
                         <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-sm font-bold">Integrations</h2>
+                            <h2 className="text-sm font-bold">Integration Marketplace</h2>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setShowIntegrationManager(true)}
+                            >
+                                <Plug className="w-3.5 h-3.5 mr-1" />
+                                Manage Integrations
+                            </Button>
+                        </div>
+                        <div className="bg-card border border-border rounded-xl p-5">
+                            <p className="text-xs text-muted-foreground mb-3">
+                                Connect services from the Integration Marketplace to give AI access to external tools.
+                            </p>
+                            <Button
+                                variant="default"
+                                size="sm"
+                                onClick={() => setShowIntegrationManager(true)}
+                            >
+                                <Plug className="w-3.5 h-3.5 mr-1" />
+                                Open Marketplace
+                            </Button>
+                        </div>
+                    </section>
+
+                    {/* Legacy Integrations */}
+                    <section>
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-sm font-bold">Board Integrations (Legacy)</h2>
                             <Button
                                 variant="outline"
                                 size="sm"
@@ -361,6 +391,17 @@ export default function BoardSettingsPage() {
                 onOpenChange={setShowAddIntegration}
                 onAdded={loadIntegrations}
             />
+
+            {showIntegrationManager && (
+                <IntegrationManager
+                    mode="board"
+                    boardId={boardId}
+                    onClose={() => {
+                        setShowIntegrationManager(false)
+                        loadIntegrations()
+                    }}
+                />
+            )}
         </div>
     )
 }

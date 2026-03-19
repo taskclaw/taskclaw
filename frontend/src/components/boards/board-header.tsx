@@ -1,18 +1,21 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Settings, ChevronRight, Zap, BrainCircuit } from 'lucide-react'
+import { Plus, Settings, ChevronRight, Zap, BrainCircuit, Plug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { updateBoard, getBoardIntegrations } from '@/app/dashboard/boards/actions'
+import { getBoardIntegrationRefs } from '@/app/dashboard/settings/integrations/integration-actions'
 import { BoardIntegrationDialog } from './board-integration-dialog'
 import { BoardAIChat } from './board-ai-chat'
+import { IntegrationManager } from '@/components/integrations/integration-manager'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { Board, IntegrationStatus } from '@/types/board'
+import type { BoardIntegrationRef } from '@/types/integration'
 
 interface BoardHeaderProps {
     board: Board
@@ -22,14 +25,23 @@ interface BoardHeaderProps {
 export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
     const [fullAi, setFullAi] = useState(board.settings_override?.full_ai === true)
     const [toggling, setToggling] = useState(false)
+    // Legacy integration system (still used for old boards)
     const [integrations, setIntegrations] = useState<IntegrationStatus[]>([])
     const [selectedIntegration, setSelectedIntegration] = useState<IntegrationStatus | null>(null)
+    // New integration system
+    const [boardRefs, setBoardRefs] = useState<BoardIntegrationRef[]>([])
+    const [showIntegrationManager, setShowIntegrationManager] = useState(false)
     const [showBoardChat, setShowBoardChat] = useState(false)
     const qc = useQueryClient()
 
     const loadIntegrations = useCallback(async () => {
-        const data = await getBoardIntegrations(board.id)
-        setIntegrations(data)
+        // Load both legacy and new integrations
+        const [legacyData, newRefs] = await Promise.all([
+            getBoardIntegrations(board.id),
+            getBoardIntegrationRefs(board.id),
+        ])
+        setIntegrations(legacyData)
+        setBoardRefs(newRefs)
     }, [board.id])
 
     useEffect(() => {
@@ -76,6 +88,8 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
         return `${integration.name} — Not configured`
     }
 
+    const hasAnyIntegrations = integrations.length > 0 || boardRefs.length > 0
+
     return (
         <>
             <header className="flex h-16 shrink-0 items-center gap-2">
@@ -104,8 +118,42 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
                         />
                     </div>
 
-                    {/* Integration Status Icons */}
-                    {integrations.length > 0 && (
+                    {/* New Integration Refs Icons */}
+                    {boardRefs.length > 0 && (
+                        <>
+                            <Separator orientation="vertical" className="h-4" />
+                            <div className="flex items-center gap-1">
+                                {boardRefs.map((ref) => {
+                                    const def = ref.connection?.definition
+                                    const conn = ref.connection
+                                    if (!def || !conn) return null
+                                    const isActive = conn.status === 'active'
+                                    return (
+                                        <Tooltip key={ref.id}>
+                                            <TooltipTrigger asChild>
+                                                <button
+                                                    onClick={() => setShowIntegrationManager(true)}
+                                                    className={`w-7 h-7 rounded-md flex items-center justify-center text-sm transition-colors ${
+                                                        isActive
+                                                            ? 'bg-green-500/10 text-green-600 hover:bg-green-500/20'
+                                                            : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                                                    }`}
+                                                >
+                                                    {def.icon || '🔌'}
+                                                </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="bottom" className="text-xs">
+                                                {def.name} — {isActive ? 'Connected' : conn.status}
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    )
+                                })}
+                            </div>
+                        </>
+                    )}
+
+                    {/* Legacy Integration Status Icons */}
+                    {integrations.length > 0 && boardRefs.length === 0 && (
                         <>
                             <Separator orientation="vertical" className="h-4" />
                             <div className="flex items-center gap-1">
@@ -127,6 +175,22 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
                             </div>
                         </>
                     )}
+
+                    {/* Integration Manager Button */}
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setShowIntegrationManager(true)}
+                            >
+                                <Plug className="w-4 h-4" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-xs">
+                            Manage Board Integrations
+                        </TooltipContent>
+                    </Tooltip>
 
                     <Tooltip>
                         <TooltipTrigger asChild>
@@ -154,7 +218,7 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
                 </div>
             </header>
 
-            {/* Integration Setup Dialog */}
+            {/* Legacy Integration Setup Dialog */}
             {selectedIntegration && (
                 <BoardIntegrationDialog
                     integration={selectedIntegration}
@@ -164,6 +228,18 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
                         if (!open) setSelectedIntegration(null)
                     }}
                     onSaved={loadIntegrations}
+                />
+            )}
+
+            {/* New Integration Manager Modal */}
+            {showIntegrationManager && (
+                <IntegrationManager
+                    mode="board"
+                    boardId={board.id}
+                    onClose={() => {
+                        setShowIntegrationManager(false)
+                        loadIntegrations()
+                    }}
                 />
             )}
 

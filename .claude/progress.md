@@ -3,7 +3,7 @@
 ## Status
 - **Project:** Schema-Driven Integration Marketplace
 - **Started:** 2026-03-19
-- **Features:** 33 / 44 completed
+- **Features:** 44 / 44 completed
 - **Last session:** 2026-03-19
 - **Current blocker:** none
 
@@ -81,3 +81,44 @@
 
 **Files Created:**
 - `backend/supabase/migrations/20260319000004_seed_integration_definitions.sql` — 17 skills + 17 integration definitions with dollar-quoted instructions
+
+### 2026-03-19 — Frontend Engineer Session 1
+**Completed:** F016-F026 (all frontend features)
+
+**Phase 1 — Types (F016):**
+- Created `frontend/src/types/integration.ts` with all TypeScript interfaces (IntegrationDefinition, IntegrationConnection, BoardIntegrationRef, auth configs, API payloads, CatalogItem)
+
+**Phase 2 — Server Actions (F026):**
+- Created `frontend/src/app/dashboard/settings/integrations/integration-actions.ts` with all server actions (definitions CRUD, connections CRUD, OAuth, board refs, catalog helper)
+
+**Phase 3 — Core Components (F017-F021):**
+- F017: `<IntegrationCatalog />` — grid of definitions with search, category filter, status badges, connect/manage buttons, board mode toggle
+- F018: `<IntegrationConnectionCard />` — connection display with status badge, edit/test/disconnect actions, board mode toggle
+- F020: `<IntegrationTestChat />` — compact inline chat reusing TaskAIChat polling pattern (getOrCreateConversation, sendMessageBackground, 5s polling)
+- F019: `<IntegrationSetupDialog />` — split layout with credential fields (left) + test chat (right), supports API key/OAuth/webhook auth types
+- F021: `<IntegrationCreateDialog />` — custom integration creator with dynamic field builder, OAuth config, setup guide, skill linking, JSON export
+
+**Phase 4 — Orchestrator (F022):**
+- `<IntegrationManager />` — main orchestrator with Catalog/Connections tabs, composes all sub-components, works as both dialog (`onClose` prop) and embedded (`embedded` prop)
+
+**Phase 5 — Page Integration (F023-F025):**
+- F023: Rewrote settings integrations page — Integration Marketplace at top (embedded mode), Task Sources + CommTools below (preserved unchanged)
+- F024: Updated board header — shows new integration ref icons alongside legacy icons, Plug button opens IntegrationManager modal in board mode
+- F025: Updated board settings page — added Integration Marketplace section with Open Marketplace button, legacy integration section preserved
+
+**Files Created:**
+- `frontend/src/types/integration.ts`
+- `frontend/src/app/dashboard/settings/integrations/integration-actions.ts`
+- `frontend/src/components/integrations/integration-catalog.tsx`
+- `frontend/src/components/integrations/integration-connection-card.tsx`
+- `frontend/src/components/integrations/integration-test-chat.tsx`
+- `frontend/src/components/integrations/integration-setup-dialog.tsx`
+- `frontend/src/components/integrations/integration-create-dialog.tsx`
+- `frontend/src/components/integrations/integration-manager.tsx`
+
+**Files Modified:**
+- `frontend/src/app/dashboard/settings/integrations/page.tsx` (embedded IntegrationManager at top)
+- `frontend/src/components/boards/board-header.tsx` (new integration ref icons + Plug button + IntegrationManager modal)
+- `frontend/src/app/dashboard/boards/[boardId]/settings/page.tsx` (Integration Marketplace section + IntegrationManager modal)
+
+**TypeScript:** Zero compilation errors confirmed via `npx tsc --noEmit`

@@ -499,13 +499,11 @@ export class IntegrationsService {
         }
       }
 
-      // Update last_used_at
-      client
+      // Update last_used_at (fire-and-forget)
+      void client
         .from('integration_connections')
         .update({ last_used_at: new Date().toISOString() })
-        .eq('id', conn.id)
-        .then(() => {})
-        .catch(() => {});
+        .eq('id', conn.id);
 
       contexts.push({
         name: conn.definition.name,

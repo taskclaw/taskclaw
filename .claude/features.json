@@ -246,19 +246,19 @@
       "id": "F021",
       "name": "<IntegrationCreateDialog /> component",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Form: name, description, icon (emoji picker), auth_type dropdown (api_key/oauth2/webhook/basic/none). If api_key: dynamic field builder. If oauth2: auth URL, token URL, scopes, client ID/secret. Skill editor or link existing skill. Setup guide markdown textarea. Save/Export JSON buttons.",
       "depends_on": [
         "F016"
       ],
       "test": "Create custom integration with api_key auth. Create with oauth2 auth. Link a skill. Export as JSON.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F022",
       "name": "<IntegrationManager /> modal component",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Main orchestrator modal. Props: mode ('settings'|'board'), boardId?, onClose?. Tabs: Catalog, My Connections, Create Custom. In board mode: shows 'Add to Board' toggles. Composes IntegrationCatalog, IntegrationConnectionCard, IntegrationSetupDialog, IntegrationCreateDialog.",
       "depends_on": [
         "F017",
@@ -267,58 +267,58 @@
         "F021"
       ],
       "test": "Opens in settings mode: shows full catalog. Opens in board mode: shows catalog with board linking. Create custom works. Connect/disconnect works.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F023",
       "name": "Settings integrations page rewrite",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Rewrite frontend/src/app/dashboard/settings/integrations/page.tsx. Top section: IntegrationManager in settings mode (embedded, not modal). Below: keep existing Sources section (Notion/ClickUp) and CommTools section unchanged.",
       "depends_on": [
         "F022",
         "F026"
       ],
       "test": "Page loads. Shows integration catalog at top. Sources section below still works. CommTools section still works.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F024",
       "name": "Board header integration display update",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Update board-header.tsx: replace getBoardIntegrations() call with new API for board_integration_refs. Show connected integration icons from new system. Click opens IntegrationManager modal in board mode.",
       "depends_on": [
         "F022",
         "F026"
       ],
       "test": "Board header shows integration icons from new system. Click opens IntegrationManager modal. Add/remove integration from board works.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F025",
       "name": "Board settings integration management update",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Update board settings page: replace old integration list with IntegrationManager component in board mode. Remove dependency on old board integration actions.",
       "depends_on": [
         "F022",
         "F026"
       ],
       "test": "Board settings shows IntegrationManager. Can add/remove integrations. Old integration UI replaced.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F026",
       "name": "Frontend actions for new API endpoints",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "New/updated actions in settings/integrations/actions.ts and boards/actions.ts: getDefinitions(), createDefinition(), updateDefinition(), deleteDefinition(), getConnections(), createConnection(), updateConnection(), deleteConnection(), getBoardIntegrationRefs(), addBoardIntegrationRef(), removeBoardIntegrationRef(), initiateOAuth(), testConnection().",
       "depends_on": [
         "F016"
       ],
       "test": "Each action calls correct backend endpoint. Returns typed data. Error handling works.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F027",
