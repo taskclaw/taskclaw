@@ -236,6 +236,7 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
                 <IntegrationManager
                     mode="board"
                     boardId={board.id}
+                    size="full"
                     onClose={() => {
                         setShowIntegrationManager(false)
                         loadIntegrations()

@@ -3,7 +3,7 @@
 ## Status
 - **Project:** Schema-Driven Integration Marketplace
 - **Started:** 2026-03-19
-- **Features:** 44 / 44 completed
+- **Features:** 49 / 49 completed
 - **Last session:** 2026-03-19
 - **Current blocker:** none
 
@@ -120,5 +120,27 @@
 - `frontend/src/app/dashboard/settings/integrations/page.tsx` (embedded IntegrationManager at top)
 - `frontend/src/components/boards/board-header.tsx` (new integration ref icons + Plug button + IntegrationManager modal)
 - `frontend/src/app/dashboard/boards/[boardId]/settings/page.tsx` (Integration Marketplace section + IntegrationManager modal)
+
+**TypeScript:** Zero compilation errors confirmed via `npx tsc --noEmit`
+
+### 2026-03-19 — Post-launch Fixes (F045-F049)
+**Completed:** F045-F049 (UI polish + bug fixes after user testing)
+
+- F045: IntegrationManager `size` prop — `'full'` renders near full-screen (95vw × 92vh)
+- F046: Fixed test chat error — switched from `getOrCreateConversation` (requires real task_id) to `createConversation` (standalone conversation)
+- F047: Removed legacy "Board Integrations (Legacy)" section from board settings page
+- F048: IntegrationSetupDialog made full-screen (90vw × 88vh) with wider test chat panel (400px)
+- F049: Integration skills visible in `/dashboard/settings/skills` — added "My Skills" / "Integration Skills" tabs. Backend `include_system` query param returns system-wide skills (account_id IS NULL).
+
+**Files Modified:**
+- `frontend/src/components/integrations/integration-manager.tsx` (size prop)
+- `frontend/src/components/integrations/integration-test-chat.tsx` (fix: createConversation instead of getOrCreateConversation)
+- `frontend/src/components/integrations/integration-setup-dialog.tsx` (full-screen + wider chat)
+- `frontend/src/components/boards/board-header.tsx` (size="full")
+- `frontend/src/app/dashboard/boards/[boardId]/settings/page.tsx` (removed legacy section, size="full")
+- `frontend/src/app/dashboard/settings/skills/page.tsx` (integration skills tab)
+- `frontend/src/app/dashboard/settings/skills/actions.ts` (skillType + includeSystem params)
+- `backend/src/skills/skills.service.ts` (include_system OR filter)
+- `backend/src/skills/skills.controller.ts` (include_system query param)
 
 **TypeScript:** Zero compilation errors confirmed via `npx tsc --noEmit`

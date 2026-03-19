@@ -101,7 +101,7 @@ export function IntegrationSetupDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+            <DialogContent className="max-w-[90vw] w-[90vw] max-h-[88vh] h-[88vh] flex flex-col">
                 <DialogHeader>
                     <div className="flex items-center gap-3">
                         <span className="text-2xl">{definition.icon || '🔌'}</span>
@@ -321,7 +321,7 @@ export function IntegrationSetupDialog({
                     </div>
 
                     {/* Right: Test Chat */}
-                    <div className="w-72 shrink-0 flex flex-col min-h-0">
+                    <div className="w-[400px] shrink-0 flex flex-col min-h-0">
                         <IntegrationTestChat
                             integrationName={definition.name}
                             connectionId={connection?.id}

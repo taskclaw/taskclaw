@@ -38,9 +38,11 @@ interface IntegrationManagerProps {
     onClose?: () => void
     /** If true, renders as a full-page embedded component (no dialog wrapper) */
     embedded?: boolean
+    /** Dialog size: 'default' (max-w-4xl) or 'full' (near full-screen) */
+    size?: 'default' | 'full'
 }
 
-export function IntegrationManager({ mode, boardId, onClose, embedded }: IntegrationManagerProps) {
+export function IntegrationManager({ mode, boardId, onClose, embedded, size = 'default' }: IntegrationManagerProps) {
     const [loading, setLoading] = useState(true)
     const [catalogItems, setCatalogItems] = useState<IntegrationCatalogItem[]>([])
     const [connections, setConnections] = useState<IntegrationConnection[]>([])
@@ -369,9 +371,13 @@ export function IntegrationManager({ mode, boardId, onClose, embedded }: Integra
         return <div className="space-y-4">{content}</div>
     }
 
+    const dialogClassName = size === 'full'
+        ? 'max-w-[95vw] w-[95vw] max-h-[92vh] h-[92vh] flex flex-col'
+        : 'max-w-4xl max-h-[85vh] flex flex-col'
+
     return (
         <Dialog open={true} onOpenChange={(open) => { if (!open) onClose?.() }}>
-            <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
+            <DialogContent className={dialogClassName}>
                 <DialogHeader>
                     <DialogTitle className="text-sm flex items-center gap-2">
                         <Plug className="w-4 h-4" />

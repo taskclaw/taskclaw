@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Check: 1) Has .claude/features.json been updated with current progress? 2) Has .claude/progress.md been updated? 3) Was the last completed feature committed to git? If any are missing, respond with {\"ok\": false, \"reason\": \"describe what's missing\"}."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/.claude/features.json for feature status. Read /Users/macbook/Workspace/Devotts/taskclaw/.claude/progress.md for current state. Read /Users/macbook/Workspace/Devotts/taskclaw/.claude/plans/serene-wobbling-valiant.md for the full plan. Commit after completing each feature.'"
+          }
+        ]
+      }
+    ]
+  }
+}
