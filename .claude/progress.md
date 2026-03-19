@@ -1,0 +1,64 @@
+# Integration Architecture — Project Progress
+
+## Status
+- **Project:** Schema-Driven Integration Marketplace
+- **Started:** 2026-03-19
+- **Features:** 16 / 44 completed
+- **Last session:** 2026-03-19
+- **Current blocker:** none
+
+## Team
+- **backend-engineer**: Database migrations, NestJS IntegrationsModule, OAuth, execution bridge
+- **frontend-engineer**: IntegrationManager modal + sub-components, types, page updates
+- **seed-data-writer**: 17 integration definitions + 17 matching Skills
+
+## Session Log
+
+### 2026-03-19 — Backend Engineer Session 1
+**Completed:** F001-F015, F044 (all backend features)
+
+**Phase 1 — Database Migrations (F001-F006):**
+- F001: Added `skill_type` column to skills table (`20260319000001_add_skill_type.sql`)
+- F002: Updated CreateSkillDto, UpdateSkillDto, SkillsService, SkillsController for skill_type
+- F003-F006: Created integration_definitions, integration_connections, board_integration_refs tables with full RLS (`20260319000002_create_integrations.sql`)
+
+**Phase 2 — NestJS Module (F007-F011):**
+- F007: Created `backend/src/integrations/` module, registered in AppModule
+- F008: Definitions CRUD (controller + service + DTOs)
+- F009: Connections CRUD with credential encryption/masking
+- F010: Board integration refs (controller + service)
+- F011: Credential encryption using existing encryption.util.ts (encryptCredentials, decryptCredentials, maskCredentials)
+
+**Phase 3 — OAuth (F012-F014):**
+- F012: OAuth controller with authorize + callback endpoints
+- F013: OAuth service with PKCE (S256), in-memory state store, code exchange
+- F014: Token refresh cron (every 5 min) with per-connection concurrency locks
+
+**Phase 4 — Execution Bridge (F015):**
+- F015: Modified conversations.service.ts buildBoardSystemPrompt() to inject integration skills + credentials
+
+**Phase 5 — Data Migration (F044):**
+- F044: SQL migration to move existing board_instances integrations to new tables (`20260319000003_migrate_board_integrations.sql`)
+
+**Files Created:**
+- `backend/supabase/migrations/20260319000001_add_skill_type.sql`
+- `backend/supabase/migrations/20260319000002_create_integrations.sql`
+- `backend/supabase/migrations/20260319000003_migrate_board_integrations.sql`
+- `backend/src/integrations/integrations.module.ts`
+- `backend/src/integrations/integrations.controller.ts`
+- `backend/src/integrations/integrations.service.ts`
+- `backend/src/integrations/interfaces/integration.interfaces.ts`
+- `backend/src/integrations/dto/create-definition.dto.ts`
+- `backend/src/integrations/dto/update-definition.dto.ts`
+- `backend/src/integrations/dto/create-connection.dto.ts`
+- `backend/src/integrations/dto/update-connection.dto.ts`
+- `backend/src/integrations/oauth/oauth.controller.ts`
+- `backend/src/integrations/oauth/oauth.service.ts`
+
+**Files Modified:**
+- `backend/src/skills/dto/create-skill.dto.ts` (added skill_type)
+- `backend/src/skills/skills.service.ts` (skill_type in findAll, create, update)
+- `backend/src/skills/skills.controller.ts` (skill_type query param)
+- `backend/src/app.module.ts` (registered IntegrationsModule)
+- `backend/src/conversations/conversations.service.ts` (execution bridge injection)
+- `backend/src/conversations/conversations.module.ts` (imported IntegrationsModule)
