@@ -7,7 +7,7 @@ import {
   uploadSkillAttachment, removeSkillAttachment, getAttachmentContent,
 } from './actions';
 import { getCategories } from '../categories/actions';
-import { Plus, Edit, Trash2, Save, X, Power, PowerOff, Tag, Link2, FileText, Download, PenLine, FolderUp } from 'lucide-react';
+import { Plus, Edit, Trash2, Save, X, Power, PowerOff, Tag, Link2, FileText, Download, PenLine, FolderUp, Plug, BrainCircuit } from 'lucide-react';
 import { FileDropZone, type DroppedFile } from '@/components/ui/file-drop-zone';
 import { toast } from 'sonner';
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
@@ -27,6 +27,8 @@ interface Skill {
   description: string;
   instructions: string;
   is_active: boolean;
+  skill_type?: string;
+  account_id?: string | null;
   file_attachments?: Attachment[];
   created_at: string;
   updated_at: string;
@@ -46,9 +48,12 @@ interface CategoryLink {
 
 export default function SkillsPage() {
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [integrationSkills, setIntegrationSkills] = useState<Skill[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [skillCategoryMap, setSkillCategoryMap] = useState<Map<string, string[]>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [pageTab, setPageTab] = useState<'my-skills' | 'integration-skills'>('my-skills');
+  const [viewingIntegrationSkill, setViewingIntegrationSkill] = useState<Skill | null>(null);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [linkingSkillId, setLinkingSkillId] = useState<string | null>(null);
@@ -86,12 +91,14 @@ export default function SkillsPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [skillsData, catsData, catSkillsMap] = await Promise.all([
+      const [skillsData, catsData, catSkillsMap, integrationSkillsData] = await Promise.all([
         getSkills(),
         getCategories(),
         getCategorySkillsMap(),
+        getSkills(false, 'integration', true),
       ]);
-      setSkills(skillsData || []);
+      setSkills((skillsData || []).filter((s: Skill) => s.skill_type !== 'integration'));
+      setIntegrationSkills(integrationSkillsData || []);
       setCategories(catsData || []);
 
       // Build skill -> categories map (reverse of category -> skills)
@@ -406,17 +413,114 @@ export default function SkillsPage() {
               Create custom AI behaviors with instruction sets. Link skills to agents for automatic provider sync.
             </p>
           </div>
+          {pageTab === 'my-skills' && (
+            <button
+              onClick={startCreate}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              New Skill
+            </button>
+          )}
+        </div>
+
+        {/* Page Tabs */}
+        <div className="flex border-b mt-4">
           <button
-            onClick={startCreate}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
+            onClick={() => setPageTab('my-skills')}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              pageTab === 'my-skills'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
           >
-            <Plus className="w-4 h-4" />
-            New Skill
+            <BrainCircuit className="w-4 h-4" />
+            My Skills
+            {skills.length > 0 && (
+              <span className="ml-1 text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">
+                {skills.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setPageTab('integration-skills')}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              pageTab === 'integration-skills'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            <Plug className="w-4 h-4" />
+            Integration Skills
+            {integrationSkills.length > 0 && (
+              <span className="ml-1 text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">
+                {integrationSkills.length}
+              </span>
+            )}
           </button>
         </div>
       </div>
 
-      {/* Skills List */}
+      {/* Integration Skills Tab */}
+      {pageTab === 'integration-skills' && (
+        <>
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">Loading...</div>
+          ) : integrationSkills.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Plug className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p>No integration skills found.</p>
+              <p className="text-xs mt-1">Connect integrations from the Marketplace to see their skills here.</p>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {integrationSkills.map((skill) => (
+                <div
+                  key={skill.id}
+                  className="border rounded-lg p-4 bg-white dark:bg-gray-800"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Plug className="w-4 h-4 text-blue-500" />
+                        <h3 className="text-lg font-semibold">{skill.name}</h3>
+                        <span className="px-2 py-1 text-xs rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
+                          Integration
+                        </span>
+                        {!skill.account_id && (
+                          <span className="px-2 py-1 text-xs rounded-full bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300">
+                            System
+                          </span>
+                        )}
+                      </div>
+                      {skill.description && (
+                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                          {skill.description}
+                        </p>
+                      )}
+                      <details className="text-sm text-gray-700 dark:text-gray-300">
+                        <summary className="cursor-pointer text-blue-600 hover:underline">
+                          View Instructions ({skill.instructions?.length || 0} chars)
+                        </summary>
+                        <pre className="mt-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-md overflow-x-auto whitespace-pre-wrap text-xs max-h-96 overflow-y-auto">
+                          {skill.instructions}
+                        </pre>
+                      </details>
+                      <p className="text-xs text-gray-500 mt-2">
+                        Updated {new Date(skill.updated_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* My Skills Tab */}
+      {pageTab === 'my-skills' && (
+        <>
       {loading ? (
         <div className="text-center py-8 text-gray-500">Loading...</div>
       ) : skills.length === 0 ? (
@@ -882,6 +986,8 @@ export default function SkillsPage() {
         description={`This will permanently delete "${deleteTarget?.name || ''}" and its reference files.`}
         loading={deleteLoading}
       />
+        </>
+      )}
     </div>
   );
 }

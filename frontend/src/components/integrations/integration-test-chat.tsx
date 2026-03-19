@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
 import {
-    getOrCreateConversation,
+    createConversation,
     sendMessageBackground,
     getMessages,
 } from '@/app/dashboard/chat/actions'
@@ -107,11 +107,19 @@ export function IntegrationTestChat({
             setError(null)
 
             try {
-                // Use a stable key for the test conversation
-                const chatKey = connectionId || `integration-test-${integrationName}`
-                const result = await getOrCreateConversation(
-                    chatKey,
-                    `Test: ${integrationName}`
+                // If we already have a test conversation, reuse it
+                if (testConversationId) {
+                    setConversationId(testConversationId)
+                    await loadMessages(testConversationId)
+                    if (cancelled) return
+                    setIsInitializing(false)
+                    inputRef.current?.focus()
+                    return
+                }
+
+                // Create a standalone conversation (no task_id) for integration testing
+                const result = await createConversation(
+                    `Integration Test: ${integrationName}`
                 )
 
                 if (cancelled) return
@@ -124,8 +132,6 @@ export function IntegrationTestChat({
 
                 if (result?.id) {
                     setConversationId(result.id)
-                    const existingMsgs = await loadMessages(result.id)
-                    if (cancelled) return
                     setIsInitializing(false)
                     inputRef.current?.focus()
                 } else {

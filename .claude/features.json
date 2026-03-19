@@ -1,8 +1,8 @@
 {
   "project": "Integration Architecture \u2014 Schema-Driven Marketplace",
   "created": "2026-03-19",
-  "total": 44,
-  "completed": 44,
+  "total": 49,
+  "completed": 49,
   "features": [
     {
       "id": "F001",
@@ -552,6 +552,56 @@
         "F009"
       ],
       "test": "Existing board integrations appear in new tables. Board still shows correct integrations via new API.",
+      "completed_at": "2026-03-19"
+    },
+    {
+      "id": "F045",
+      "name": "IntegrationManager full-screen size support",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "Add size prop ('default'|'full') to IntegrationManager. Full mode uses 95vw x 92vh. Board header and board settings use size='full'.",
+      "depends_on": ["F022"],
+      "test": "Board integration modal opens near full-screen. Settings embedded mode unchanged.",
+      "completed_at": "2026-03-19"
+    },
+    {
+      "id": "F046",
+      "name": "Fix test chat 'Task with ID not found' error",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "IntegrationTestChat was passing a fake task_id to getOrCreateConversation causing NotFoundException. Switch to createConversation() for standalone conversations without task_id.",
+      "depends_on": ["F020"],
+      "test": "Opening setup dialog no longer shows 'Task with ID integration-test-X not found' error. Test chat initializes correctly.",
+      "completed_at": "2026-03-19"
+    },
+    {
+      "id": "F047",
+      "name": "Remove legacy Board Integrations from board settings",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "Remove legacy integrations section from board settings page. Remove BoardIntegrationDialog, AddIntegrationDialog imports and state. Only IntegrationManager remains.",
+      "depends_on": ["F025"],
+      "test": "Board settings page shows only Integration Marketplace section. No legacy 'Board Integrations (Legacy)' section.",
+      "completed_at": "2026-03-19"
+    },
+    {
+      "id": "F048",
+      "name": "Integration Setup Dialog full-screen size",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "Make IntegrationSetupDialog use 90vw x 88vh. Widen test chat panel to 400px.",
+      "depends_on": ["F019"],
+      "test": "Setup dialog opens near full-screen with wider test chat panel.",
+      "completed_at": "2026-03-19"
+    },
+    {
+      "id": "F049",
+      "name": "Integration skills visible in Skills page with tabs",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "Add include_system query param to skills backend. Add 'My Skills' and 'Integration Skills' tabs to skills page. Integration skills tab shows read-only system integration skills with badges.",
+      "depends_on": ["F002"],
+      "test": "Skills page shows two tabs. Integration Skills tab lists 17 system skills. My Skills tab unchanged.",
       "completed_at": "2026-03-19"
     }
   ]

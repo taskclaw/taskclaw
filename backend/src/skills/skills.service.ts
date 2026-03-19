@@ -26,16 +26,23 @@ export class SkillsService {
   ) {}
 
   /**
-   * List all skills for an account (optionally filter by active status)
+   * List all skills for an account (optionally filter by active status).
+   * When include_system is true, also returns system-wide skills (account_id IS NULL).
    */
-  async findAll(accessToken: string, accountId: string, activeOnly?: boolean, skillType?: string) {
+  async findAll(accessToken: string, accountId: string, activeOnly?: boolean, skillType?: string, includeSystem?: boolean) {
     try {
       const client = this.supabaseAdmin.getClient();
       let query = client
         .from('skills')
         .select('*')
-        .eq('account_id', accountId)
         .order('name', { ascending: true });
+
+      if (includeSystem) {
+        // Return both account-owned and system-wide skills
+        query = query.or(`account_id.eq.${accountId},account_id.is.null`);
+      } else {
+        query = query.eq('account_id', accountId);
+      }
 
       if (activeOnly) {
         query = query.eq('is_active', true);
