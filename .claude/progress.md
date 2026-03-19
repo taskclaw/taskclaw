@@ -3,7 +3,7 @@
 ## Status
 - **Project:** Schema-Driven Integration Marketplace
 - **Started:** 2026-03-19
-- **Features:** 16 / 44 completed
+- **Features:** 33 / 44 completed
 - **Last session:** 2026-03-19
 - **Current blocker:** none
 
@@ -62,3 +62,22 @@
 - `backend/src/app.module.ts` (registered IntegrationsModule)
 - `backend/src/conversations/conversations.service.ts` (execution bridge injection)
 - `backend/src/conversations/conversations.module.ts` (imported IntegrationsModule)
+
+### 2026-03-19 — Seed Data Writer Session 1
+**Completed:** F027-F043 (all 17 integration seed definitions + skills)
+
+**What was done:**
+- Researched current API documentation for all 17 services (X, Slack, HubSpot, Stripe, OpenAI, SendGrid, LinkedIn, Instagram, TikTok, Google Ads, Loops.so, Resend, Discord, Telegram, WhatsApp, Custom Webhook, Notion)
+- Created detailed Skill instructions for each API (1000-2000 words each) covering: authentication, key endpoints with request/response examples, rate limits, error handling, and best practices
+- Created integration_definitions with proper auth_type, auth_config (key_fields or OAuth URLs/scopes), config_fields, and markdown setup guides
+- Added schema migration to allow NULL account_id on skills table (for system-wide integration skills) with RLS policy for visibility
+- All definitions use `is_system = true` and `account_id = NULL` for system-wide availability
+
+**Integration breakdown by auth type:**
+- **api_key** (9): X/Twitter, Stripe, OpenAI, SendGrid, Loops.so, Resend, Discord, Telegram, Notion
+- **oauth2** (6): Slack, HubSpot, LinkedIn, Instagram, TikTok, Google Ads
+- **api_key** (with special handling) (1): WhatsApp (access_token + phone_number_id)
+- **webhook** (1): Custom Webhook
+
+**Files Created:**
+- `backend/supabase/migrations/20260319000004_seed_integration_definitions.sql` — 17 skills + 17 integration definitions with dollar-quoted instructions

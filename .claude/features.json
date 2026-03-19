@@ -1,8 +1,8 @@
 {
-  "project": "Integration Architecture — Schema-Driven Marketplace",
+  "project": "Integration Architecture \u2014 Schema-Driven Marketplace",
   "created": "2026-03-19",
   "total": 44,
-  "completed": 16,
+  "completed": 44,
   "features": [
     {
       "id": "F001",
@@ -20,7 +20,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "Add skill_type to CreateSkillDto, UpdateSkillDto. Add findAll filter by skill_type in SkillsService.",
-      "depends_on": ["F001"],
+      "depends_on": [
+        "F001"
+      ],
       "test": "POST /skills with skill_type='integration' succeeds. GET /skills?skill_type=integration returns only integration skills.",
       "completed_at": "2026-03-19"
     },
@@ -30,7 +32,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "Migration: CREATE TABLE integration_definitions with columns: id, account_id, slug, name, description, icon, categories, auth_type, auth_config, config_fields, skill_id, setup_guide, is_system, proxy_base_url, timestamps. UNIQUE(account_id, slug).",
-      "depends_on": ["F001"],
+      "depends_on": [
+        "F001"
+      ],
       "test": "Table exists. Insert a row. Unique constraint prevents duplicate slugs per account.",
       "completed_at": "2026-03-19"
     },
@@ -40,7 +44,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "Migration: CREATE TABLE integration_connections with: id, account_id, definition_id FK, credentials (encrypted TEXT), token_expires_at, scopes, status, verified_at, last_used_at, error_message, config JSONB, external_account_name, test_conversation_id FK, timestamps. UNIQUE(account_id, definition_id).",
-      "depends_on": ["F003"],
+      "depends_on": [
+        "F003"
+      ],
       "test": "Table exists. Insert a connection linked to a definition. Unique constraint works.",
       "completed_at": "2026-03-19"
     },
@@ -50,7 +56,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "Migration: CREATE TABLE board_integration_refs with: id, board_id FK, connection_id FK, is_required, created_at. UNIQUE(board_id, connection_id).",
-      "depends_on": ["F004"],
+      "depends_on": [
+        "F004"
+      ],
       "test": "Table exists. Insert a ref linking a board to a connection. Unique constraint works.",
       "completed_at": "2026-03-19"
     },
@@ -60,7 +68,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "Enable RLS on integration_definitions, integration_connections, board_integration_refs. Policies: account-scoped SELECT/INSERT/UPDATE/DELETE using get_auth_user_account_ids().",
-      "depends_on": ["F005"],
+      "depends_on": [
+        "F005"
+      ],
       "test": "With RLS enabled, user can only access their own account's data. Cross-account access blocked.",
       "completed_at": "2026-03-19"
     },
@@ -70,7 +80,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "Create backend/src/integrations/ with integrations.module.ts, register in app.module.ts. Import SupabaseModule, SkillsModule.",
-      "depends_on": ["F006"],
+      "depends_on": [
+        "F006"
+      ],
       "test": "Backend starts without errors. Module is loaded.",
       "completed_at": "2026-03-19"
     },
@@ -80,7 +92,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "IntegrationsController: GET/POST/PATCH/DELETE for /accounts/:id/integrations/definitions. IntegrationsService: findAllDefinitions, createDefinition, updateDefinition, removeDefinition. DTOs: CreateDefinitionDto, UpdateDefinitionDto.",
-      "depends_on": ["F007"],
+      "depends_on": [
+        "F007"
+      ],
       "test": "CRUD operations work via API. System definitions (is_system=true) cannot be deleted by users.",
       "completed_at": "2026-03-19"
     },
@@ -90,7 +104,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "Endpoints: GET/POST/PATCH/DELETE for /accounts/:id/integrations/connections. CreateConnectionDto, UpdateConnectionDto. Service: createConnection (encrypts credentials blob), findAllConnections (masks credentials), updateConnection, removeConnection.",
-      "depends_on": ["F008"],
+      "depends_on": [
+        "F008"
+      ],
       "test": "Create connection with API key credentials. GET returns masked values. Internal decrypt returns real values.",
       "completed_at": "2026-03-19"
     },
@@ -100,7 +116,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "Endpoints: GET/POST/DELETE for /accounts/:id/boards/:boardId/integration-refs. Service: addRef, removeRef, getRefsForBoard.",
-      "depends_on": ["F009"],
+      "depends_on": [
+        "F009"
+      ],
       "test": "Link a connection to a board. GET returns the linked connections. DELETE removes the link.",
       "completed_at": "2026-03-19"
     },
@@ -110,7 +128,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "IntegrationsService methods: encryptCredentials(obj) encrypts entire JSON blob as one AES-256-GCM value. decryptCredentials(encrypted) returns parsed object. maskCredentials(obj) masks sensitive fields. Reuse encryption.util.ts.",
-      "depends_on": ["F009"],
+      "depends_on": [
+        "F009"
+      ],
       "test": "Encrypt {api_key:'sk-xxx'}. Decrypt returns original. Mask returns {api_key:'sk-****xxx'}.",
       "completed_at": "2026-03-19"
     },
@@ -120,7 +140,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "GET /accounts/:id/integrations/oauth/:defId/authorize: reads auth_config, generates PKCE, stores state, returns redirect_url. GET /integrations/oauth/callback: validates state, exchanges code, encrypts tokens, creates/updates connection, redirects to frontend.",
-      "depends_on": ["F009"],
+      "depends_on": [
+        "F009"
+      ],
       "test": "Authorize returns valid redirect URL with state+PKCE. Callback with mock code creates connection with status='active'.",
       "completed_at": "2026-03-19"
     },
@@ -130,7 +152,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "OAuthService: generatePKCE(), storeState(), validateState(), exchangeCode(). In-memory Map for state storage. PKCE with S256 challenge method.",
-      "depends_on": ["F012"],
+      "depends_on": [
+        "F012"
+      ],
       "test": "PKCE verifier/challenge pair validates correctly. State stored and retrieved. Code exchange sends correct POST to token_url.",
       "completed_at": "2026-03-19"
     },
@@ -140,7 +164,9 @@
       "group": "backend",
       "status": "pass",
       "spec": "@Cron(EVERY_5_MINUTES) checks connections where token_expires_at < now() + 10min. Refreshes using refresh_url from definition. In-memory lock Map per connection ID for concurrency safety. On failure: status='expired', error_message set.",
-      "depends_on": ["F013"],
+      "depends_on": [
+        "F013"
+      ],
       "test": "Connection with short expiry gets refreshed by cron. Concurrent refresh attempts are deduplicated. Failed refresh marks status='expired'.",
       "completed_at": "2026-03-19"
     },
@@ -150,7 +176,10 @@
       "group": "backend",
       "status": "pass",
       "spec": "In conversations.service.ts buildBoardSystemPrompt(), after skills/knowledge injection: fetch board integration refs, decrypt credentials, load linked Skills, inject as === INTEGRATION: Name === blocks with skill instructions + credentials.",
-      "depends_on": ["F010", "F011"],
+      "depends_on": [
+        "F010",
+        "F011"
+      ],
       "test": "Create board with linked integration. Start conversation. System prompt includes integration skill instructions and decrypted credentials.",
       "completed_at": "2026-03-19"
     },
@@ -158,51 +187,60 @@
       "id": "F016",
       "name": "Frontend TypeScript types",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Create frontend/src/types/integration.ts with: IntegrationDefinition, IntegrationConnection, BoardIntegrationRef, IntegrationAuthConfig, IntegrationConfigField, CreateDefinitionPayload, CreateConnectionPayload interfaces.",
       "depends_on": [],
       "test": "Types compile without errors. Used correctly by components.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F017",
       "name": "<IntegrationCatalog /> component",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Grid of integration definitions. Each card: icon, name, description, categories badges, status badge (Connected/Not connected/Error). 'Connect' button for unconnected, 'Manage' for connected. Filter by category. Search by name.",
-      "depends_on": ["F016"],
+      "depends_on": [
+        "F016"
+      ],
       "test": "Renders grid of definitions. Filter/search works. Click Connect opens setup dialog. Click Manage opens connection card.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F018",
       "name": "<IntegrationConnectionCard /> component",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Shows single connection: icon, name, status badge, external_account_name, last_used_at, config summary. Actions: Edit, Disconnect, Test. In board mode: Add to Board / Remove from Board toggle.",
-      "depends_on": ["F016"],
+      "depends_on": [
+        "F016"
+      ],
       "test": "Renders connection info. Edit opens setup dialog. Disconnect calls DELETE. Board mode toggle works.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F019",
       "name": "<IntegrationSetupDialog /> component",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Split layout: left side = credential fields (dynamic from config_fields/auth_config), right side = inline test chat. For API key: input fields. For OAuth: 'Connect with [Provider]' button that opens popup. Enable/disable toggle. Save button.",
-      "depends_on": ["F016", "F020"],
+      "depends_on": [
+        "F016",
+        "F020"
+      ],
       "test": "API key: shows fields, saves credentials. OAuth: opens popup, handles callback. Test chat works inline.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F020",
       "name": "<IntegrationTestChat /> component",
       "group": "frontend",
-      "status": "fail",
+      "status": "pass",
       "spec": "Inline chat panel reusing TaskAIChat pattern: getOrCreateConversation() with integration context, sendMessageBackground(), polling for responses. Shows integration skill instructions in context. Compact layout for dialog embedding.",
-      "depends_on": ["F016"],
+      "depends_on": [
+        "F016"
+      ],
       "test": "Creates test conversation. Sends message. Receives OpenClaw response with integration context. Renders in compact layout.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F021",
@@ -210,7 +248,9 @@
       "group": "frontend",
       "status": "fail",
       "spec": "Form: name, description, icon (emoji picker), auth_type dropdown (api_key/oauth2/webhook/basic/none). If api_key: dynamic field builder. If oauth2: auth URL, token URL, scopes, client ID/secret. Skill editor or link existing skill. Setup guide markdown textarea. Save/Export JSON buttons.",
-      "depends_on": ["F016"],
+      "depends_on": [
+        "F016"
+      ],
       "test": "Create custom integration with api_key auth. Create with oauth2 auth. Link a skill. Export as JSON.",
       "completed_at": null
     },
@@ -220,7 +260,12 @@
       "group": "frontend",
       "status": "fail",
       "spec": "Main orchestrator modal. Props: mode ('settings'|'board'), boardId?, onClose?. Tabs: Catalog, My Connections, Create Custom. In board mode: shows 'Add to Board' toggles. Composes IntegrationCatalog, IntegrationConnectionCard, IntegrationSetupDialog, IntegrationCreateDialog.",
-      "depends_on": ["F017", "F018", "F019", "F021"],
+      "depends_on": [
+        "F017",
+        "F018",
+        "F019",
+        "F021"
+      ],
       "test": "Opens in settings mode: shows full catalog. Opens in board mode: shows catalog with board linking. Create custom works. Connect/disconnect works.",
       "completed_at": null
     },
@@ -230,7 +275,10 @@
       "group": "frontend",
       "status": "fail",
       "spec": "Rewrite frontend/src/app/dashboard/settings/integrations/page.tsx. Top section: IntegrationManager in settings mode (embedded, not modal). Below: keep existing Sources section (Notion/ClickUp) and CommTools section unchanged.",
-      "depends_on": ["F022", "F026"],
+      "depends_on": [
+        "F022",
+        "F026"
+      ],
       "test": "Page loads. Shows integration catalog at top. Sources section below still works. CommTools section still works.",
       "completed_at": null
     },
@@ -240,7 +288,10 @@
       "group": "frontend",
       "status": "fail",
       "spec": "Update board-header.tsx: replace getBoardIntegrations() call with new API for board_integration_refs. Show connected integration icons from new system. Click opens IntegrationManager modal in board mode.",
-      "depends_on": ["F022", "F026"],
+      "depends_on": [
+        "F022",
+        "F026"
+      ],
       "test": "Board header shows integration icons from new system. Click opens IntegrationManager modal. Add/remove integration from board works.",
       "completed_at": null
     },
@@ -250,7 +301,10 @@
       "group": "frontend",
       "status": "fail",
       "spec": "Update board settings page: replace old integration list with IntegrationManager component in board mode. Remove dependency on old board integration actions.",
-      "depends_on": ["F022", "F026"],
+      "depends_on": [
+        "F022",
+        "F026"
+      ],
       "test": "Board settings shows IntegrationManager. Can add/remove integrations. Old integration UI replaced.",
       "completed_at": null
     },
@@ -260,7 +314,9 @@
       "group": "frontend",
       "status": "fail",
       "spec": "New/updated actions in settings/integrations/actions.ts and boards/actions.ts: getDefinitions(), createDefinition(), updateDefinition(), deleteDefinition(), getConnections(), createConnection(), updateConnection(), deleteConnection(), getBoardIntegrationRefs(), addBoardIntegrationRef(), removeBoardIntegrationRef(), initiateOAuth(), testConnection().",
-      "depends_on": ["F016"],
+      "depends_on": [
+        "F016"
+      ],
       "test": "Each action calls correct backend endpoint. Returns typed data. Error handling works.",
       "completed_at": null
     },
@@ -268,171 +324,222 @@
       "id": "F027",
       "name": "Seed: X/Twitter definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key auth, fields: api_key, api_secret, access_token, access_token_secret) + Skill teaching OpenClaw X API v2 endpoints, tweet creation, media upload, rate limits, auth headers.",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition inserted. Skill inserted with skill_type='integration'. Linked correctly.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F028",
       "name": "Seed: Slack definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (oauth2 auth, authorization_url, token_url, scopes) + Skill teaching OpenClaw Slack Web API (chat.postMessage, channels.list, Block Kit).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition inserted with correct auth_config. Skill covers key Slack API methods.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F029",
       "name": "Seed: HubSpot definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (oauth2) + Skill teaching OpenClaw HubSpot CRM API (contacts, deals, companies, search, associations).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F030",
       "name": "Seed: Stripe definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key, field: secret_key) + Skill teaching OpenClaw Stripe API (charges, customers, subscriptions, API versioning, idempotency keys).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F031",
       "name": "Seed: OpenAI definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key) + Skill teaching OpenClaw OpenAI API (chat completions, image generation, embeddings, models).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F032",
       "name": "Seed: SendGrid definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key, fields: api_key, from_email) + Skill teaching OpenClaw SendGrid Mail Send API, templates, dynamic data.",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F033",
       "name": "Seed: LinkedIn definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (oauth2) + Skill teaching OpenClaw LinkedIn Marketing API (share posts, profile read, company page, UGC posts).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F034",
       "name": "Seed: Instagram definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (oauth2) + Skill teaching OpenClaw Instagram Graph API (media publish, stories, insights, content publishing).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F035",
       "name": "Seed: TikTok definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (oauth2) + Skill teaching OpenClaw TikTok Content Posting API (video upload, content publishing, analytics).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F036",
       "name": "Seed: Google Ads definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (oauth2) + Skill teaching OpenClaw Google Ads API (campaign management, ad groups, keywords, reporting, REST v17+).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F037",
       "name": "Seed: Loops.so definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key) + Skill teaching OpenClaw Loops API (transactional emails, contacts, events, loops triggers).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F038",
       "name": "Seed: Resend definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key) + Skill teaching OpenClaw Resend API (send emails, domains, batch sending, React Email templates).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F039",
       "name": "Seed: Discord definition + skill",
       "group": "seed",
-      "status": "fail",
-      "spec": "Integration definition (oauth2 for bot, fields: bot_token) + Skill teaching OpenClaw Discord Bot API (send messages, webhooks, channel management, embeds).",
-      "depends_on": ["F003", "F001"],
+      "status": "pass",
+      "spec": "Integration definition (api_key for bot, fields: bot_token) + Skill teaching OpenClaw Discord Bot API (send messages, webhooks, channel management, embeds).",
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F040",
       "name": "Seed: Telegram definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key, field: bot_token) + Skill teaching OpenClaw Telegram Bot API (sendMessage, inline keyboards, media, webhooks).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F041",
       "name": "Seed: WhatsApp definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key, fields: phone_number_id, access_token) + Skill teaching OpenClaw WhatsApp Business API (send templates, text, media messages, Cloud API).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F042",
       "name": "Seed: Custom Webhook definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (webhook, fields: webhook_url, auth_header) + Skill teaching OpenClaw how to POST JSON to arbitrary endpoints with authentication.",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F043",
       "name": "Seed: Notion definition + skill",
       "group": "seed",
-      "status": "fail",
+      "status": "pass",
       "spec": "Integration definition (api_key, fields: api_key, database_id) + Skill teaching OpenClaw Notion API (database query, page create/update, block append, search).",
-      "depends_on": ["F003", "F001"],
+      "depends_on": [
+        "F003",
+        "F001"
+      ],
       "test": "Definition and skill inserted and linked.",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F044",
@@ -440,7 +547,10 @@
       "group": "backend",
       "status": "pass",
       "spec": "Migration script: read board_instances.settings_override.integrations, create integration_definitions + integration_connections + board_integration_refs rows. Preserve encrypted credentials.",
-      "depends_on": ["F006", "F009"],
+      "depends_on": [
+        "F006",
+        "F009"
+      ],
       "test": "Existing board integrations appear in new tables. Board still shows correct integrations via new API.",
       "completed_at": "2026-03-19"
     }
