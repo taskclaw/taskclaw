@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, MaxLength } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, MaxLength, IsIn } from 'class-validator';
 
 export class CreateSkillDto {
   @IsString()
@@ -17,4 +17,9 @@ export class CreateSkillDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['general', 'integration', 'board', 'system'])
+  skill_type?: string;
 }

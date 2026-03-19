@@ -28,7 +28,7 @@ export class SkillsService {
   /**
    * List all skills for an account (optionally filter by active status)
    */
-  async findAll(accessToken: string, accountId: string, activeOnly?: boolean) {
+  async findAll(accessToken: string, accountId: string, activeOnly?: boolean, skillType?: string) {
     try {
       const client = this.supabaseAdmin.getClient();
       let query = client
@@ -39,6 +39,10 @@ export class SkillsService {
 
       if (activeOnly) {
         query = query.eq('is_active', true);
+      }
+
+      if (skillType) {
+        query = query.eq('skill_type', skillType);
       }
 
       const { data, error } = await query;
@@ -227,6 +231,7 @@ export class SkillsService {
             description: createDto.description || '',
             instructions: createDto.instructions,
             is_active: createDto.is_active !== undefined ? createDto.is_active : true,
+            skill_type: createDto.skill_type || 'general',
           },
         ])
         .select()
@@ -276,6 +281,7 @@ export class SkillsService {
           ...(updateDto.description !== undefined && { description: updateDto.description }),
           ...(updateDto.instructions !== undefined && { instructions: updateDto.instructions }),
           ...(updateDto.is_active !== undefined && { is_active: updateDto.is_active }),
+          ...(updateDto.skill_type !== undefined && { skill_type: updateDto.skill_type }),
         })
         .eq('id', id)
         .eq('account_id', accountId)

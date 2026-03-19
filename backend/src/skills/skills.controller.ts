@@ -31,8 +31,9 @@ export class SkillsController {
     @Request() req,
     @Param('accountId') accountId: string,
     @Query('active_only') activeOnly?: string,
+    @Query('skill_type') skillType?: string,
   ) {
-    return this.skillsService.findAll(req.accessToken, accountId, activeOnly === 'true');
+    return this.skillsService.findAll(req.accessToken, accountId, activeOnly === 'true', skillType);
   }
 
   @Get('agents/dashboard')
