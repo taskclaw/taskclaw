@@ -27,6 +27,7 @@ import { SkillsModule } from './skills/skills.module';
 import { AgentSyncModule } from './agent-sync/agent-sync.module';
 import { BoardsModule } from './boards/boards.module';
 import { CommToolsModule } from './comm-tools/comm-tools.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 
 // Edition-gated modules (cloud-only)
 import { LangfuseModule } from './ee/langfuse/langfuse.module';
@@ -73,6 +74,7 @@ const editionModules = isCloudEdition
     AgentSyncModule,
     BoardsModule,
     CommToolsModule,
+    IntegrationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
