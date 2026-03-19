@@ -11,16 +11,20 @@ import {
     CheckCircle2,
     AlertCircle,
     Circle,
+    Plus,
+    X,
+    Plug,
 } from 'lucide-react'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useBoard, useUpdateBoard, useDeleteBoard } from '@/hooks/use-boards'
-import { exportBoard, getBoardIntegrations } from '@/app/dashboard/boards/actions'
+import { exportBoard, getBoardIntegrations, removeBoardIntegration } from '@/app/dashboard/boards/actions'
 import { BoardSettingsForm } from '@/components/boards/board-settings-form'
 import { StepEditor } from '@/components/boards/step-editor'
 import { BoardIntegrationDialog } from '@/components/boards/board-integration-dialog'
+import { AddIntegrationDialog } from '@/components/boards/add-integration-dialog'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
 import { toast } from 'sonner'
 import type { IntegrationStatus } from '@/types/board'
@@ -36,6 +40,8 @@ export default function BoardSettingsPage() {
     const [deleteLoading, setDeleteLoading] = useState(false)
     const [integrations, setIntegrations] = useState<IntegrationStatus[]>([])
     const [selectedIntegration, setSelectedIntegration] = useState<IntegrationStatus | null>(null)
+    const [showAddIntegration, setShowAddIntegration] = useState(false)
+    const [removingSlug, setRemovingSlug] = useState<string | null>(null)
 
     const loadIntegrations = useCallback(async () => {
         if (!boardId) return
@@ -161,30 +167,45 @@ export default function BoardSettingsPage() {
                     </section>
 
                     {/* Integrations */}
-                    {integrations.length > 0 && (
-                        <section>
-                            <h2 className="text-sm font-bold mb-4">Integrations</h2>
+                    <section>
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-sm font-bold">Integrations</h2>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setShowAddIntegration(true)}
+                            >
+                                <Plus className="w-3.5 h-3.5 mr-1" />
+                                Add Integration
+                            </Button>
+                        </div>
+
+                        {integrations.length > 0 ? (
                             <div className="bg-card border border-border rounded-xl divide-y divide-border">
                                 {integrations.map((integration) => (
-                                    <button
+                                    <div
                                         key={integration.slug}
-                                        onClick={() => setSelectedIntegration(integration)}
-                                        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-accent/50 transition-colors text-left"
+                                        className="flex items-center gap-3 px-5 py-3.5 group"
                                     >
-                                        <span className="text-xl">{integration.icon}</span>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2">
-                                                <p className="text-xs font-semibold">{integration.name}</p>
-                                                {integration.required && (
-                                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0">
-                                                        Required
-                                                    </Badge>
-                                                )}
+                                        <button
+                                            onClick={() => setSelectedIntegration(integration)}
+                                            className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-80 transition-opacity text-left"
+                                        >
+                                            <span className="text-xl">{integration.icon}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2">
+                                                    <p className="text-xs font-semibold">{integration.name}</p>
+                                                    {integration.required && (
+                                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                                                            Required
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                                <p className="text-[10px] text-muted-foreground truncate">
+                                                    {integration.description}
+                                                </p>
                                             </div>
-                                            <p className="text-[10px] text-muted-foreground truncate">
-                                                {integration.description}
-                                            </p>
-                                        </div>
+                                        </button>
                                         {integration.enabled && integration.has_config ? (
                                             <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20 text-[10px] shrink-0">
                                                 <CheckCircle2 className="w-3 h-3 mr-1" />
@@ -201,11 +222,51 @@ export default function BoardSettingsPage() {
                                                 Not configured
                                             </Badge>
                                         )}
-                                    </button>
+                                        <button
+                                            onClick={async (e) => {
+                                                e.stopPropagation()
+                                                setRemovingSlug(integration.slug)
+                                                const result = await removeBoardIntegration(boardId, integration.slug)
+                                                if (result.error) {
+                                                    toast.error(result.error)
+                                                } else {
+                                                    toast.success(`${integration.name} removed`)
+                                                    loadIntegrations()
+                                                }
+                                                setRemovingSlug(null)
+                                            }}
+                                            disabled={removingSlug === integration.slug}
+                                            className="p-1 rounded text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100 shrink-0"
+                                            title="Remove integration"
+                                        >
+                                            {removingSlug === integration.slug ? (
+                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            ) : (
+                                                <X className="w-3.5 h-3.5" />
+                                            )}
+                                        </button>
+                                    </div>
                                 ))}
                             </div>
-                        </section>
-                    )}
+                        ) : (
+                            <div className="bg-card border border-dashed border-border rounded-xl p-8 flex flex-col items-center text-center">
+                                <Plug className="w-8 h-8 text-muted-foreground/30 mb-3" />
+                                <p className="text-xs font-medium text-muted-foreground">No integrations yet</p>
+                                <p className="text-[10px] text-muted-foreground/70 mt-1 max-w-xs">
+                                    Connect external services like X API, image generators, or CRMs to unlock the full potential of this board.
+                                </p>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="mt-4"
+                                    onClick={() => setShowAddIntegration(true)}
+                                >
+                                    <Plus className="w-3.5 h-3.5 mr-1" />
+                                    Add Integration
+                                </Button>
+                            </div>
+                        )}
+                    </section>
 
                     {/* Export */}
                     <section>
@@ -292,6 +353,14 @@ export default function BoardSettingsPage() {
                     onSaved={loadIntegrations}
                 />
             )}
+
+            <AddIntegrationDialog
+                boardId={boardId}
+                existingSlugs={integrations.map((i) => i.slug)}
+                open={showAddIntegration}
+                onOpenChange={setShowAddIntegration}
+                onAdded={loadIntegrations}
+            />
         </div>
     )
 }

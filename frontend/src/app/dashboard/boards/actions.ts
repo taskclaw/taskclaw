@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { getAuthToken, isTokenExpired } from '@/lib/auth'
 import { cookies } from 'next/headers'
-import type { Board, BoardStep, BoardTemplate, IntegrationStatus } from '@/types/board'
+import type { Board, BoardStep, BoardTemplate, IntegrationStatus, ManifestIntegration } from '@/types/board'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
 
@@ -496,6 +496,71 @@ export async function updateBoardIntegration(
         if (!res.ok) {
             const err = await res.json()
             return { error: err.message || 'Failed to update integration' }
+        }
+
+        revalidatePath(`/dashboard/boards/${boardId}`)
+        revalidatePath(`/dashboard/boards/${boardId}/settings`)
+        return { success: true }
+    } catch (error: any) {
+        return { error: error.message }
+    }
+}
+
+export async function addBoardIntegration(
+    boardId: string,
+    integration: ManifestIntegration
+): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/boards/${boardId}/integrations`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(integration),
+            }
+        )
+
+        if (!res.ok) {
+            const err = await res.json()
+            return { error: err.message || 'Failed to add integration' }
+        }
+
+        revalidatePath(`/dashboard/boards/${boardId}`)
+        revalidatePath(`/dashboard/boards/${boardId}/settings`)
+        return { success: true }
+    } catch (error: any) {
+        return { error: error.message }
+    }
+}
+
+export async function removeBoardIntegration(
+    boardId: string,
+    slug: string
+): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/boards/${boardId}/integrations/${slug}`,
+            {
+                method: 'DELETE',
+                headers,
+            }
+        )
+
+        if (!res.ok) {
+            const err = await res.json()
+            return { error: err.message || 'Failed to remove integration' }
         }
 
         revalidatePath(`/dashboard/boards/${boardId}`)

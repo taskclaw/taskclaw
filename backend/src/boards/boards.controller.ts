@@ -134,6 +134,21 @@ export class BoardsController {
     );
   }
 
+  @Post(':boardId/integrations')
+  addIntegration(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('boardId') boardId: string,
+    @Body() body: any,
+  ) {
+    return this.boardsService.addIntegrationDefinition(
+      req.user.id,
+      accountId,
+      boardId,
+      body,
+    );
+  }
+
   @Patch(':boardId/integrations/:slug')
   updateIntegration(
     @Req() req,
@@ -148,6 +163,21 @@ export class BoardsController {
       boardId,
       slug,
       body,
+    );
+  }
+
+  @Delete(':boardId/integrations/:slug')
+  removeIntegration(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('boardId') boardId: string,
+    @Param('slug') slug: string,
+  ) {
+    return this.boardsService.removeIntegrationDefinition(
+      req.user.id,
+      accountId,
+      boardId,
+      slug,
     );
   }
 
