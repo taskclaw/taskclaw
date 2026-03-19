@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { CreateBoardDto } from './dto/create-board.dto';
@@ -476,6 +476,120 @@ export class BoardsService {
         test_status: runtime.test_status || 'untested',
       };
     });
+  }
+
+  async addIntegrationDefinition(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    integration: {
+      slug: string;
+      name: string;
+      description: string;
+      icon: string;
+      required: boolean;
+      setup_guide: string;
+      config_fields: Array<{
+        key: string;
+        label: string;
+        type: string;
+        required: boolean;
+        placeholder?: string;
+        help_text?: string;
+      }>;
+    },
+  ) {
+    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    const { data: board, error } = await client
+      .from('board_instances')
+      .select('installed_manifest')
+      .eq('id', boardId)
+      .eq('account_id', accountId)
+      .single();
+
+    if (error || !board) {
+      throw new NotFoundException(`Board with ID ${boardId} not found`);
+    }
+
+    const manifest = board.installed_manifest || {};
+    const integrations: any[] = manifest.integrations || [];
+
+    // Check for duplicate slug
+    if (integrations.some((i: any) => i.slug === integration.slug)) {
+      throw new BadRequestException(
+        `Integration "${integration.slug}" already exists on this board`,
+      );
+    }
+
+    integrations.push(integration);
+    manifest.integrations = integrations;
+
+    const { error: updateError } = await client
+      .from('board_instances')
+      .update({ installed_manifest: manifest })
+      .eq('id', boardId)
+      .eq('account_id', accountId);
+
+    if (updateError) {
+      throw new Error(`Failed to add integration: ${updateError.message}`);
+    }
+
+    return { success: true };
+  }
+
+  async removeIntegrationDefinition(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    slug: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    const { data: board, error } = await client
+      .from('board_instances')
+      .select('installed_manifest, settings_override')
+      .eq('id', boardId)
+      .eq('account_id', accountId)
+      .single();
+
+    if (error || !board) {
+      throw new NotFoundException(`Board with ID ${boardId} not found`);
+    }
+
+    const manifest = board.installed_manifest || {};
+    const integrations: any[] = manifest.integrations || [];
+    const idx = integrations.findIndex((i: any) => i.slug === slug);
+
+    if (idx === -1) {
+      throw new NotFoundException(`Integration "${slug}" not found on this board`);
+    }
+
+    integrations.splice(idx, 1);
+    manifest.integrations = integrations;
+
+    // Also clean up runtime config
+    const settings = board.settings_override || {};
+    if (settings.integrations?.[slug]) {
+      delete settings.integrations[slug];
+    }
+
+    const { error: updateError } = await client
+      .from('board_instances')
+      .update({
+        installed_manifest: manifest,
+        settings_override: settings,
+      })
+      .eq('id', boardId)
+      .eq('account_id', accountId);
+
+    if (updateError) {
+      throw new Error(`Failed to remove integration: ${updateError.message}`);
+    }
+
+    return { success: true };
   }
 
   async updateIntegrationConfig(
