@@ -8,7 +8,7 @@ import {
   UseGuards,
   BadRequestException,
 } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { OAuthService } from './oauth.service';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { ConfigService } from '@nestjs/config';
