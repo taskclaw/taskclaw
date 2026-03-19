@@ -10,9 +10,10 @@ import { SkillsModule } from '../skills/skills.module';
 import { AdaptersModule } from '../adapters/adapters.module';
 import { AgentSyncModule } from '../agent-sync/agent-sync.module';
 import { CommToolsModule } from '../comm-tools/comm-tools.module';
+import { IntegrationsModule } from '../integrations/integrations.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule, forwardRef(() => AiProviderModule), forwardRef(() => KnowledgeModule), forwardRef(() => SkillsModule), AdaptersModule, forwardRef(() => AgentSyncModule), forwardRef(() => CommToolsModule)],
+  imports: [SupabaseModule, CommonModule, forwardRef(() => AiProviderModule), forwardRef(() => KnowledgeModule), forwardRef(() => SkillsModule), AdaptersModule, forwardRef(() => AgentSyncModule), forwardRef(() => CommToolsModule), IntegrationsModule],
   controllers: [ConversationsController],
   providers: [ConversationsService, OpenClawService],
   exports: [ConversationsService, OpenClawService],

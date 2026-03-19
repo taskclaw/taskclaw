@@ -14,6 +14,7 @@ import { SkillsService } from '../skills/skills.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
 import { CommToolsService } from '../comm-tools/comm-tools.service';
+import { IntegrationsService } from '../integrations/integrations.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
@@ -33,6 +34,7 @@ export class ConversationsService {
     private readonly notionAdapter: NotionAdapter,
     private readonly agentSyncService: AgentSyncService,
     private readonly commToolsService: CommToolsService,
+    private readonly integrationsService: IntegrationsService,
   ) {}
 
   /**
@@ -1450,6 +1452,43 @@ Rules:
           this.logger.warn(`Failed to fetch orchestrator knowledge: ${error.message}`);
         }
       }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // BOARD INTEGRATION SKILLS + CREDENTIALS
+    // ═══════════════════════════════════════════════════════════
+    try {
+      const integrationContext = await this.integrationsService
+        .getIntegrationContextForBoard(board.id);
+
+      if (integrationContext.length > 0) {
+        prompt += `\n=== BOARD INTEGRATIONS ===\n`;
+        for (const integration of integrationContext) {
+          prompt += `\n--- INTEGRATION: ${integration.name} ---\n`;
+          prompt += `Status: ${integration.status}\n`;
+          if (integration.external_account_name) {
+            prompt += `Connected Account: ${integration.external_account_name}\n`;
+          }
+          if (integration.skill_instructions) {
+            prompt += `\nHow to use ${integration.name}:\n`;
+            prompt += `${integration.skill_instructions}\n`;
+          }
+          if (integration.credentials && Object.keys(integration.credentials).length > 0) {
+            prompt += `\nCredentials:\n`;
+            for (const [key, value] of Object.entries(integration.credentials)) {
+              prompt += `  ${key}: ${value}\n`;
+            }
+          }
+          if (integration.config && Object.keys(integration.config).length > 0) {
+            prompt += `\nConfiguration:\n`;
+            for (const [key, value] of Object.entries(integration.config)) {
+              prompt += `  ${key}: ${value}\n`;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to fetch board integrations: ${error.message}`);
     }
 
     return prompt;
