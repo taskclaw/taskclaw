@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Settings, ChevronRight, Zap } from 'lucide-react'
+import { Plus, Settings, ChevronRight, Zap, BrainCircuit } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { updateBoard, getBoardIntegrations } from '@/app/dashboard/boards/actions'
 import { BoardIntegrationDialog } from './board-integration-dialog'
+import { BoardAIChat } from './board-ai-chat'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { Board, IntegrationStatus } from '@/types/board'
@@ -23,6 +24,7 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
     const [toggling, setToggling] = useState(false)
     const [integrations, setIntegrations] = useState<IntegrationStatus[]>([])
     const [selectedIntegration, setSelectedIntegration] = useState<IntegrationStatus | null>(null)
+    const [showBoardChat, setShowBoardChat] = useState(false)
     const qc = useQueryClient()
 
     const loadIntegrations = useCallback(async () => {
@@ -126,6 +128,20 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
                         </>
                     )}
 
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setShowBoardChat(true)}
+                            >
+                                <BrainCircuit className="w-4 h-4" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-xs">
+                            Board AI Chat — Bulk create tasks with AI
+                        </TooltipContent>
+                    </Tooltip>
                     <Button variant="ghost" size="icon" asChild>
                         <a href={`/dashboard/boards/${board.id}/settings`}>
                             <Settings className="w-4 h-4" />
@@ -148,6 +164,15 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
                         if (!open) setSelectedIntegration(null)
                     }}
                     onSaved={loadIntegrations}
+                />
+            )}
+
+            {/* Board AI Chat Modal */}
+            {showBoardChat && (
+                <BoardAIChat
+                    boardId={board.id}
+                    boardName={board.name}
+                    onClose={() => setShowBoardChat(false)}
                 />
             )}
         </>

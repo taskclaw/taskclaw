@@ -39,8 +39,8 @@ export function useBoardTasks(boardId: string | null) {
         queryKey: ['boardTasks', boardId],
         queryFn: () => getBoardTasks(boardId!),
         enabled: !!boardId,
-        staleTime: 30000,
-        refetchInterval: 60000,
+        staleTime: 3000,
+        refetchInterval: 5000,
     })
 }
 

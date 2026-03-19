@@ -526,3 +526,38 @@ export async function getBoardTasks(boardId: string): Promise<any[]> {
         return []
     }
 }
+
+/**
+ * Bulk-create tasks on a board (used by Board AI Chat after user confirms).
+ */
+export async function bulkCreateBoardTasks(
+    boardId: string,
+    tasks: Array<{ title: string; priority?: string; notes?: string; card_data?: Record<string, any> }>,
+): Promise<{ data?: any[]; error?: string }> {
+    const headers = await getAuthHeaders()
+    const accountId = await getActiveAccountId()
+
+    if (!headers || !accountId) {
+        return { error: 'Not authenticated' }
+    }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/tasks/bulk/${boardId}`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ tasks }),
+            }
+        )
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ message: 'Unknown error' }))
+            return { error: errorData.message || 'Failed to create tasks' }
+        }
+
+        return { data: await res.json() }
+    } catch (error: any) {
+        return { error: error.message || 'Network error' }
+    }
+}

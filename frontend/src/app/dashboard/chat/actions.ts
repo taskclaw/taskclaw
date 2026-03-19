@@ -336,6 +336,52 @@ export async function saveAiToTask(
     }
 }
 
+/**
+ * Find existing conversation for a board, or create a new one.
+ * Prevents duplicate board conversations and preserves chat history.
+ */
+export async function getOrCreateBoardConversation(boardId: string, boardName: string) {
+    const headers = await getAuthHeaders()
+    const accountId = await getCurrentAccountId()
+
+    if (!headers || !accountId) {
+        return { error: 'Not authenticated' }
+    }
+
+    try {
+        // Look for existing board conversation
+        const listUrl = `${API_URL}/accounts/${accountId}/conversations?board_id=${boardId}&limit=1`
+        const listRes = await fetch(listUrl, { headers, cache: 'no-store' })
+
+        if (listRes.ok) {
+            const listData = await listRes.json()
+            const existing = listData?.data?.[0]
+            if (existing?.id) {
+                return existing
+            }
+        }
+
+        // No existing conversation — create a new one
+        const res = await fetch(`${API_URL}/accounts/${accountId}/conversations`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                title: `Board Chat: ${boardName}`,
+                board_id: boardId,
+            }),
+        })
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ message: 'Unknown error' }))
+            return { error: errorData.message || 'Failed to create board conversation' }
+        }
+
+        return await res.json()
+    } catch (error: any) {
+        return { error: error.message || 'Failed to get or create board conversation' }
+    }
+}
+
 export async function updateConversationTitle(conversationId: string, title: string) {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()

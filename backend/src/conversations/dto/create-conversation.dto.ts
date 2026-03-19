@@ -9,6 +9,10 @@ export class CreateConversationDto {
   @IsOptional()
   task_id?: string; // Optional: Link conversation to a task
 
+  @IsUUID()
+  @IsOptional()
+  board_id?: string; // Optional: Link conversation to a board (board-level AI chat)
+
   @IsArray()
   @IsUUID(4, { each: true })
   @IsOptional()

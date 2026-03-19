@@ -13,6 +13,7 @@ import {
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { BulkCreateBoardTasksDto } from './dto/bulk-create-board-tasks.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
 
 @Controller('accounts/:accountId/tasks')
@@ -85,6 +86,25 @@ export class TasksController {
     @Body() createTaskDto: CreateTaskDto,
   ) {
     return this.tasksService.create(req.user.id, accountId, createTaskDto, req.accessToken);
+  }
+
+  /**
+   * Bulk-create tasks for a board (used by Board AI Chat after user confirms)
+   */
+  @Post('bulk/:boardId')
+  bulkCreateForBoard(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('boardId') boardId: string,
+    @Body() dto: BulkCreateBoardTasksDto,
+  ) {
+    return this.tasksService.bulkCreateForBoard(
+      req.user.id,
+      accountId,
+      boardId,
+      dto.tasks,
+      req.accessToken,
+    );
   }
 
   @Patch(':id')

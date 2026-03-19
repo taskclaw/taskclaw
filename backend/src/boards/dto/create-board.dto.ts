@@ -62,6 +62,10 @@ export class CreateBoardDto {
   default_category_id?: string;
 
   @IsOptional()
+  @IsUUID()
+  orchestrator_category_id?: string;
+
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => InlineStepDto)

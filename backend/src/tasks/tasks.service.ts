@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
@@ -6,6 +6,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { OutboundSyncService } from '../sync/outbound-sync.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
+import { ConversationsService } from '../conversations/conversations.service';
 
 interface TaskFilters {
   category_id?: string;
@@ -26,6 +27,8 @@ export class TasksService {
     private readonly accessControl: AccessControlHelper,
     private readonly outboundSync: OutboundSyncService,
     private readonly notionAdapter: NotionAdapter,
+    @Inject(forwardRef(() => ConversationsService))
+    private readonly conversationsService: ConversationsService,
   ) {}
 
   async findAll(userId: string, accountId: string, filters?: TaskFilters, accessToken?: string) {
@@ -170,6 +173,102 @@ export class TasksService {
 
     if (error) {
       throw new Error(`Failed to create task: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  /**
+   * Bulk-create tasks for a board. Used by Board AI Chat after user confirms.
+   */
+  async bulkCreateForBoard(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    tasks: Array<{ title: string; priority?: string; notes?: string; card_data?: Record<string, any> }>,
+    accessToken?: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    // Verify board exists
+    const { data: board, error: boardError } = await client
+      .from('board_instances')
+      .select('id')
+      .eq('id', boardId)
+      .eq('account_id', accountId)
+      .single();
+
+    if (boardError || !board) {
+      throw new NotFoundException(`Board with ID ${boardId} not found`);
+    }
+
+    // Get first step for default placement (include ai_first for auto-trigger)
+    const { data: steps } = await client
+      .from('board_steps')
+      .select('id, name, step_key, step_type, trigger_type, ai_first, linked_category_id, position')
+      .eq('board_instance_id', boardId)
+      .order('position', { ascending: true })
+      .limit(1);
+
+    const firstStep = steps?.[0];
+    const status = firstStep?.name || 'To-Do';
+
+    // Create all tasks
+    const rows = tasks.map((t) => ({
+      account_id: accountId,
+      title: t.title,
+      priority: t.priority || 'Medium',
+      notes: t.notes || '',
+      board_instance_id: boardId,
+      current_step_id: firstStep?.id || null,
+      card_data: t.card_data || {},
+      status,
+      completed: false,
+    }));
+
+    const { data, error } = await client
+      .from('tasks')
+      .insert(rows)
+      .select('*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)');
+
+    if (error) {
+      throw new Error(`Failed to bulk-create tasks: ${error.message}`);
+    }
+
+    this.logger.log(`Bulk-created ${data?.length || 0} tasks for board ${boardId}`);
+
+    // Auto-trigger AI First if the first step has it enabled
+    if (firstStep?.ai_first && accessToken && data?.length) {
+      const logPrefix = `[BulkCreate:${boardId.slice(0, 8)}]`;
+      this.logger.log(`${logPrefix} First step "${firstStep.name}" has AI First enabled — triggering for ${data.length} tasks (max 2 concurrent, 5s stagger)`);
+
+      // Stagger triggers: max 2 concurrent, 5s delay between each pair
+      const CONCURRENCY = 2;
+      const STAGGER_MS = 5000;
+
+      const triggerWithStagger = async () => {
+        for (let i = 0; i < data.length; i += CONCURRENCY) {
+          const batch = data.slice(i, i + CONCURRENCY);
+          await Promise.allSettled(
+            batch.map((task) =>
+              this.conversationsService
+                .autoTriggerAiForStep(task.id, accountId, userId, accessToken, firstStep, logPrefix, 0)
+                .catch((err) => this.logger.error(`${logPrefix} AI trigger failed for task ${task.id}: ${err.message}`)),
+            ),
+          );
+          // Wait before next batch (skip delay after the last batch)
+          if (i + CONCURRENCY < data.length) {
+            await new Promise((r) => setTimeout(r, STAGGER_MS));
+          }
+        }
+      };
+
+      // Run in background — don't block response
+      triggerWithStagger().catch((err) =>
+        this.logger.error(`${logPrefix} Staggered AI trigger failed: ${err.message}`),
+      );
     }
 
     return data;

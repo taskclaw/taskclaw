@@ -20,6 +20,13 @@ export interface Board {
     color: string | null
     icon: string | null
   } | null
+  orchestrator_category_id: string | null
+  orchestrator_category?: {
+    id: string
+    name: string
+    color: string | null
+    icon: string | null
+  } | null
   board_steps?: BoardStep[]
   task_count?: number
   created_at: string

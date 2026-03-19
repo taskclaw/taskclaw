@@ -68,6 +68,25 @@ export class ConversationsService {
       }
     }
 
+    // Verify board exists if board_id provided
+    if (dto.board_id) {
+      const { data: board, error: boardError } = await client
+        .from('board_instances')
+        .select('id, name')
+        .eq('id', dto.board_id)
+        .eq('account_id', accountId)
+        .single();
+
+      if (boardError || !board) {
+        throw new NotFoundException(`Board with ID ${dto.board_id} not found`);
+      }
+
+      // Auto-generate title from board if not provided
+      if (!dto.title) {
+        dto.title = `Board Chat: ${board.name}`;
+      }
+    }
+
     // Prepare metadata with skill_ids if provided
     const metadata: any = {};
     if (dto.skill_ids && dto.skill_ids.length > 0) {
@@ -80,6 +99,7 @@ export class ConversationsService {
         user_id: userId,
         account_id: accountId,
         task_id: dto.task_id,
+        board_id: dto.board_id || null,
         title: dto.title || 'New Conversation',
         metadata: Object.keys(metadata).length > 0 ? metadata : null,
       })
@@ -105,6 +125,7 @@ export class ConversationsService {
     page: number = 1,
     limit: number = 20,
     taskId?: string,
+    boardId?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
 
@@ -121,6 +142,10 @@ export class ConversationsService {
 
     if (taskId) {
       query = query.eq('task_id', taskId);
+    }
+
+    if (boardId) {
+      query = query.eq('board_id', boardId);
     }
 
     const { data, error, count } = await query
@@ -164,7 +189,7 @@ export class ConversationsService {
 
     const { data, error } = await client
       .from('conversations')
-      .select('*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, card_data, source_id, category_id, current_step_id, board_instance_id, override_category_id, sources(id, provider), categories:categories!category_id(id, name, color, icon), override_category:categories!override_category_id(id, name, color, icon))')
+      .select('*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, card_data, source_id, category_id, current_step_id, board_instance_id, override_category_id, sources(id, provider), categories:categories!category_id(id, name, color, icon), override_category:categories!override_category_id(id, name, color, icon)), board:board_instances(id, name, description, default_category_id, orchestrator_category_id, settings_override)')
       .eq('id', conversationId)
       .eq('user_id', userId)
       .eq('account_id', accountId)
@@ -271,11 +296,10 @@ export class ConversationsService {
         accessToken,
       );
 
-      // Build system prompt with context
-      const systemPrompt = await this.buildSystemPrompt(
-        conversation,
-        accessToken,
-      );
+      // Build system prompt with context (board chat uses board-specific prompt)
+      const systemPrompt = conversation.board_id
+        ? await this.buildBoardSystemPrompt(conversation, accessToken)
+        : await this.buildSystemPrompt(conversation, accessToken);
 
       // Build message array for OpenClaw
       const messages = this.openClawService.buildMessageHistory(
@@ -458,12 +482,11 @@ export class ConversationsService {
         );
         this.logger.debug(`${logPrefix} History: ${history.length} messages`);
 
-        // Step 3: Build system prompt with context
+        // Step 3: Build system prompt with context (board chat uses board-specific prompt)
         this.logger.debug(`${logPrefix} Step 3/5: Building system prompt`);
-        const systemPrompt = await this.buildSystemPrompt(
-          conversation,
-          accessToken,
-        );
+        const systemPrompt = conversation.board_id
+          ? await this.buildBoardSystemPrompt(conversation, accessToken)
+          : await this.buildSystemPrompt(conversation, accessToken);
 
         // Step 4: Send to OpenClaw
         const messages = this.openClawService.buildMessageHistory(
@@ -667,7 +690,7 @@ export class ConversationsService {
   /**
    * Auto-trigger AI processing for a task that just entered a step with on_entry trigger.
    */
-  private async autoTriggerAiForStep(
+  async autoTriggerAiForStep(
     taskId: string,
     accountId: string,
     userId: string,
@@ -1285,6 +1308,148 @@ Current Context:
       }
     } catch (error) {
       this.logger.warn(`Failed to fetch comm tools for prompt: ${error.message}`);
+    }
+
+    return prompt;
+  }
+
+  /**
+   * Build a system prompt for board-level AI chat (task creation mode).
+   * Includes board structure, steps, schemas, and orchestrator agent skills.
+   */
+  private async buildBoardSystemPrompt(
+    conversation: any,
+    accessToken: string,
+  ): Promise<string> {
+    const client = this.supabaseAdmin.getClient();
+
+    // Fetch board with full details
+    const { data: board } = await client
+      .from('board_instances')
+      .select('id, name, description, default_category_id, orchestrator_category_id, settings_override')
+      .eq('id', conversation.board_id)
+      .single();
+
+    if (!board) {
+      this.logger.warn(`Board ${conversation.board_id} not found, falling back to generic prompt`);
+      return this.buildSystemPrompt(conversation, accessToken);
+    }
+
+    // Fetch steps with linked agent names
+    const { data: steps } = await client
+      .from('board_steps')
+      .select('step_key, name, step_type, position, input_schema, output_schema, linked_category:categories!linked_category_id(id, name)')
+      .eq('board_instance_id', board.id)
+      .order('position', { ascending: true });
+
+    const firstStep = steps?.[0];
+
+    let prompt = `You are OpenClaw, an AI assistant acting as the Board Orchestrator for "${board.name}".
+${board.description ? `Board purpose: ${board.description}` : ''}
+
+=== YOUR ROLE ===
+You help users create and manage tasks on this board through conversation.
+- When the user describes tasks they want, ask clarifying questions if the request is vague
+- When you have enough information, generate a structured list of tasks
+- Be proactive in suggesting good task titles, priorities, and descriptions
+- You can create multiple tasks in a single response
+
+=== BOARD PIPELINE ===
+This board has the following steps (columns):
+${(steps || []).map((s, i) => {
+  let desc = `${i + 1}. "${s.name}" (${s.step_type})`;
+  if ((s as any).linked_category?.name) {
+    desc += ` — Agent: ${(s as any).linked_category.name}`;
+  }
+  if (s.input_schema && Array.isArray(s.input_schema) && s.input_schema.length > 0) {
+    desc += `\n   Input fields: ${s.input_schema.map((f: any) => `${f.key} (${f.type}${f.required ? ', required' : ''}): ${f.label}`).join(', ')}`;
+  }
+  return desc;
+}).join('\n')}
+
+New tasks will be placed in the first step: "${firstStep?.name || 'To-Do'}"
+
+=== TASK OUTPUT FORMAT ===
+When you are ready to create tasks, output them inside a fenced code block with the language tag \`tasks_json\`. Example:
+
+\`\`\`tasks_json
+[
+  {
+    "title": "Task title here",
+    "priority": "Medium",
+    "notes": "Brief description or context for this task"
+  }
+]
+\`\`\`
+
+Rules:
+- "title" is REQUIRED for every task
+- "priority" must be "High", "Medium", or "Low" (defaults to "Medium")
+- "notes" is optional but helpful for providing context
+- Always output tasks as a JSON array, even for a single task
+- After outputting the tasks_json block, briefly summarize what you proposed
+- The user will review and confirm before tasks are actually created
+
+`;
+
+    // ═══════════════════════════════════════════════════════════
+    // ORCHESTRATOR AGENT SKILLS & KNOWLEDGE
+    // ═══════════════════════════════════════════════════════════
+    const agentCategoryId = board.orchestrator_category_id || board.default_category_id;
+
+    if (agentCategoryId) {
+      // Check if synced to provider
+      let providerSynced = false;
+      try {
+        providerSynced = await this.agentSyncService.isSynced(
+          conversation.account_id,
+          agentCategoryId,
+        );
+      } catch {
+        // Fallback to inline injection
+      }
+
+      if (!providerSynced) {
+        // Inline skills injection
+        try {
+          const categorySkills = await this.skillsService.findDefaultForCategory(
+            accessToken,
+            conversation.account_id,
+            agentCategoryId,
+          );
+
+          if (categorySkills && categorySkills.length > 0) {
+            prompt += `\n=== ORCHESTRATOR SKILLS ===\n`;
+            categorySkills.forEach((skill, index) => {
+              prompt += `Skill ${index + 1}: ${skill.name}\n`;
+              if (skill.description) {
+                prompt += `Description: ${skill.description}\n`;
+              }
+              prompt += `Instructions:\n${skill.instructions}\n\n`;
+            });
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to fetch orchestrator skills: ${error.message}`);
+        }
+
+        // Inline knowledge injection
+        try {
+          const masterDoc = await this.knowledgeService.findMasterForCategory(
+            accessToken,
+            conversation.account_id,
+            agentCategoryId,
+          );
+
+          if (masterDoc) {
+            prompt += `\n=== KNOWLEDGE BASE ===\n`;
+            prompt += `Master Document: "${masterDoc.title}"\n\n`;
+            prompt += `${masterDoc.content}\n\n`;
+            prompt += `Use this knowledge to provide contextually relevant task suggestions.\n`;
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to fetch orchestrator knowledge: ${error.message}`);
+        }
+      }
     }
 
     return prompt;

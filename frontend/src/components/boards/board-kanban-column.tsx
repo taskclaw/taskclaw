@@ -6,7 +6,7 @@ import {
     SortableContext,
     verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { Plus, MoreHorizontal, Sparkles, Settings2, Link2, Unlink } from 'lucide-react'
+import { Plus, MoreHorizontal, Sparkles, Settings2, Link2, Unlink, Zap } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
     DropdownMenu,
@@ -20,6 +20,7 @@ import { getCategories } from '@/app/dashboard/settings/categories/actions'
 import type { Task, Category } from '@/types/task'
 import type { BoardStep } from '@/types/board'
 import { TaskCard } from '@/components/tasks/task-card'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { StepConfigDrawer } from './step-config-drawer'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -88,6 +89,23 @@ export function BoardKanbanColumn({
                         <span className="text-xs text-muted-foreground font-medium shrink-0">
                             {tasks.length}
                         </span>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Zap
+                                    className={cn(
+                                        'w-3 h-3 shrink-0',
+                                        step.ai_first
+                                            ? 'text-amber-500 fill-amber-500'
+                                            : 'text-muted-foreground/40'
+                                    )}
+                                />
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="text-xs">
+                                {step.ai_first
+                                    ? 'AI First — Auto-executes AI when a card enters'
+                                    : 'AI First — Disabled'}
+                            </TooltipContent>
+                        </Tooltip>
                     </div>
 
                     <DropdownMenu>

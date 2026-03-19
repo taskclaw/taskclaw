@@ -29,7 +29,7 @@ export class BoardsService {
 
     let query = client
       .from('board_instances')
-      .select('*, default_category:categories!default_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, linked_category:categories!linked_category_id(id, name, color, icon))')
+      .select('*, default_category:categories!default_category_id(id, name, color, icon), orchestrator_category:categories!orchestrator_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, linked_category:categories!linked_category_id(id, name, color, icon))')
       .eq('account_id', accountId);
 
     if (filters?.archived !== undefined) {
@@ -88,7 +88,7 @@ export class BoardsService {
 
     const { data, error } = await client
       .from('board_instances')
-      .select('*, default_category:categories!default_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, trigger_type, ai_first, input_schema, output_schema, on_success_step_id, on_error_step_id, webhook_url, webhook_auth_header, schedule_cron, system_prompt, linked_category:categories!linked_category_id(id, name, color, icon))')
+      .select('*, default_category:categories!default_category_id(id, name, color, icon), orchestrator_category:categories!orchestrator_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, trigger_type, ai_first, input_schema, output_schema, on_success_step_id, on_error_step_id, webhook_url, webhook_auth_header, schedule_cron, system_prompt, linked_category:categories!linked_category_id(id, name, color, icon))')
       .eq('id', boardId)
       .eq('account_id', accountId)
       .single();
@@ -142,6 +142,7 @@ export class BoardsService {
         tags: dto.tags || [],
         is_favorite: dto.is_favorite || false,
         default_category_id: dto.default_category_id || null,
+        orchestrator_category_id: dto.orchestrator_category_id || null,
       })
       .select()
       .single();
@@ -262,6 +263,7 @@ export class BoardsService {
         installed_manifest: original.installed_manifest,
         installed_version: original.installed_version,
         default_category_id: original.default_category_id || null,
+        orchestrator_category_id: original.orchestrator_category_id || null,
       })
       .select()
       .single();
@@ -300,11 +302,12 @@ export class BoardsService {
     const client = this.supabaseAdmin.getClient();
     const board = await this.findOne(userId, accountId, boardId);
 
-    // Collect unique linked category IDs (from steps + board default)
+    // Collect unique linked category IDs (from steps + board default + orchestrator)
     const categoryIds = [
       ...new Set(
         [
           board.default_category_id,
+          board.orchestrator_category_id,
           ...(board.board_steps || []).map((s: any) => s.linked_category_id),
         ].filter(Boolean),
       ),
@@ -377,6 +380,10 @@ export class BoardsService {
       default_category_id: board.default_category_id || null,
       default_category_slug: board.default_category_id
         ? categoryIdToSlug[board.default_category_id] || null
+        : null,
+      orchestrator_category_id: board.orchestrator_category_id || null,
+      orchestrator_category_slug: board.orchestrator_category_id
+        ? categoryIdToSlug[board.orchestrator_category_id] || null
         : null,
       version: '1.0.0',
       icon: board.icon,
