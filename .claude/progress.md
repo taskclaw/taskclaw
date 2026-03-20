@@ -3,7 +3,7 @@
 ## Status
 - **Project:** AI-First Agent Access Layer
 - **Started:** 2026-03-19
-- **Features:** 31 / 40 completed
+- **Features:** 32 / 40 completed
 - **Last session:** 2026-03-19
 - **Current blocker:** none
 
@@ -67,3 +67,12 @@
 - Added `GET /accounts/:id/tasks/search?q=` — full-text search on title and notes with ILIKE (F035)
 - Added `PATCH /accounts/:id/tasks/bulk` — bulk update up to 100 tasks, emits webhooks per task (F036)
 - TypeScript compiles cleanly
+
+### 2026-03-19 — Phase 6: MCP API Key Auth (F017)
+- Updated `backend/src/mcp/api-client.ts` to support dual auth modes:
+  - API Key mode: `TASKCLAW_API_KEY=tc_live_xxx` — sends `X-API-Key` header, no login needed
+  - JWT mode: `TASKCLAW_EMAIL` + `TASKCLAW_PASSWORD` — existing behavior
+  - API key takes priority when both are provided
+- Both NestJS and MCP builds compile cleanly
+
+## All 6 backend phases complete. 32/40 features done (remaining 8 are frontend/docs, already completed).

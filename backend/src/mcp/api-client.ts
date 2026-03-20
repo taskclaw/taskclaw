@@ -1,11 +1,15 @@
 /**
  * TaskClaw MCP HTTP Client
  *
- * Authenticates with the TaskClaw REST API using email/password (JWT)
- * and provides typed request methods for all MCP tools.
+ * Supports two authentication modes:
+ *   1. API Key (preferred): Set TASKCLAW_API_KEY=tc_live_xxx
+ *   2. Email/Password (JWT): Set TASKCLAW_EMAIL + TASKCLAW_PASSWORD
+ *
+ * API key takes priority when both are provided.
  */
 
 const API_URL = process.env.TASKCLAW_API_URL || 'http://localhost:3003';
+const API_KEY = process.env.TASKCLAW_API_KEY;
 const EMAIL = process.env.TASKCLAW_EMAIL;
 const PASSWORD = process.env.TASKCLAW_PASSWORD;
 const ACCOUNT_ID = process.env.TASKCLAW_ACCOUNT_ID;
@@ -18,6 +22,10 @@ interface Session {
 
 let session: Session | null = null;
 let resolvedAccountId: string | null = ACCOUNT_ID || null;
+
+function useApiKey(): boolean {
+  return !!API_KEY;
+}
 
 async function login(): Promise<Session> {
   if (!EMAIL || !PASSWORD) {
@@ -42,19 +50,22 @@ async function login(): Promise<Session> {
   return data;
 }
 
-async function getToken(): Promise<string> {
-  if (!session) {
-    await login();
+function getAuthHeaders(): Record<string, string> {
+  if (useApiKey()) {
+    return { 'X-API-Key': API_KEY! };
   }
-  return session!.access_token;
+  if (!session) {
+    throw new Error('Not authenticated. Call initialize() first.');
+  }
+  return { Authorization: `Bearer ${session.access_token}` };
 }
 
 export async function getAccountId(): Promise<string> {
   if (resolvedAccountId) return resolvedAccountId;
 
-  const token = await getToken();
+  const headers = getAuthHeaders();
   const res = await fetch(`${API_URL}/accounts`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers,
   });
 
   if (!res.ok) {
@@ -75,12 +86,12 @@ export async function apiRequest(
   path: string,
   body?: unknown,
 ): Promise<unknown> {
-  const token = await getToken();
+  const authHeaders = getAuthHeaders();
   const accountId = await getAccountId();
   const url = `${API_URL}${path.replace(':accountId', accountId)}`;
 
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
+    ...authHeaders,
     'Content-Type': 'application/json',
   };
 
@@ -90,13 +101,13 @@ export async function apiRequest(
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401) {
-    // Token may have expired, re-login once
+  if (res.status === 401 && !useApiKey()) {
+    // Token may have expired, re-login once (only for JWT mode)
     await login();
-    const retryToken = session!.access_token;
+    const retryHeaders = getAuthHeaders();
     const retryRes = await fetch(url, {
       method,
-      headers: { ...headers, Authorization: `Bearer ${retryToken}` },
+      headers: { ...headers, ...retryHeaders },
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!retryRes.ok) {
@@ -132,6 +143,13 @@ export async function del(path: string): Promise<unknown> {
 }
 
 export async function initialize(): Promise<void> {
+  if (useApiKey()) {
+    // API key mode: no login needed, just resolve account ID
+    await getAccountId();
+    return;
+  }
+
+  // JWT mode: login first, then resolve account ID
   await login();
   await getAccountId();
 }

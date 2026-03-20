@@ -2,7 +2,7 @@
   "project": "AI-First Agent Access Layer",
   "created": "2026-03-19",
   "total": 40,
-  "completed": 31,
+  "completed": 32,
   "features": [
     {
       "id": "F001",
@@ -168,11 +168,11 @@
       "id": "F017",
       "name": "Update MCP server to support API key auth",
       "group": "mcp-server",
-      "status": "fail",
+      "status": "pass",
       "spec": "MCP server HTTP client supports TASKCLAW_API_KEY env var as alternative to email/password. API key takes priority when both provided.",
       "depends_on": ["F010", "F013"],
       "test": "MCP server works with TASKCLAW_API_KEY=tc_live_xxx env var",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F018",
