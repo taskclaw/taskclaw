@@ -13,7 +13,7 @@ import { KnowledgeService } from '../knowledge/knowledge.service';
 import { SkillsService } from '../skills/skills.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
-import { CommToolsService } from '../comm-tools/comm-tools.service';
+
 import { IntegrationsService } from '../integrations/integrations.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -33,7 +33,6 @@ export class ConversationsService {
     private readonly skillsService: SkillsService,
     private readonly notionAdapter: NotionAdapter,
     private readonly agentSyncService: AgentSyncService,
-    private readonly commToolsService: CommToolsService,
     private readonly integrationsService: IntegrationsService,
   ) {}
 
@@ -1283,10 +1282,10 @@ Current Context:
     }
 
     // ═══════════════════════════════════════════════════════════
-    // COMMUNICATION TOOLS AVAILABILITY
+    // COMMUNICATION TOOLS AVAILABILITY (unified via IntegrationsService)
     // ═══════════════════════════════════════════════════════════
     try {
-      const availableTools = await this.commToolsService.getAvailableTools(
+      const availableTools = await this.integrationsService.getAvailableCommTools(
         conversation.account_id,
       );
       const allTools = ['telegram', 'whatsapp', 'slack'];

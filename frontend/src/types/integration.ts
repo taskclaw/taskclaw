@@ -86,6 +86,13 @@ export interface IntegrationConnection {
     config: Record<string, any>
     external_account_name: string | null
     test_conversation_id: string | null
+
+    // Health monitoring (for comm tools)
+    health_status?: 'healthy' | 'unhealthy' | 'checking' | 'unknown'
+    last_checked_at?: string | null
+    last_healthy_at?: string | null
+    check_interval_minutes?: number
+
     created_at: string
     updated_at: string
 }

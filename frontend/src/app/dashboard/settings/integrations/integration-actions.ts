@@ -372,3 +372,92 @@ export async function getIntegrationCatalog(): Promise<IntegrationCatalogItem[]>
         connection: connections.find((c) => c.definition_id === def.id) ?? null,
     }))
 }
+
+// ============================================================================
+// Toggle, Health Check & Category Filters
+// ============================================================================
+
+export async function toggleConnection(connId: string, enabled: boolean) {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getCurrentAccountId()
+    if (!accountId) return { error: 'No account' }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/integrations/connections/${connId}/toggle`,
+            {
+                method: 'POST',
+                headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to toggle connection' }
+        }
+        return { data: await res.json() }
+    } catch (err: any) {
+        return { error: err.message || 'Failed to toggle connection' }
+    }
+}
+
+export async function checkConnectionHealth(connId: string) {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getCurrentAccountId()
+    if (!accountId) return { error: 'No account' }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/integrations/connections/${connId}/health-check`,
+            {
+                method: 'POST',
+                headers,
+            }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Health check failed' }
+        }
+        return { data: await res.json() }
+    } catch (err: any) {
+        return { error: err.message || 'Health check failed' }
+    }
+}
+
+export async function getConnectionsByCategory(category: string) {
+    const headers = await getAuthHeaders()
+    if (!headers) return []
+    const accountId = await getCurrentAccountId()
+    if (!accountId) return []
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/integrations/connections?category=${encodeURIComponent(category)}`,
+            { headers }
+        )
+        if (!res.ok) return []
+        return await res.json()
+    } catch {
+        return []
+    }
+}
+
+export async function getDefinitionsByCategory(category: string) {
+    const headers = await getAuthHeaders()
+    if (!headers) return []
+    const accountId = await getCurrentAccountId()
+    if (!accountId) return []
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/integrations/definitions?category=${encodeURIComponent(category)}`,
+            { headers }
+        )
+        if (!res.ok) return []
+        return await res.json()
+    } catch {
+        return []
+    }
+}

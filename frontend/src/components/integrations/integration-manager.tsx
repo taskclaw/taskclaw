@@ -40,9 +40,11 @@ interface IntegrationManagerProps {
     embedded?: boolean
     /** Dialog size: 'default' (max-w-4xl) or 'full' (near full-screen) */
     size?: 'default' | 'full'
+    /** Filter out definitions that belong to any of these categories */
+    excludeCategories?: string[]
 }
 
-export function IntegrationManager({ mode, boardId, onClose, embedded, size = 'default' }: IntegrationManagerProps) {
+export function IntegrationManager({ mode, boardId, onClose, embedded, size = 'default', excludeCategories }: IntegrationManagerProps) {
     const [loading, setLoading] = useState(true)
     const [catalogItems, setCatalogItems] = useState<IntegrationCatalogItem[]>([])
     const [connections, setConnections] = useState<IntegrationConnection[]>([])
@@ -270,6 +272,7 @@ export function IntegrationManager({ mode, boardId, onClose, embedded, size = 'd
                             onConnect={handleConnect}
                             onManage={handleManage}
                             onToggleBoard={mode === 'board' ? handleToggleBoard : undefined}
+                            excludeCategories={excludeCategories}
                         />
                     </TabsContent>
 
@@ -286,7 +289,16 @@ export function IntegrationManager({ mode, boardId, onClose, embedded, size = 'd
                             </div>
                         ) : (
                             <div className="space-y-3">
-                                {connections.map((conn) => {
+                                {connections
+                                    .filter((conn) => {
+                                        if (!excludeCategories?.length) return true
+                                        const def = catalogItems.find(
+                                            (item) => item.definition.id === conn.definition_id
+                                        )?.definition
+                                        if (!def) return true
+                                        return !excludeCategories.some(cat => def.categories?.includes(cat))
+                                    })
+                                    .map((conn) => {
                                     const def = catalogItems.find(
                                         (item) => item.definition.id === conn.definition_id
                                     )?.definition

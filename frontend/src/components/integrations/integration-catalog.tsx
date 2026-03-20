@@ -28,6 +28,8 @@ interface IntegrationCatalogProps {
     onManage: (definition: IntegrationDefinition, connection: IntegrationConnection) => void
     onToggleBoard?: (connection: IntegrationConnection, add: boolean) => void
     loading?: boolean
+    /** Filter out items whose definitions belong to any of these categories */
+    excludeCategories?: string[]
 }
 
 function getStatusBadge(connection: IntegrationConnection | null) {
@@ -82,6 +84,7 @@ export function IntegrationCatalog({
     onManage,
     onToggleBoard,
     loading,
+    excludeCategories,
 }: IntegrationCatalogProps) {
     const [search, setSearch] = useState('')
     const [categoryFilter, setCategoryFilter] = useState<string>('all')
@@ -89,14 +92,26 @@ export function IntegrationCatalog({
     const allCategories = useMemo(() => {
         const cats = new Set<string>()
         items.forEach((item) =>
-            item.definition.categories?.forEach((c) => cats.add(c))
+            item.definition.categories?.forEach((c) => {
+                if (!excludeCategories?.includes(c)) {
+                    cats.add(c)
+                }
+            })
         )
         return Array.from(cats).sort()
-    }, [items])
+    }, [items, excludeCategories])
 
     const filtered = useMemo(() => {
         return items.filter((item) => {
             const def = item.definition
+
+            // Filter out excluded categories
+            if (excludeCategories?.length) {
+                if (excludeCategories.some(cat => def.categories?.includes(cat))) {
+                    return false
+                }
+            }
+
             const matchesSearch =
                 !search ||
                 def.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -109,7 +124,7 @@ export function IntegrationCatalog({
 
             return matchesSearch && matchesCategory
         })
-    }, [items, search, categoryFilter])
+    }, [items, search, categoryFilter, excludeCategories])
 
     return (
         <div className="space-y-4">

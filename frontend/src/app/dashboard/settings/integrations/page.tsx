@@ -199,7 +199,7 @@ export default function IntegrationsPage() {
             {/* ── Integration Marketplace (new system) ── */}
             <div className="mb-10">
                 <h2 className="text-lg font-semibold mb-4">Integration Marketplace</h2>
-                <IntegrationManager mode="settings" embedded />
+                <IntegrationManager mode="settings" embedded excludeCategories={['communication', 'source']} />
             </div>
 
             {alert && (
