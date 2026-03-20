@@ -86,6 +86,26 @@ export class TasksController {
     return this.tasksService.getSyncStatus(req.user.id, accountId, id, req.accessToken);
   }
 
+  @Get('search')
+  @ApiOperation({ summary: 'Full-text search tasks by title and notes' })
+  search(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Query('q') query: string,
+  ) {
+    return this.tasksService.search(req.user.id, accountId, query, req.accessToken);
+  }
+
+  @Patch('bulk')
+  @ApiOperation({ summary: 'Bulk update multiple tasks' })
+  bulkUpdate(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Body() body: { updates: Array<{ id: string; status?: string; priority?: string; current_step_id?: string; completed?: boolean }> },
+  ) {
+    return this.tasksService.bulkUpdate(req.user.id, accountId, body.updates, req.accessToken);
+  }
+
   @Post()
   @ApiOperation({ summary: 'Create a new task' })
   create(

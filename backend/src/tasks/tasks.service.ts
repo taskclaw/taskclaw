@@ -557,6 +557,99 @@ export class TasksService {
   }
 
   /**
+   * Full-text search on task title and notes
+   */
+  async search(userId: string, accountId: string, query: string, accessToken?: string) {
+    const client = this.supabaseAdmin.getClient();
+
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    if (!query || query.trim().length === 0) {
+      return [];
+    }
+
+    const searchTerm = `%${query.trim()}%`;
+
+    const { data, error } = await client
+      .from('tasks')
+      .select('*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)')
+      .eq('account_id', accountId)
+      .or(`title.ilike.${searchTerm},notes.ilike.${searchTerm}`)
+      .order('updated_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      throw new Error(`Failed to search tasks: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  /**
+   * Bulk update multiple tasks at once
+   */
+  async bulkUpdate(
+    userId: string,
+    accountId: string,
+    updates: Array<{ id: string; status?: string; priority?: string; current_step_id?: string; completed?: boolean }>,
+    accessToken?: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    if (!updates || updates.length === 0) {
+      throw new BadRequestException('No updates provided');
+    }
+
+    if (updates.length > 100) {
+      throw new BadRequestException('Maximum 100 tasks per bulk update');
+    }
+
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    for (const update of updates) {
+      try {
+        const payload: Record<string, any> = {};
+        if (update.status !== undefined) payload.status = update.status;
+        if (update.priority !== undefined) payload.priority = update.priority;
+        if (update.current_step_id !== undefined) payload.current_step_id = update.current_step_id;
+        if (update.completed !== undefined) payload.completed = update.completed;
+
+        if (Object.keys(payload).length === 0) {
+          results.push({ id: update.id, success: true });
+          continue;
+        }
+
+        const { data, error } = await client
+          .from('tasks')
+          .update(payload)
+          .eq('id', update.id)
+          .eq('account_id', accountId)
+          .select()
+          .single();
+
+        if (error) {
+          results.push({ id: update.id, success: false, error: error.message });
+        } else {
+          const webhookEvent = update.completed ? 'task.completed' : 'task.updated';
+          this.webhookEmitter.emit(accountId, webhookEvent, { task: data });
+          results.push({ id: update.id, success: true });
+        }
+      } catch (err) {
+        results.push({ id: update.id, success: false, error: (err as Error).message });
+      }
+    }
+
+    return {
+      total: updates.length,
+      succeeded: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      results,
+    };
+  }
+
+  /**
    * Get sync status for a specific task
    */
   async getSyncStatus(userId: string, accountId: string, id: string, accessToken?: string) {

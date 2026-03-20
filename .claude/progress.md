@@ -3,7 +3,7 @@
 ## Status
 - **Project:** AI-First Agent Access Layer
 - **Started:** 2026-03-19
-- **Features:** 26 / 40 completed
+- **Features:** 31 / 40 completed
 - **Last session:** 2026-03-19
 - **Current blocker:** none
 
@@ -58,3 +58,12 @@
 - Injected `WebhookEmitterService` into `BoardsService` — emits board.created, board.updated, board.deleted (F028)
 - Injected `WebhookEmitterService` into `ConversationsService` — emits conversation.created, message.created (F029)
 - TypeScript compiles cleanly (both NestJS and MCP builds)
+
+### 2026-03-19 — Phase 5: Missing Endpoints (F032-F036)
+- Added `DELETE /accounts/:id/members/:memberId` — removes member with owner/self protection (F032)
+- Added `POST /accounts/:id/invitations/:invId/accept` — accepts invitation, adds user to account (F033)
+- Added `GET /users/me/preferences` and `PATCH /users/me/preferences` — user preferences with upsert (F034)
+- Created `user_preferences` table migration with RLS policies
+- Added `GET /accounts/:id/tasks/search?q=` — full-text search on title and notes with ILIKE (F035)
+- Added `PATCH /accounts/:id/tasks/bulk` — bulk update up to 100 tasks, emits webhooks per task (F036)
+- TypeScript compiles cleanly

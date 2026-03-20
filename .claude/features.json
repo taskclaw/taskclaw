@@ -2,7 +2,7 @@
   "project": "AI-First Agent Access Layer",
   "created": "2026-03-19",
   "total": 40,
-  "completed": 26,
+  "completed": 31,
   "features": [
     {
       "id": "F001",
@@ -318,51 +318,51 @@
       "id": "F032",
       "name": "Remove team member endpoint",
       "group": "missing-endpoints",
-      "status": "fail",
+      "status": "pass",
       "spec": "Add DELETE /accounts/:id/members/:memberId to accounts controller",
       "depends_on": [],
       "test": "curl DELETE removes member and they lose access",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F033",
       "name": "Accept invitation endpoint",
       "group": "missing-endpoints",
-      "status": "fail",
+      "status": "pass",
       "spec": "Add POST /accounts/:id/invitations/:invId/accept to accounts controller",
       "depends_on": [],
       "test": "curl POST accepts invitation and adds user to account",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F034",
       "name": "User preferences endpoint",
       "group": "missing-endpoints",
-      "status": "fail",
+      "status": "pass",
       "spec": "Add PATCH /users/me/preferences for theme mode, locale, notification settings. Store in user_preferences table or users table JSONB column.",
       "depends_on": [],
       "test": "curl PATCH updates preferences, GET /users/me returns preferences",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F035",
       "name": "Task full-text search endpoint",
       "group": "missing-endpoints",
-      "status": "fail",
+      "status": "pass",
       "spec": "Add GET /accounts/:id/tasks/search?q= with full-text search on title and notes",
       "depends_on": [],
       "test": "curl GET with q parameter returns matching tasks",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F036",
       "name": "Bulk task update endpoint",
       "group": "missing-endpoints",
-      "status": "fail",
+      "status": "pass",
       "spec": "Add PATCH /accounts/:id/tasks/bulk accepting array of {id, ...updates} for batch status/step/priority changes",
       "depends_on": [],
       "test": "curl PATCH with array of task updates applies all changes",
-      "completed_at": null
+      "completed_at": "2026-03-19"
     },
     {
       "id": "F037",

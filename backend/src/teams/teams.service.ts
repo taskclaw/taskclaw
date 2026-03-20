@@ -119,6 +119,107 @@ export class TeamsService {
         return { success: true };
     }
 
+    async removeMember(accountId: string, memberId: string, userId: string, accessToken?: string) {
+        const supabase = this.supabaseService.getClient(accessToken);
+
+        // Verify caller is owner/admin
+        await this.accessControlHelper.verifyAccountAccess(supabase, accountId, userId, ['owner', 'admin']);
+
+        // Cannot remove yourself
+        if (memberId === userId) {
+            throw new BadRequestException('Cannot remove yourself from the account');
+        }
+
+        // Cannot remove the account owner
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('owner_user_id')
+            .eq('id', accountId)
+            .single();
+
+        if (account && account.owner_user_id === memberId) {
+            throw new BadRequestException('Cannot remove the account owner');
+        }
+
+        // Verify member exists
+        const { data: member } = await supabase
+            .from('account_users')
+            .select('id')
+            .eq('account_id', accountId)
+            .eq('user_id', memberId)
+            .single();
+
+        if (!member) {
+            throw new NotFoundException('Member not found in this account');
+        }
+
+        const { error } = await supabase
+            .from('account_users')
+            .delete()
+            .eq('account_id', accountId)
+            .eq('user_id', memberId);
+
+        if (error) {
+            throw new InternalServerErrorException(error.message);
+        }
+
+        return { success: true };
+    }
+
+    async acceptInvitation(accountId: string, invitationId: string, userId: string, accessToken?: string) {
+        const supabase = this.supabaseService.getClient(accessToken);
+
+        // Fetch invitation
+        const { data: invitation, error: invError } = await supabase
+            .from('invitations')
+            .select('*')
+            .eq('id', invitationId)
+            .eq('account_id', accountId)
+            .single();
+
+        if (invError || !invitation) {
+            throw new NotFoundException('Invitation not found');
+        }
+
+        // Verify the invitation belongs to the current user (by email)
+        const { data: authUser } = await supabase.auth.getUser();
+        if (!authUser?.user?.email || authUser.user.email !== invitation.email) {
+            throw new ForbiddenException('This invitation is not for your email address');
+        }
+
+        // Check if already a member
+        const { data: existingMember } = await supabase
+            .from('account_users')
+            .select('id')
+            .eq('account_id', accountId)
+            .eq('user_id', userId)
+            .single();
+
+        if (existingMember) {
+            // Already a member, just delete the invitation
+            await supabase.from('invitations').delete().eq('id', invitationId);
+            return { success: true, message: 'Already a member' };
+        }
+
+        // Add user to account
+        const { error: addError } = await supabase
+            .from('account_users')
+            .insert({
+                account_id: accountId,
+                user_id: userId,
+                role: invitation.role || 'member',
+            });
+
+        if (addError) {
+            throw new InternalServerErrorException(addError.message);
+        }
+
+        // Delete the invitation
+        await supabase.from('invitations').delete().eq('id', invitationId);
+
+        return { success: true };
+    }
+
     async deleteInvitation(invitationId: string, userId: string, accessToken?: string) {
         const supabase = this.supabaseService.getClient(accessToken);
 

@@ -35,6 +35,64 @@ export class UsersService {
         return profile;
     }
 
+    async getPreferences(userId: string, accessToken?: string) {
+        const supabase = this.supabaseService.getClient(accessToken);
+
+        const { data, error } = await supabase
+            .from('user_preferences')
+            .select('*')
+            .eq('user_id', userId)
+            .single();
+
+        if (error && error.code !== 'PGRST116') {
+            // PGRST116 = "Row not found" — that's fine, return defaults
+            throw new Error(`Failed to fetch preferences: ${error.message}`);
+        }
+
+        return data || {
+            user_id: userId,
+            theme: 'system',
+            locale: 'en',
+            notifications_email: true,
+            notifications_push: true,
+            notifications_in_app: true,
+        };
+    }
+
+    async updatePreferences(
+        userId: string,
+        preferences: {
+            theme?: string;
+            locale?: string;
+            notifications_email?: boolean;
+            notifications_push?: boolean;
+            notifications_in_app?: boolean;
+        },
+        accessToken?: string,
+    ) {
+        const supabase = this.supabaseService.getClient(accessToken);
+
+        // Upsert preferences
+        const { data, error } = await supabase
+            .from('user_preferences')
+            .upsert(
+                {
+                    user_id: userId,
+                    ...preferences,
+                    updated_at: new Date().toISOString(),
+                },
+                { onConflict: 'user_id' },
+            )
+            .select()
+            .single();
+
+        if (error) {
+            throw new Error(`Failed to update preferences: ${error.message}`);
+        }
+
+        return data;
+    }
+
     async findAllUsers(page: number = 1, limit: number = 10, search?: string, status?: string) {
         const supabase = this.supabaseService.getAdminClient();
         const offset = (page - 1) * limit;
