@@ -17,11 +17,11 @@ triggers:
   - create bundle
   - new taskclaw project
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   author: TaskClaw
   category: taskclaw-builder
   domain: orchestration
-  updated: 2026-03-12
+  updated: 2026-03-20
 ---
 
 # TaskClaw Builder
@@ -109,14 +109,43 @@ Ask:
 
 ### Phase 3b: Integration Dependencies
 
-For each board, ask:
-- "What external services or APIs does this board need?" (e.g., X API, Slack, SendGrid, image generation, CRM)
-- "Which are required vs. optional?"
+For each board, determine if it needs external integrations. Ask:
+- "Does this board's AI need to interact with any external services?" (e.g., X API, Slack, SendGrid, image generation, CRM, project management)
+- "Which are required vs. optional for the workflow?"
+- "Are any of these already in the TaskClaw marketplace?" (check the existing catalog first)
+
+**Decision Guide — Does This Board Need an Integration?**
+
+A board needs an integration when:
+- The AI agent must **read from or write to** an external service (e.g., post to X, send emails, query a CRM)
+- A board step **automates** an external action (e.g., publish content, create a ticket)
+- The workflow needs **live data** from an external source (e.g., analytics, project status)
+
+A board does NOT need an integration when:
+- The AI only processes text/data within TaskClaw (drafting, reviewing, classifying)
+- External data is manually pasted by users into task fields
+- The board is purely internal workflow (approvals, reviews, handoffs)
+
+**Two types of board integrations:**
+
+1. **Marketplace integration (existing)**: Reference by slug. The user connects once in Settings → Integrations, then all boards using that slug share the connection.
+   - Check if a definition already exists (e.g., `discord`, `github`, `slack`, `linear`, `notion-source`)
+   - If yes, just reference its slug in the board's `integrations` array
+
+2. **Custom integration (new)**: Define inline in the board bundle. Will be created as a new `integration_definition` during import.
+   - Provide: `slug`, `name`, `description`, `icon`, `required`
+   - Provide: `auth_type` (`api_key`, `oauth2`, or `none`)
+   - Provide: `auth_config` with `key_fields` array (drives the credential form in the IntegrationSetupDialog)
+   - Optionally provide: `setup_guide` (markdown rendered by SetupGuideRenderer), `config_fields` (non-credential settings)
+   - Optionally provide: `categories` (e.g., `['communication']`, `['source']`, or omit for marketplace)
 
 For each integration, define:
-- `slug`, `name`, `description`, `icon` (emoji), `required` (boolean)
-- `setup_guide`: step-by-step setup instructions for the user
-- `config_fields`: credential fields (key, label, type, required, placeholder, help_text)
+- `slug`: unique kebab-case identifier
+- `name`, `description`, `icon` (emoji), `required` (boolean)
+- `auth_type`: `api_key` | `oauth2` | `none`
+- `auth_config`: `{ "key_fields": [{ "key", "label", "type", "required", "placeholder", "help_text" }] }`
+- `setup_guide`: step-by-step markdown instructions (supports ## headings, ### sections, numbered lists, **bold**, `code`, [links](url))
+- `config_fields`: optional non-credential settings (same field schema as key_fields)
 
 Common patterns: Social APIs (X, LinkedIn), Image gen (Nano Banana), Email (SendGrid), Webhooks (Slack, Discord), CRM (HubSpot, Salesforce).
 
@@ -237,17 +266,31 @@ Output **one unified JSON bundle** that can be imported in a single drop:
           "description": "What this service does for the board",
           "icon": "🔌",
           "required": true,
-          "setup_guide": "Step-by-step setup instructions...",
+          "auth_type": "api_key",
+          "auth_config": {
+            "key_fields": [
+              {
+                "key": "api_key",
+                "label": "API Key",
+                "type": "password",
+                "required": true,
+                "placeholder": "xxx_xxxxx",
+                "help_text": "Where to find this key"
+              }
+            ]
+          },
+          "setup_guide": "## How to Connect\n\n1. Go to the service dashboard\n2. Generate an API key\n3. Paste it here",
           "config_fields": [
             {
-              "key": "api_key",
-              "label": "API Key",
-              "type": "password",
-              "required": true,
-              "placeholder": "xxx_xxxxx",
-              "help_text": "Where to find this key"
+              "key": "default_channel",
+              "label": "Default Channel",
+              "type": "text",
+              "required": false,
+              "placeholder": "#general",
+              "help_text": "Optional non-credential setting"
             }
-          ]
+          ],
+          "categories": ["source"]
         }
       ],
       "categories": [

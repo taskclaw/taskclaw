@@ -22,7 +22,7 @@ Unify all three systems into the `integration_definitions` + `integration_connec
 
 ### Database Migrations
 
-Five migrations applied in sequence:
+Six migrations applied in sequence:
 
 | Migration | Purpose |
 |---|---|
@@ -31,6 +31,7 @@ Five migrations applied in sequence:
 | `20260320000003_migrate_comm_tools_data.sql` | Migrated `comm_tool_integrations` rows into `integration_connections` |
 | `20260320000004_migrate_source_credentials.sql` | Extracted credentials from `sources.config`, created `integration_connections`, linked via `connection_id` |
 | `20260320000005_drop_comm_tool_integrations.sql` | Dropped the `comm_tool_integrations` table |
+| `20260320000006_update_comm_tool_definitions.sql` | Added detailed `setup_guide` markdown and optional `config_fields` to Telegram, WhatsApp, and Slack comm tool definitions |
 
 ### Backend Changes
 
@@ -85,6 +86,7 @@ Five migrations applied in sequence:
 - Toggle calls `toggleConnection()` / `createConnection()`
 - Health check calls `checkConnectionHealth()`
 - Clicking card name/icon opens `IntegrationSetupDialog` with test chat
+- Added visible "Configure" button (Settings2 icon) next to toggle switch for discoverability
 
 **IntegrationManager** (`frontend/src/components/integrations/integration-manager.tsx`):
 - Added `excludeCategories?: string[]` prop
@@ -96,6 +98,18 @@ Five migrations applied in sequence:
 
 **Integrations Page** (`frontend/src/app/dashboard/settings/integrations/page.tsx`):
 - Marketplace section now passes `excludeCategories={['communication', 'source']}`
+- `AddSourceDialog` rewritten with 4-step flow: provider selection → `IntegrationSetupDialog` (credentials + test chat) → database/list selection → category assignment
+- Source `createSource` action now accepts optional `connection_id` to link to `integration_connections`
+
+**IntegrationSetupDialog** (`frontend/src/components/integrations/integration-setup-dialog.tsx`):
+- Refactored from two-column layout to tabbed left panel (60%) + test chat right panel (40%)
+- Tabs: "Setup Guide" (rendered markdown), "Settings" (credentials + config fields), "Test" (mobile fallback)
+- Default tab is "Setup Guide" when a guide exists, otherwise "Settings"
+
+**SetupGuideRenderer** (`frontend/src/components/integrations/setup-guide-renderer.tsx`):
+- New component — lightweight markdown-to-JSX parser for setup guides
+- Supports: `##` headings, `###` centered section dividers, `####` sub-headings, numbered lists (circular step badges), bullet lists (with indent support), `**bold**`, `` `code` ``, `[links](url)` with external link icons
+- Used in the "Setup Guide" tab of IntegrationSetupDialog
 
 **Deleted**: `frontend/src/app/dashboard/settings/comm-tools/actions.ts`
 
@@ -103,10 +117,12 @@ Five migrations applied in sequence:
 
 ```
 integration_definitions (catalog)
-  ├── slug, name, description
+  ├── slug, name, description, icon
   ├── categories: text[]  (e.g. ['communication'], ['source'])
   ├── auth_type: 'api_key' | 'oauth2' | 'none'
-  ├── key_fields: jsonb  (credential form schema)
+  ├── auth_config: jsonb  (contains key_fields array for credential form)
+  ├── config_fields: jsonb  (non-credential settings)
+  ├── setup_guide: text  (markdown rendered by SetupGuideRenderer)
   └── skill_id → skills.id  (linked AI instructions)
 
 integration_connections (user instances)

@@ -50,26 +50,45 @@ VALUES (
 
 -- 2. Create the integration definition
 INSERT INTO public.integration_definitions (
-  id, slug, name, description, categories, auth_type,
-  key_fields, skill_id, is_system
+  id, slug, name, description, icon, categories, auth_type,
+  auth_config, config_fields, setup_guide, skill_id, is_system
 ) VALUES (
   'b1000000-0000-0000-0000-000000000099',
   'jira-source',                          -- unique slug
   'Jira',
   'Sync tasks from Jira projects',
+  '🎯',                                   -- emoji icon
   '{source}',                             -- categories: 'source', 'communication', or other
   'api_key',                              -- 'api_key', 'oauth2', or 'none'
-  '[
-    {"key": "api_key", "label": "API Token", "type": "password", "required": true, "placeholder": "Your Jira API token"},
-    {"key": "email", "label": "Email", "type": "text", "required": true, "placeholder": "you@company.com"},
-    {"key": "domain", "label": "Jira Domain", "type": "text", "required": true, "placeholder": "yourcompany.atlassian.net"}
-  ]'::jsonb,
+  '{
+    "key_fields": [
+      {"key": "api_key", "label": "API Token", "type": "password", "required": true, "placeholder": "Your Jira API token"},
+      {"key": "email", "label": "Email", "type": "text", "required": true, "placeholder": "you@company.com"},
+      {"key": "domain", "label": "Jira Domain", "type": "text", "required": true, "placeholder": "yourcompany.atlassian.net"}
+    ]
+  }'::jsonb,
+  '[]'::jsonb,                            -- config_fields (non-credential settings)
+  $guide$## Setup Guide: Jira
+
+### Step 1: Get API Credentials
+1. Log into your Atlassian account at **cloud.atlassian.com**
+2. Go to **Account Settings** → **Security** → **API Tokens**
+3. Click **Create API Token**, name it "TaskClaw", and copy the token
+
+### Step 2: Connect in TaskClaw
+1. Paste your **API Token**, **email**, and **Jira domain** in the fields
+2. Click **Save & Connect**
+3. Test the connection using the chat on the right$guide$,
   'a1000000-0000-0000-0000-000000000099',  -- links to the skill above
   true
 );
 ```
 
-The `key_fields` JSON schema drives the **IntegrationSetupDialog** UI -- each field is rendered as an input in the credentials form. The `type` field supports `text`, `password`, `url`, and `textarea`.
+The `auth_config` column contains a JSON object with a `key_fields` array. Each field in `key_fields` drives the **IntegrationSetupDialog** credentials form — rendered as inputs in the "Settings" tab. The `type` field supports `text`, `password`, `url`, `textarea`, and `number`.
+
+The `setup_guide` column contains markdown rendered by `SetupGuideRenderer` in the "Setup Guide" tab. It supports `##` headings, `###` section dividers, numbered lists (with step badges), bullets, `**bold**`, `` `code` ``, and `[links](url)`.
+
+The `config_fields` column stores optional non-credential settings (e.g., default channel, project ID) with the same field schema as `key_fields`.
 
 For **non-source integrations** (marketplace or communication tools), you can stop here -- no adapter code is needed. The definition + skill + setup dialog + test chat is all that's required.
 

@@ -1,10 +1,10 @@
 # AI-First Agent Access Layer — Progress
 
 ## Status
-- **Project:** AI-First Agent Access Layer
+- **Project:** AI-First Agent Access Layer + Integration Unification
 - **Started:** 2026-03-19
-- **Features:** 32 / 40 completed
-- **Last session:** 2026-03-19
+- **Features:** 54 / 54 completed
+- **Last session:** 2026-03-20
 - **Current blocker:** none
 
 ## Phases
@@ -75,4 +75,38 @@
   - API key takes priority when both are provided
 - Both NestJS and MCP builds compile cleanly
 
-## All 6 backend phases complete. 32/40 features done (remaining 8 are frontend/docs, already completed).
+## All 6 backend phases complete. 40/40 Agent Access Layer features done.
+
+### 2026-03-20 — Integration Unification (F041-F054)
+
+Unified all three integration systems (Marketplace, Communication Tools, Task Sources) into a single normalized model using `integration_definitions` + `integration_connections` tables.
+
+**Database (6 migrations):**
+- Schema: `connection_id` FK on `sources`, health monitoring columns on `integration_connections`
+- Seeded 5 system definitions: `notion-source`, `clickup-source`, `telegram-comm`, `whatsapp-comm`, `slack-comm`
+- Data migration: `comm_tool_integrations` → `integration_connections`, source credentials → connections
+- Dropped `comm_tool_integrations` table
+- Updated comm tool definitions with detailed setup guides + config fields
+
+**Backend:**
+- Extended `IntegrationsService` with category queries, toggle, health check, credentials decryption, 60s cron
+- New controller endpoints: `POST toggle`, `POST health-check`, `GET ?category=`
+- Updated `ConversationsService` to use `IntegrationsService` instead of `CommToolsService`
+- Updated `SyncService` to read credentials from `integration_connections` when `connection_id` set
+- Deleted entire `comm-tools/` module
+
+**Frontend:**
+- New server actions: `toggleConnection`, `checkConnectionHealth`, `getConnectionsByCategory`, `getDefinitionsByCategory`
+- `CommToolsSection` full rewrite using unified connections + "Configure" button
+- `IntegrationManager/Catalog` category filtering (`excludeCategories` prop)
+- `AddSourceDialog` 4-step flow: provider → IntegrationSetupDialog → database → category
+- `SetupGuideRenderer` — markdown-to-JSX parser for setup guides
+- `IntegrationSetupDialog` — tabbed layout (Setup Guide | Settings | Test) + test chat
+
+**Skills & Documentation:**
+- Updated `taskclaw-builder` skill Phase 3b with unified integration system awareness
+- Created `/new-connector` dev skill for building new marketplace integrations
+- Updated `adding-an-integration.md` — fixed `auth_config` reference, added setup_guide docs
+- Updated `integration-unification.md` — added migration 6, new components, corrected data model
+
+## All 54 features complete (40 Agent Access Layer + 14 Integration Unification).

@@ -1,8 +1,8 @@
 {
-  "project": "AI-First Agent Access Layer",
+  "project": "AI-First Agent Access Layer + Integration Unification",
   "created": "2026-03-19",
-  "total": 40,
-  "completed": 32,
+  "total": 54,
+  "completed": 54,
   "features": [
     {
       "id": "F001",
@@ -403,6 +403,146 @@
       "depends_on": ["F039"],
       "test": "CLAUDE.md reflects all new modules, settings nav shows API Keys and Webhooks",
       "completed_at": "2026-03-19"
+    },
+    {
+      "id": "F041",
+      "name": "Integration unification schema migration",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Add connection_id FK to sources, health monitoring columns to integration_connections. Seed 5 new system definitions (notion-source, clickup-source, telegram-comm, whatsapp-comm, slack-comm) with linked skills. Migrate comm_tool_integrations and source credentials data. Drop comm_tool_integrations table.",
+      "depends_on": [],
+      "test": "All 5 migrations applied, sources.connection_id exists, health columns exist, comm_tool_integrations dropped",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F042",
+      "name": "Backend: IntegrationsService health check + toggle + category endpoints",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Extend IntegrationsService with findByCategory, toggleConnection, checkConnectionHealth, getAvailableCommTools, getConnectionCredentialsDecrypted, 60s health check cron. Add controller endpoints for toggle, health-check, and category-filtered queries.",
+      "depends_on": ["F041"],
+      "test": "POST toggle/health-check work, GET with ?category= filters correctly, cron runs",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F043",
+      "name": "Backend: Update conversations, sources, sync to use unified integrations",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Replace CommToolsService in ConversationsService with IntegrationsService.getAvailableCommTools(). Update SyncService to read credentials from integration_connections when connection_id set. Update SourcesService to accept connection_id. Delete entire comm-tools module.",
+      "depends_on": ["F042"],
+      "test": "Board system prompt shows comm tools from unified table, sync reads credentials from connection, backward compat works",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F044",
+      "name": "Frontend: Unified integration actions + types + CommToolsSection rewrite",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Add toggleConnection, checkConnectionHealth, getConnectionsByCategory, getDefinitionsByCategory server actions. Add health monitoring fields to IntegrationConnection type. Rewrite CommToolsSection to use unified integration_connections.",
+      "depends_on": ["F042"],
+      "test": "Comm tools section loads from unified tables, toggle/health-check work, setup dialog opens",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F045",
+      "name": "Frontend: IntegrationManager category filtering",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Add excludeCategories prop to IntegrationManager and IntegrationCatalog. Marketplace section excludes communication and source categories.",
+      "depends_on": ["F044"],
+      "test": "Comm tools and sources don't appear in marketplace section, category filter dropdown updated",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F046",
+      "name": "Frontend: AddSourceDialog rewrite with IntegrationSetupDialog",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Rewrite AddSourceDialog to 4-step flow: provider selection → IntegrationSetupDialog (credentials + test chat) → database/list selection → category assignment. Source createSource action accepts connection_id.",
+      "depends_on": ["F044"],
+      "test": "Adding a source opens IntegrationSetupDialog, creates connection, then continues to database selection",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F047",
+      "name": "Frontend: CommToolCard Configure button",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Add visible Configure button with Settings2 icon next to toggle switch in CommToolCard for better discoverability of the setup dialog.",
+      "depends_on": ["F044"],
+      "test": "Configure button visible on comm tool cards, clicking opens IntegrationSetupDialog",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F048",
+      "name": "Comm tool definitions: setup guides and config fields",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Migration to add detailed setup_guide markdown and optional config_fields to Telegram, WhatsApp, and Slack comm tool definitions. Guides cover external service setup, OpenClaw configuration, and TaskClaw connection.",
+      "depends_on": ["F041"],
+      "test": "Setup guide tab renders formatted content for all 3 comm tools, config fields appear in settings tab",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F049",
+      "name": "SetupGuideRenderer component",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Create SetupGuideRenderer: lightweight markdown-to-JSX parser for setup guides. Supports ## headings, ### section dividers, numbered lists with step badges, bullets, **bold**, `code`, [links](url) with ExternalLink icons.",
+      "depends_on": [],
+      "test": "Setup guides render with styled headings, numbered steps, code chips, and clickable links",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F050",
+      "name": "IntegrationSetupDialog tabs refactor",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Refactor IntegrationSetupDialog from two-column layout to tabbed left panel (60%) + test chat right panel (40%). Tabs: Setup Guide (SetupGuideRenderer), Settings (credentials + config), Test (mobile fallback).",
+      "depends_on": ["F049"],
+      "test": "Dialog shows tabbed interface, guide tab renders markdown, settings tab has credential fields, test chat in right panel",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F051",
+      "name": "Update taskclaw-builder skill with integration awareness",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Update Phase 3b in taskclaw-builder SKILL.md to reference unified integration system, add decision guide for when boards need integrations, update JSON output format with auth_config/auth_type/categories fields.",
+      "depends_on": [],
+      "test": "Skill guides users through integration decisions, JSON output uses correct auth_config structure",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F052",
+      "name": "Create new-connector dev skill",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Create /new-connector skill to guide developers through creating new marketplace integrations: discovery, definition design, migration generation, optional source adapter, verification.",
+      "depends_on": [],
+      "test": "Skill appears in available skills list, guides through full integration creation flow",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F053",
+      "name": "Update adding-an-integration.md documentation",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Fix Step 0 SQL example to use auth_config column (with nested key_fields) instead of deprecated key_fields column. Add setup_guide, config_fields, icon to example. Document SetupGuideRenderer markdown format.",
+      "depends_on": [],
+      "test": "Documentation SQL example matches actual database schema, all column names correct",
+      "completed_at": "2026-03-20"
+    },
+    {
+      "id": "F054",
+      "name": "Update integration-unification.md implementation doc",
+      "group": "integration-unification",
+      "status": "pass",
+      "spec": "Add migration 6 (setup guides), SetupGuideRenderer component, tabs refactor, AddSourceDialog rewrite, Configure button to implementation doc. Fix data model to show auth_config instead of key_fields.",
+      "depends_on": [],
+      "test": "Implementation doc reflects all 6 migrations and all frontend changes accurately",
+      "completed_at": "2026-03-20"
     }
   ]
 }
