@@ -3,7 +3,7 @@
 import { getAuthToken, isTokenExpired } from '@/lib/auth'
 import { cookies } from 'next/headers'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
 
 async function getAuthHeaders() {
     const token = await getAuthToken()
@@ -30,8 +30,8 @@ export async function createCheckoutSession(planId: string) {
     const accountId = await getActiveAccountId()
     if (!accountId) return { error: 'No active account' }
 
-    const successUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/settings/billing?checkout=success`
-    const cancelUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/settings/billing?checkout=canceled`
+    const successUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3002'}/dashboard/settings/billing?checkout=success`
+    const cancelUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3002'}/dashboard/settings/billing?checkout=canceled`
 
     try {
         const res = await fetch(`${API_URL}/stripe/checkout`, {
@@ -68,7 +68,7 @@ export async function createPortalSession() {
     const accountId = await getActiveAccountId()
     if (!accountId) return { error: 'No active account' }
 
-    const returnUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/settings/billing`
+    const returnUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3002'}/dashboard/settings/billing`
 
     try {
         const res = await fetch(`${API_URL}/stripe/portal`, {

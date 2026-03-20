@@ -6,7 +6,7 @@ export async function getSystemSettings() {
     const token = await getAuthToken()
     if (!token) return null
 
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/system-settings`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'}/system-settings`, {
         headers: {
             Authorization: `Bearer ${token}`,
         },
@@ -29,7 +29,7 @@ export async function updateSystemSettings(settings: {
     const token = await getAuthToken()
     if (!token) return { error: 'Unauthorized' }
 
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/system-settings`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'}/system-settings`, {
         method: 'PATCH',
         headers: {
             'Content-Type': 'application/json',

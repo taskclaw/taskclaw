@@ -6,11 +6,13 @@ import {
   UseGuards,
   Req,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SyncService } from './sync.service';
 import { AuthGuard } from '../common/guards/auth.guard';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 
+@ApiTags('Sync')
 @Controller('accounts/:accountId/sync')
 @UseGuards(AuthGuard)
 export class SyncController {

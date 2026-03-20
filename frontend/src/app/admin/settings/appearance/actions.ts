@@ -25,7 +25,7 @@ export async function updateGlobalTheme(
     const apiUrl =
       process.env.NEXT_PUBLIC_API_URL ||
       process.env.API_URL ||
-      "http://localhost:3001";
+      "http://localhost:3003";
     const res = await fetch(`${apiUrl}/system-settings`, {
       method: "PATCH",
       headers: {

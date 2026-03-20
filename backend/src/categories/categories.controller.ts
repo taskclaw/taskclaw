@@ -9,12 +9,14 @@ import {
   UseGuards,
   Req,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
 import { PlanLimitGuard, PlanResource } from '../common/guards/plan-limit.guard';
 
+@ApiTags('Categories')
 @Controller('accounts/:accountId/categories')
 @UseGuards(AuthGuard)
 export class CategoriesController {

@@ -20,6 +20,13 @@ export interface Board {
     color: string | null
     icon: string | null
   } | null
+  orchestrator_category_id: string | null
+  orchestrator_category?: {
+    id: string
+    name: string
+    color: string | null
+    icon: string | null
+  } | null
   board_steps?: BoardStep[]
   task_count?: number
   created_at: string
@@ -92,6 +99,7 @@ export interface BoardManifest {
   version: string
   steps: ManifestStep[]
   settings?: Record<string, any>
+  integrations?: ManifestIntegration[]
 }
 
 export interface AgentDashboardItem {
@@ -120,4 +128,31 @@ export interface ManifestStep {
   fields?: { inputs: any[]; outputs: any[] }
   on_complete?: string
   on_error?: string | null
+}
+
+export interface IntegrationConfigField {
+  key: string
+  label: string
+  type: 'text' | 'password' | 'url' | 'number' | 'boolean'
+  required: boolean
+  placeholder?: string
+  help_text?: string
+}
+
+export interface ManifestIntegration {
+  slug: string
+  name: string
+  description: string
+  icon: string
+  required: boolean
+  setup_guide: string
+  config_fields: IntegrationConfigField[]
+}
+
+export interface IntegrationStatus extends ManifestIntegration {
+  enabled: boolean
+  config: Record<string, string>
+  has_config: boolean
+  last_tested_at: string | null
+  test_status: 'success' | 'failed' | 'untested'
 }

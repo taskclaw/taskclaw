@@ -15,6 +15,7 @@ import {
     AlertCircle,
     Trash2,
     ChevronDown,
+    ChevronRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTaskStore } from '@/hooks/use-task-store'
@@ -27,6 +28,7 @@ import type { BoardStep } from '@/types/board'
 import { cn } from '@/lib/utils'
 import { TaskAIChat } from './task-ai-chat'
 import { MarkdownEditor } from './markdown-editor'
+import { SchemaFieldRenderer } from '@/components/boards/schema-field-renderer'
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -64,7 +66,6 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
     const moveTaskToStep = useMoveTaskToStep()
     const pomodoroStore = usePomodoroStore()
 
-    const [showAIChat, setShowAIChat] = useState(false)
     const [editingTitle, setEditingTitle] = useState(false)
     const [titleValue, setTitleValue] = useState('')
     const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -74,7 +75,6 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
 
     // Reset state when switching tasks
     useEffect(() => {
-        setShowAIChat(false)
         setEditingTitle(false)
         setShowDeleteDialog(false)
     }, [selectedTaskId])
@@ -159,6 +159,13 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
         setShowDeleteDialog(false)
     }
 
+    const handleCardDataChange = (stepKey: string, fieldKey: string, value: any) => {
+        if (!selectedTaskId || !task) return
+        const existingStepData = task.card_data?.[stepKey] || {}
+        const updatedStepData = { ...existingStepData, [fieldKey]: value }
+        updateTask.mutate({ id: selectedTaskId, card_data: { [stepKey]: updatedStepData } })
+    }
+
     // Resolve category
     const category = categories.find((c) => c.id === task?.category_id)
     const categoryColor = category?.color || '#71717a'
@@ -167,7 +174,11 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
     const priorityColor = task?.priority
         ? PRIORITY_COLORS[task.priority]
         : '#71717a'
-    const currentBoardStep = boardSteps?.find((s) => s.name === task?.status || s.id === (task as any)?.current_step_id)
+    const currentBoardStep = boardSteps?.find((s) => s.name === task?.status || s.id === task?.current_step_id)
+    const currentStepSchema = currentBoardStep?.input_schema || []
+    const currentStepKey = currentBoardStep?.step_key
+    const taskCardData = task?.card_data || {}
+    const currentStepData = currentStepKey ? (taskCardData[currentStepKey] || {}) : {}
     const statusColor = currentBoardStep?.color
         || (task?.status ? STATUS_COLORS[task.status] : '#71717a')
         || '#71717a'
@@ -184,11 +195,11 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
                 onClick={() => setSelectedTaskId(null)}
             />
             <aside
-                className="fixed top-0 right-0 h-full w-[440px] max-w-[90vw] flex flex-col bg-card border-l border-border z-50 shadow-2xl transition-transform duration-200 ease-out"
+                className="fixed top-0 right-0 h-full w-[60vw] max-w-[1200px] min-w-[600px] flex flex-col bg-card border-l border-border z-50 shadow-2xl"
                 style={{ animation: 'slideInRight 0.2s ease-out' }}
             >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 z-10 bg-card/90 backdrop-blur-sm">
+            <div className="flex items-center justify-between px-6 py-3 border-b border-border sticky top-0 z-10 bg-card/90 backdrop-blur-sm">
                 <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 px-2.5 py-1 bg-accent/50 rounded border border-border">
                         <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
@@ -218,455 +229,550 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
                     Loading...
                 </div>
             ) : (
-                <>
-                    {/* Content */}
-                    <div className="flex-1 overflow-y-auto min-h-0">
-                        {/* Title (click to edit) */}
-                        <div className="px-8 pt-6 pb-2 group/title">
-                            {editingTitle ? (
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        ref={titleInputRef}
-                                        value={titleValue}
-                                        onChange={(e) => setTitleValue(e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') saveTitle()
-                                            if (e.key === 'Escape') {
-                                                setTitleValue(task.title)
-                                                setEditingTitle(false)
-                                            }
-                                        }}
-                                        onBlur={saveTitle}
-                                        className="flex-1 text-xl font-bold leading-tight bg-accent/50 border border-primary/30 rounded-lg px-3 py-1.5 outline-none"
-                                    />
-                                </div>
-                            ) : (
-                                <h2
-                                    onClick={() => setEditingTitle(true)}
-                                    className="text-xl font-bold leading-tight cursor-pointer hover:text-primary/80 transition-colors flex items-center gap-2"
-                                >
-                                    {task.title}
-                                    <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/title:opacity-100 transition-opacity" />
-                                </h2>
-                            )}
-                        </div>
-
-                        {/* Metadata */}
-                        <div className="px-8 py-4 grid grid-cols-2 gap-y-4 gap-x-8 border-b border-border">
-                            {/* Status - clickable dropdown */}
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                    Status
-                                </label>
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <button
-                                            className="flex items-center gap-2 w-fit px-2 py-1 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity"
-                                            style={{
-                                                color: statusColor,
-                                                backgroundColor: `${statusColor}20`,
-                                                border: `1px solid ${statusColor}30`,
+                <div className="flex-1 flex min-h-0">
+                    {/* ═══ LEFT COLUMN: Task Info ═══ */}
+                    <div className="flex-1 flex flex-col min-w-0 border-r border-border">
+                        <div className="flex-1 overflow-y-auto min-h-0">
+                            {/* Title (click to edit) */}
+                            <div className="px-6 pt-5 pb-2 group/title">
+                                {editingTitle ? (
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            ref={titleInputRef}
+                                            value={titleValue}
+                                            onChange={(e) => setTitleValue(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') saveTitle()
+                                                if (e.key === 'Escape') {
+                                                    setTitleValue(task.title)
+                                                    setEditingTitle(false)
+                                                }
                                             }}
-                                        >
-                                            <span
-                                                className="w-1.5 h-1.5 rounded-full"
-                                                style={{ backgroundColor: statusColor }}
-                                            />
-                                            {task.status || 'To-Do'}
-                                            <ChevronDown className="w-3 h-3 opacity-60" />
-                                        </button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="start" className="min-w-[160px]">
-                                        {boardSteps ? (
-                                            boardSteps.map((step) => {
-                                                const stepColor = step.color || '#71717a'
-                                                return (
-                                                    <DropdownMenuItem
-                                                        key={step.id}
-                                                        onClick={() => handleStatusChange(step.name, step.id)}
-                                                        className={cn(
-                                                            'flex items-center gap-2 text-xs cursor-pointer',
-                                                            task.status === step.name && 'bg-accent',
-                                                        )}
-                                                    >
+                                            onBlur={saveTitle}
+                                            className="flex-1 text-lg font-bold leading-tight bg-accent/50 border border-primary/30 rounded-lg px-3 py-1.5 outline-none"
+                                        />
+                                    </div>
+                                ) : (
+                                    <h2
+                                        onClick={() => setEditingTitle(true)}
+                                        className="text-lg font-bold leading-tight cursor-pointer hover:text-primary/80 transition-colors flex items-center gap-2"
+                                    >
+                                        {task.title}
+                                        <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/title:opacity-100 transition-opacity" />
+                                    </h2>
+                                )}
+                            </div>
+
+                            {/* Metadata */}
+                            <div className="px-6 py-3 grid grid-cols-2 gap-y-3 gap-x-6 border-b border-border">
+                                {/* Status - clickable dropdown */}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                        Status
+                                    </label>
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <button
+                                                className="flex items-center gap-2 w-fit px-2 py-1 rounded text-xs font-semibold cursor-pointer hover:opacity-80 transition-opacity"
+                                                style={{
+                                                    color: statusColor,
+                                                    backgroundColor: `${statusColor}20`,
+                                                    border: `1px solid ${statusColor}30`,
+                                                }}
+                                            >
+                                                <span
+                                                    className="w-1.5 h-1.5 rounded-full"
+                                                    style={{ backgroundColor: statusColor }}
+                                                />
+                                                {task.status || 'To-Do'}
+                                                <ChevronDown className="w-3 h-3 opacity-60" />
+                                            </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="start" className="min-w-[160px]">
+                                            {boardSteps ? (
+                                                boardSteps.map((step) => {
+                                                    const stepColor = step.color || '#71717a'
+                                                    return (
+                                                        <DropdownMenuItem
+                                                            key={step.id}
+                                                            onClick={() => handleStatusChange(step.name, step.id)}
+                                                            className={cn(
+                                                                'flex items-center gap-2 text-xs cursor-pointer',
+                                                                task.status === step.name && 'bg-accent',
+                                                            )}
+                                                        >
+                                                            <span
+                                                                className="w-2 h-2 rounded-full shrink-0"
+                                                                style={{ backgroundColor: stepColor }}
+                                                            />
+                                                            {step.name}
+                                                        </DropdownMenuItem>
+                                                    )
+                                                })
+                                            ) : (
+                                                KANBAN_COLUMNS.map((status) => {
+                                                    const color = STATUS_COLORS[status] || '#71717a'
+                                                    return (
+                                                        <DropdownMenuItem
+                                                            key={status}
+                                                            onClick={() => handleStatusChange(status)}
+                                                            className={cn(
+                                                                'flex items-center gap-2 text-xs cursor-pointer',
+                                                                task.status === status && 'bg-accent',
+                                                            )}
+                                                        >
+                                                            <span
+                                                                className="w-2 h-2 rounded-full shrink-0"
+                                                                style={{ backgroundColor: color }}
+                                                            />
+                                                            {status}
+                                                        </DropdownMenuItem>
+                                                    )
+                                                })
+                                            )}
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </div>
+
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                        Due Date
+                                    </label>
+                                    <div className="flex items-center gap-2 text-xs font-medium">
+                                        <Calendar className="w-3.5 h-3.5" />
+                                        {task.due_date
+                                            ? new Date(task.due_date).toLocaleDateString('en-US', {
+                                                month: 'short',
+                                                day: 'numeric',
+                                                year: 'numeric',
+                                            })
+                                            : 'No date'}
+                                    </div>
+                                </div>
+
+                                {/* Agent - clickable dropdown */}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                        Agent
+                                    </label>
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <button
+                                                className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded font-bold uppercase cursor-pointer hover:opacity-80 transition-opacity"
+                                                style={{
+                                                    color: categoryColor,
+                                                    backgroundColor: `${categoryColor}15`,
+                                                }}
+                                            >
+                                                {categoryName}
+                                                <ChevronDown className="w-3 h-3 opacity-60" />
+                                            </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="start" className="min-w-[160px]">
+                                            <DropdownMenuItem
+                                                onClick={() => handleCategoryChange(null)}
+                                                className={cn(
+                                                    'flex items-center gap-2 text-xs cursor-pointer',
+                                                    !task.category_id && 'bg-accent',
+                                                )}
+                                            >
+                                                <span className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/40" />
+                                                None
+                                            </DropdownMenuItem>
+                                            {categories.map((cat) => (
+                                                <DropdownMenuItem
+                                                    key={cat.id}
+                                                    onClick={() => handleCategoryChange(cat.id)}
+                                                    className={cn(
+                                                        'flex items-center gap-2 text-xs cursor-pointer',
+                                                        task.category_id === cat.id && 'bg-accent',
+                                                    )}
+                                                >
+                                                    <span
+                                                        className="w-2 h-2 rounded-full shrink-0"
+                                                        style={{ backgroundColor: cat.color || '#71717a' }}
+                                                    />
+                                                    {cat.name}
+                                                </DropdownMenuItem>
+                                            ))}
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </div>
+
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                        Priority
+                                    </label>
+                                    <div
+                                        className="flex items-center gap-1 text-xs px-2 py-1 rounded w-fit"
+                                        style={{
+                                            color: priorityColor,
+                                            backgroundColor: `${priorityColor}15`,
+                                            border: `1px solid ${priorityColor}20`,
+                                        }}
+                                    >
+                                        {task.priority || 'None'}
+                                    </div>
+                                </div>
+
+                                {/* Agent Override */}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                        Agent
+                                    </label>
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <button
+                                                className={cn(
+                                                    'flex items-center gap-1.5 text-xs px-2 py-1 rounded w-fit cursor-pointer hover:opacity-80 transition-opacity',
+                                                    task.override_category_id
+                                                        ? 'bg-primary/10 text-primary border border-primary/20'
+                                                        : 'bg-accent/50 text-muted-foreground border border-border',
+                                                )}
+                                            >
+                                                <Bot className="w-3 h-3" />
+                                                {task.override_category?.name || task.categories?.name || 'Auto'}
+                                                {task.override_category_id && (
+                                                    <span className="text-[9px] bg-primary/20 px-1 rounded">Card</span>
+                                                )}
+                                                <ChevronDown className="w-3 h-3 opacity-60" />
+                                            </button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="start" className="min-w-[180px]">
+                                            <DropdownMenuItem
+                                                onClick={() => handleAgentOverride(null)}
+                                                className={cn(
+                                                    'flex items-center gap-2 text-xs cursor-pointer',
+                                                    !task.override_category_id && 'bg-accent',
+                                                )}
+                                            >
+                                                <span className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/40" />
+                                                Auto (inherit from column/board)
+                                            </DropdownMenuItem>
+                                            {categories.map((cat) => (
+                                                <DropdownMenuItem
+                                                    key={cat.id}
+                                                    onClick={() => handleAgentOverride(cat.id)}
+                                                    className={cn(
+                                                        'flex items-center gap-2 text-xs cursor-pointer',
+                                                        task.override_category_id === cat.id && 'bg-accent',
+                                                    )}
+                                                >
+                                                    <span
+                                                        className="w-2 h-2 rounded-full shrink-0"
+                                                        style={{ backgroundColor: cat.color || '#71717a' }}
+                                                    />
+                                                    {cat.name}
+                                                </DropdownMenuItem>
+                                            ))}
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </div>
+
+                                {task.time_spent !== null && task.time_spent > 0 && (
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                            Time Spent
+                                        </label>
+                                        <span className="text-xs">
+                                            {task.time_spent.toFixed(1)}h
+                                        </span>
+                                    </div>
+                                )}
+
+                                {taskUsage && taskUsage.tokens > 0 && (
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                            AI Usage
+                                        </label>
+                                        <div className="flex items-center gap-2 text-xs">
+                                            <span className="text-muted-foreground">
+                                                <Coins className="w-3 h-3 inline mr-1" />
+                                                {taskUsage.tokens.toLocaleString()} tokens
+                                            </span>
+                                            {taskUsage.cost > 0 && (
+                                                <span className="text-muted-foreground font-mono">
+                                                    ~${taskUsage.cost < 0.01
+                                                        ? taskUsage.cost.toFixed(4)
+                                                        : taskUsage.cost.toFixed(2)}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Card data fields — all steps with schemas or data */}
+                            {boardSteps && boardSteps.filter((s) =>
+                                (s.input_schema?.length > 0) || (s.output_schema?.length > 0) || taskCardData[s.step_key]
+                            ).length > 0 && (
+                                <div className="px-6 py-3 space-y-1 border-b border-border">
+                                    {boardSteps
+                                        .filter((s) => (s.input_schema?.length > 0) || (s.output_schema?.length > 0) || taskCardData[s.step_key])
+                                        .map((s) => {
+                                            const isCurrent = s.step_key === currentStepKey
+                                            const stepData = taskCardData[s.step_key] || {}
+                                            const hasInputSchema = s.input_schema?.length > 0
+                                            const hasOutputSchema = s.output_schema?.length > 0
+                                            const stepColor = s.color || '#71717a'
+                                            const inputKeys = new Set(s.input_schema?.map((f) => f.key) || [])
+                                            const outputKeys = new Set(s.output_schema?.map((f) => f.key) || [])
+
+                                            return (
+                                                <details
+                                                    key={s.step_key}
+                                                    open={isCurrent}
+                                                    className="group"
+                                                >
+                                                    <summary className="cursor-pointer flex items-center gap-2 py-2.5 hover:bg-accent/30 -mx-2 px-2 rounded transition-colors">
+                                                        <ChevronRight className="w-4 h-4 text-muted-foreground transition-transform group-open:rotate-90" />
                                                         <span
-                                                            className="w-2 h-2 rounded-full shrink-0"
+                                                            className="w-2.5 h-2.5 rounded-full shrink-0"
                                                             style={{ backgroundColor: stepColor }}
                                                         />
-                                                        {step.name}
-                                                    </DropdownMenuItem>
-                                                )
-                                            })
-                                        ) : (
-                                            KANBAN_COLUMNS.map((status) => {
-                                                const color = STATUS_COLORS[status] || '#71717a'
-                                                return (
-                                                    <DropdownMenuItem
-                                                        key={status}
-                                                        onClick={() => handleStatusChange(status)}
-                                                        className={cn(
-                                                            'flex items-center gap-2 text-xs cursor-pointer',
-                                                            task.status === status && 'bg-accent',
+                                                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
+                                                            {s.name}
+                                                        </span>
+                                                        {isCurrent && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                                                                Current
+                                                            </span>
                                                         )}
-                                                    >
-                                                        <span
-                                                            className="w-2 h-2 rounded-full shrink-0"
-                                                            style={{ backgroundColor: color }}
-                                                        />
-                                                        {status}
-                                                    </DropdownMenuItem>
-                                                )
-                                            })
-                                        )}
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </div>
+                                                    </summary>
+                                                    <div className="ml-7 pb-4 pt-2 space-y-4">
+                                                        {/* Input fields section */}
+                                                        {(hasInputSchema || Object.keys(stepData).some((k) => inputKeys.has(k))) && (
+                                                            <div className="space-y-2.5">
+                                                                {(hasInputSchema && hasOutputSchema) && (
+                                                                    <p className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest">Input</p>
+                                                                )}
+                                                                {isCurrent && hasInputSchema ? (
+                                                                    s.input_schema.map((field) => (
+                                                                        <SchemaFieldRenderer
+                                                                            key={field.key}
+                                                                            field={field}
+                                                                            value={stepData[field.key]}
+                                                                            onChange={(val) => handleCardDataChange(s.step_key, field.key, val)}
+                                                                            compact
+                                                                        />
+                                                                    ))
+                                                                ) : hasInputSchema ? (
+                                                                    s.input_schema.map((field) => {
+                                                                        const val = stepData[field.key]
+                                                                        if (val === undefined || val === '') return null
+                                                                        return (
+                                                                            <div key={field.key} className="flex gap-2 text-sm">
+                                                                                <span className="text-muted-foreground/60 shrink-0">{field.label}:</span>
+                                                                                <span className="break-words">{String(val)}</span>
+                                                                            </div>
+                                                                        )
+                                                                    })
+                                                                ) : null}
+                                                            </div>
+                                                        )}
 
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                    Due Date
-                                </label>
-                                <div className="flex items-center gap-2 text-xs font-medium">
-                                    <Calendar className="w-3.5 h-3.5" />
-                                    {task.due_date
-                                        ? new Date(task.due_date).toLocaleDateString('en-US', {
-                                            month: 'short',
-                                            day: 'numeric',
-                                            year: 'numeric',
-                                        })
-                                        : 'No date'}
-                                </div>
-                            </div>
+                                                        {/* Output fields section */}
+                                                        {hasOutputSchema && (
+                                                            <div className="space-y-2.5">
+                                                                {(hasInputSchema && hasOutputSchema) && (
+                                                                    <p className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest pt-2 border-t border-border/50">Output</p>
+                                                                )}
+                                                                {s.output_schema.map((field) => {
+                                                                    const val = stepData[field.key]
+                                                                    if (val === undefined || val === '') {
+                                                                        return (
+                                                                            <div key={field.key} className="flex gap-2 text-sm">
+                                                                                <span className="text-muted-foreground/40 shrink-0">{field.label}:</span>
+                                                                                <span className="text-muted-foreground/30 italic">pending</span>
+                                                                            </div>
+                                                                        )
+                                                                    }
+                                                                    return (
+                                                                        <div key={field.key} className="flex gap-2 text-sm">
+                                                                            <span className="text-muted-foreground/60 shrink-0">{field.label}:</span>
+                                                                            <span className="break-words">{typeof val === 'boolean' ? (val ? 'Yes' : 'No') : String(val)}</span>
+                                                                        </div>
+                                                                    )
+                                                                })}
+                                                            </div>
+                                                        )}
 
-                            {/* Agent - clickable dropdown */}
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                    Agent
-                                </label>
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <button
-                                            className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded font-bold uppercase cursor-pointer hover:opacity-80 transition-opacity"
-                                            style={{
-                                                color: categoryColor,
-                                                backgroundColor: `${categoryColor}15`,
-                                            }}
-                                        >
-                                            {categoryName}
-                                            <ChevronDown className="w-3 h-3 opacity-60" />
-                                        </button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="start" className="min-w-[160px]">
-                                        <DropdownMenuItem
-                                            onClick={() => handleCategoryChange(null)}
-                                            className={cn(
-                                                'flex items-center gap-2 text-xs cursor-pointer',
-                                                !task.category_id && 'bg-accent',
-                                            )}
-                                        >
-                                            <span className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/40" />
-                                            None
-                                        </DropdownMenuItem>
-                                        {categories.map((cat) => (
-                                            <DropdownMenuItem
-                                                key={cat.id}
-                                                onClick={() => handleCategoryChange(cat.id)}
-                                                className={cn(
-                                                    'flex items-center gap-2 text-xs cursor-pointer',
-                                                    task.category_id === cat.id && 'bg-accent',
-                                                )}
-                                            >
-                                                <span
-                                                    className="w-2 h-2 rounded-full shrink-0"
-                                                    style={{ backgroundColor: cat.color || '#71717a' }}
-                                                />
-                                                {cat.name}
-                                            </DropdownMenuItem>
-                                        ))}
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </div>
+                                                        {/* No data at all */}
+                                                        {!hasInputSchema && !hasOutputSchema && Object.keys(stepData).length === 0 && (
+                                                            <p className="text-xs text-muted-foreground/40 italic">
+                                                                No data yet
+                                                            </p>
+                                                        )}
 
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                    Priority
-                                </label>
-                                <div
-                                    className="flex items-center gap-1 text-xs px-2 py-1 rounded w-fit"
-                                    style={{
-                                        color: priorityColor,
-                                        backgroundColor: `${priorityColor}15`,
-                                        border: `1px solid ${priorityColor}20`,
-                                    }}
-                                >
-                                    {task.priority || 'None'}
-                                </div>
-                            </div>
-
-                            {/* Agent Override */}
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                    Agent
-                                </label>
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <button
-                                            className={cn(
-                                                'flex items-center gap-1.5 text-xs px-2 py-1 rounded w-fit cursor-pointer hover:opacity-80 transition-opacity',
-                                                task.override_category_id
-                                                    ? 'bg-primary/10 text-primary border border-primary/20'
-                                                    : 'bg-accent/50 text-muted-foreground border border-border',
-                                            )}
-                                        >
-                                            <Bot className="w-3 h-3" />
-                                            {task.override_category?.name || task.categories?.name || 'Auto'}
-                                            {task.override_category_id && (
-                                                <span className="text-[9px] bg-primary/20 px-1 rounded">Card</span>
-                                            )}
-                                            <ChevronDown className="w-3 h-3 opacity-60" />
-                                        </button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="start" className="min-w-[180px]">
-                                        <DropdownMenuItem
-                                            onClick={() => handleAgentOverride(null)}
-                                            className={cn(
-                                                'flex items-center gap-2 text-xs cursor-pointer',
-                                                !task.override_category_id && 'bg-accent',
-                                            )}
-                                        >
-                                            <span className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/40" />
-                                            Auto (inherit from column/board)
-                                        </DropdownMenuItem>
-                                        {categories.map((cat) => (
-                                            <DropdownMenuItem
-                                                key={cat.id}
-                                                onClick={() => handleAgentOverride(cat.id)}
-                                                className={cn(
-                                                    'flex items-center gap-2 text-xs cursor-pointer',
-                                                    task.override_category_id === cat.id && 'bg-accent',
-                                                )}
-                                            >
-                                                <span
-                                                    className="w-2 h-2 rounded-full shrink-0"
-                                                    style={{ backgroundColor: cat.color || '#71717a' }}
-                                                />
-                                                {cat.name}
-                                            </DropdownMenuItem>
-                                        ))}
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </div>
-
-                            {task.time_spent !== null && task.time_spent > 0 && (
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                        Time Spent
-                                    </label>
-                                    <span className="text-xs">
-                                        {task.time_spent.toFixed(1)}h
-                                    </span>
+                                                        {/* Extra data not in schemas (legacy/manual) */}
+                                                        {Object.entries(stepData)
+                                                            .filter(([k]) => !inputKeys.has(k) && !outputKeys.has(k))
+                                                            .map(([k, v]) => (
+                                                                <div key={k} className="flex gap-2 text-sm">
+                                                                    <span className="text-muted-foreground/60 shrink-0">{k}:</span>
+                                                                    <span className="break-words">{String(v)}</span>
+                                                                </div>
+                                                            ))
+                                                        }
+                                                    </div>
+                                                </details>
+                                            )
+                                        })}
                                 </div>
                             )}
 
-                            {taskUsage && taskUsage.tokens > 0 && (
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                                        AI Usage
-                                    </label>
-                                    <div className="flex items-center gap-1.5 text-xs">
-                                        <Coins className="w-3 h-3 text-amber-400" />
-                                        <span className="font-medium">
-                                            {taskUsage.tokens >= 1000
-                                                ? `${(taskUsage.tokens / 1000).toFixed(1)}K`
-                                                : taskUsage.tokens} tok
-                                        </span>
-                                        <span className="text-muted-foreground">
-                                            ({taskUsage.messages} msg{taskUsage.messages !== 1 ? 's' : ''})
-                                        </span>
-                                        {taskUsage.cost > 0 && (
-                                            <span className="text-muted-foreground font-mono">
-                                                ~${taskUsage.cost < 0.01
-                                                    ? taskUsage.cost.toFixed(4)
-                                                    : taskUsage.cost.toFixed(2)}
+                            {/* Description — editable for all tasks, syncs to integration */}
+                            <div className="px-6 py-4 space-y-2 border-b border-border">
+                                <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
+                                    Description
+                                </h4>
+                                {!isManualTask && isContentLoading ? (
+                                    <div className="bg-accent/50 border border-border rounded-xl p-4 text-sm min-h-[80px] flex items-center justify-center text-muted-foreground">
+                                        <div className="flex items-center gap-2">
+                                            <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                                            Loading content...
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <MarkdownEditor
+                                        value={task.notes || (!isManualTask && pageContent ? pageContent : '') || ''}
+                                        onSave={handleSaveNotes}
+                                        placeholder="Click to add a description... (Markdown supported)"
+                                    />
+                                )}
+                            </div>
+
+                            {/* Comments (from Notion/ClickUp) */}
+                            {task.source_id && (
+                                <div className="px-6 py-4 space-y-2 border-b border-border">
+                                    <div className="flex items-center gap-2">
+                                        <MessageCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                                        <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
+                                            Comments
+                                        </h4>
+                                        {comments && comments.length > 0 && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-muted-foreground font-medium">
+                                                {comments.length}
                                             </span>
                                         )}
                                     </div>
-                                </div>
-                            )}
-                        </div>
 
-                        {/* Description — editable for all tasks, syncs to integration */}
-                        <div className="px-8 py-6 space-y-3 border-b border-border">
-                            <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
-                                Description
-                            </h4>
-                            {!isManualTask && isContentLoading ? (
-                                <div className="bg-accent/50 border border-border rounded-xl p-4 text-sm min-h-[80px] flex items-center justify-center text-muted-foreground">
-                                    <div className="flex items-center gap-2">
-                                        <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                                        Loading content...
-                                    </div>
-                                </div>
-                            ) : (
-                                <MarkdownEditor
-                                    value={task.notes || (!isManualTask && pageContent ? pageContent : '') || ''}
-                                    onSave={handleSaveNotes}
-                                    placeholder="Click to add a description... (Markdown supported)"
-                                />
-                            )}
-                        </div>
+                                    {isCommentsLoading ? (
+                                        <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                                            <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                                            Loading comments...
+                                        </div>
+                                    ) : comments && comments.length > 0 ? (
+                                        <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                                            {comments.map((comment) => {
+                                                const isUser = comment.text.startsWith('User: ')
+                                                const isAI = comment.text.startsWith('AI: ')
+                                                const displayText = isUser
+                                                    ? comment.text.slice(6)
+                                                    : isAI
+                                                      ? comment.text.slice(4)
+                                                      : comment.text
 
-                        {/* Comments (from Notion/ClickUp) */}
-                        {task.source_id && (
-                            <div className="px-8 py-6 space-y-3 border-t border-border">
-                                <div className="flex items-center gap-2">
-                                    <MessageCircle className="w-3.5 h-3.5 text-muted-foreground" />
-                                    <h4 className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest">
-                                        Comments
-                                    </h4>
-                                    {comments && comments.length > 0 && (
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-muted-foreground font-medium">
-                                            {comments.length}
-                                        </span>
+                                                return (
+                                                    <div
+                                                        key={comment.id}
+                                                        className={cn(
+                                                            'text-xs rounded-lg px-3 py-2 border',
+                                                            isUser
+                                                                ? 'bg-primary/10 border-primary/20'
+                                                                : isAI
+                                                                  ? 'bg-purple-500/10 border-purple-500/20'
+                                                                  : 'bg-accent/50 border-border',
+                                                        )}
+                                                    >
+                                                        <div className="flex items-center justify-between mb-1">
+                                                            <span className={cn(
+                                                                'text-[10px] font-bold uppercase tracking-wider',
+                                                                isUser ? 'text-primary' : isAI ? 'text-purple-400' : 'text-muted-foreground',
+                                                            )}>
+                                                                {isUser ? 'You' : isAI ? 'AI' : comment.author}
+                                                            </span>
+                                                            <span className="text-[9px] text-muted-foreground/60">
+                                                                {new Date(comment.created_at).toLocaleDateString('en-US', {
+                                                                    month: 'short',
+                                                                    day: 'numeric',
+                                                                    hour: '2-digit',
+                                                                    minute: '2-digit',
+                                                                })}
+                                                            </span>
+                                                        </div>
+                                                        <div className="whitespace-pre-wrap break-words leading-relaxed">
+                                                            {displayText}
+                                                        </div>
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <p className="text-xs text-muted-foreground/50 italic py-2">
+                                            No comments yet
+                                        </p>
                                     )}
                                 </div>
-
-                                {isCommentsLoading ? (
-                                    <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                                        <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                                        Loading comments...
-                                    </div>
-                                ) : comments && comments.length > 0 ? (
-                                    <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                                        {comments.map((comment) => {
-                                            const isUser = comment.text.startsWith('User: ')
-                                            const isAI = comment.text.startsWith('AI: ')
-                                            const displayText = isUser
-                                                ? comment.text.slice(6)
-                                                : isAI
-                                                  ? comment.text.slice(4)
-                                                  : comment.text
-
-                                            return (
-                                                <div
-                                                    key={comment.id}
-                                                    className={cn(
-                                                        'text-xs rounded-lg px-3 py-2 border',
-                                                        isUser
-                                                            ? 'bg-primary/10 border-primary/20'
-                                                            : isAI
-                                                              ? 'bg-purple-500/10 border-purple-500/20'
-                                                              : 'bg-accent/50 border-border',
-                                                    )}
-                                                >
-                                                    <div className="flex items-center justify-between mb-1">
-                                                        <span className={cn(
-                                                            'text-[10px] font-bold uppercase tracking-wider',
-                                                            isUser ? 'text-primary' : isAI ? 'text-purple-400' : 'text-muted-foreground',
-                                                        )}>
-                                                            {isUser ? 'You' : isAI ? 'AI' : comment.author}
-                                                        </span>
-                                                        <span className="text-[9px] text-muted-foreground/60">
-                                                            {new Date(comment.created_at).toLocaleDateString('en-US', {
-                                                                month: 'short',
-                                                                day: 'numeric',
-                                                                hour: '2-digit',
-                                                                minute: '2-digit',
-                                                            })}
-                                                        </span>
-                                                    </div>
-                                                    <div className="whitespace-pre-wrap break-words leading-relaxed">
-                                                        {displayText}
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-                                ) : (
-                                    <p className="text-xs text-muted-foreground/50 italic py-2">
-                                        No comments yet
-                                    </p>
-                                )}
-                            </div>
-                        )}
-
-                        {/* AI Chat Panel (inline, per-task) */}
-                        {showAIChat && task && (
-                            <div className="px-6 pb-4">
-                                <TaskAIChat
-                                    taskId={task.id}
-                                    taskTitle={task.title}
-                                    sourceProvider={task.sources?.provider || null}
-                                    onClose={() => setShowAIChat(false)}
-                                />
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="p-6 bg-card border-t border-border space-y-3">
-                        {/* AI Assistant button */}
-                        <div className="relative group/ai">
-                            <button
-                                onClick={() => aiConfigured && setShowAIChat(!showAIChat)}
-                                disabled={!aiConfigured}
-                                className={cn(
-                                    'w-full py-3 font-bold rounded-xl flex items-center justify-center gap-3 shadow-xl transition-colors text-sm',
-                                    !aiConfigured
-                                        ? 'bg-accent text-muted-foreground border border-border shadow-none cursor-not-allowed opacity-60'
-                                        : showAIChat
-                                        ? 'bg-accent text-muted-foreground border border-border shadow-none hover:bg-accent/80'
-                                        : 'bg-primary text-primary-foreground shadow-primary/20 hover:bg-primary/80',
-                                )}
-                            >
-                                <Bot className="w-4 h-4" />
-                                {showAIChat ? 'Hide AI Assistant' : 'Run AI Assistant'}
-                            </button>
-
-                            {/* Tooltip when disabled */}
-                            {!aiConfigured && (
-                                <div className="absolute -top-12 left-1/2 -translate-x-1/2 opacity-0 group-hover/ai:opacity-100 transition-opacity pointer-events-none z-10">
-                                    <div className="bg-popover border border-border rounded-lg px-3 py-2 shadow-lg flex items-center gap-2 whitespace-nowrap text-xs">
-                                        <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                        <span>
-                                            <a href="/dashboard/settings/ai-provider" className="text-primary underline pointer-events-auto">
-                                                Setup OpenClaw
-                                            </a>
-                                            {' '}first to use AI
-                                        </span>
-                                    </div>
-                                    <div className="w-2 h-2 bg-popover border-b border-r border-border rotate-45 mx-auto -mt-1" />
-                                </div>
                             )}
                         </div>
 
-                        <div className="grid grid-cols-3 gap-3">
-                            <button
-                                onClick={handleStartPomodoro}
-                                className="flex items-center justify-center gap-2 py-2.5 bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 text-[11px] font-bold rounded-lg transition-all text-orange-400"
-                            >
-                                <Zap className="w-3.5 h-3.5" />
-                                POMODORO
-                            </button>
-                            <button
-                                onClick={() => {
-                                    window.location.href = '/dashboard/chat'
-                                }}
-                                className="flex items-center justify-center gap-2 py-2.5 bg-accent/50 border border-border hover:bg-accent text-[11px] font-bold rounded-lg transition-all text-muted-foreground hover:text-foreground"
-                            >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                FULL CHAT
-                            </button>
-                            <button
-                                onClick={handleComplete}
-                                className="flex items-center justify-center gap-2 py-2.5 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 text-[11px] font-bold rounded-lg transition-all text-emerald-400"
-                            >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                COMPLETE
-                            </button>
+                        {/* Left column footer — actions */}
+                        <div className="p-4 bg-card border-t border-border">
+                            <div className="grid grid-cols-3 gap-2">
+                                <button
+                                    onClick={handleStartPomodoro}
+                                    className="flex items-center justify-center gap-2 py-2 bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 text-[11px] font-bold rounded-lg transition-all text-orange-400"
+                                >
+                                    <Zap className="w-3.5 h-3.5" />
+                                    POMODORO
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        window.location.href = '/dashboard/chat'
+                                    }}
+                                    className="flex items-center justify-center gap-2 py-2 bg-accent/50 border border-border hover:bg-accent text-[11px] font-bold rounded-lg transition-all text-muted-foreground hover:text-foreground"
+                                >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    FULL CHAT
+                                </button>
+                                <button
+                                    onClick={handleComplete}
+                                    className="flex items-center justify-center gap-2 py-2 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 text-[11px] font-bold rounded-lg transition-all text-emerald-400"
+                                >
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    COMPLETE
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </>
+
+                    {/* ═══ RIGHT COLUMN: AI Chat ═══ */}
+                    <div className="w-[45%] min-w-[320px] flex flex-col min-h-0">
+                        {aiConfigured ? (
+                            <TaskAIChat
+                                taskId={task.id}
+                                taskTitle={task.title}
+                                taskDescription={task.notes || null}
+                                sourceProvider={task.sources?.provider || null}
+                                onClose={() => {}}
+                            />
+                        ) : (
+                            <div className="flex-1 flex items-center justify-center p-6">
+                                <div className="text-center space-y-3">
+                                    <Bot className="w-10 h-10 text-muted-foreground/30 mx-auto" />
+                                    <p className="text-sm text-muted-foreground">AI Assistant not configured</p>
+                                    <a
+                                        href="/dashboard/settings/ai-provider"
+                                        className="text-xs text-primary underline"
+                                    >
+                                        Setup OpenClaw
+                                    </a>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
             )}
         </aside>
 

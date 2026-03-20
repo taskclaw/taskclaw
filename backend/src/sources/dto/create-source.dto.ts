@@ -21,4 +21,8 @@ export class CreateSourceDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @IsOptional()
+  @IsUUID()
+  connection_id?: string;
 }

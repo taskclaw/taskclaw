@@ -1,16 +1,26 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../../supabase/supabase.service';
+import { ApiKeysService } from '../../auth/api-keys/api-keys.service';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
     constructor(
         private readonly supabaseService: SupabaseService,
         private readonly configService: ConfigService,
+        private readonly apiKeysService: ApiKeysService,
     ) { }
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
         const request = context.switchToHttp().getRequest();
+
+        // Check for API key first (X-API-Key header or Bearer tc_live_*)
+        const apiKey = this.extractApiKey(request);
+        if (apiKey) {
+            return this.validateApiKey(request, apiKey);
+        }
+
+        // Fall back to JWT Bearer token
         const token = this.extractTokenFromHeader(request);
 
         if (!token) {
@@ -59,12 +69,38 @@ export class AuthGuard implements CanActivate {
             throw new UnauthorizedException();
         }
 
-        // Also set the auth token for the supabase client to respect RLS if we were using a service role client,
-        // but here we are just verifying. If we want to forward the user's session to DB calls, 
-        // we might need to recreate the client with the token or use `auth.setSession`.
-        // For now, we just verify the user exists.
+        return true;
+    }
+
+    private async validateApiKey(request: any, apiKey: string): Promise<boolean> {
+        const { userId, accountId, scopes } = await this.apiKeysService.validate(apiKey);
+
+        // Construct a minimal user object compatible with what JWT auth provides
+        request['user'] = { id: userId };
+        request['accessToken'] = null;
+        request['apiKeyAccountId'] = accountId;
+        request['apiKeyScopes'] = scopes;
 
         return true;
+    }
+
+    private extractApiKey(request: any): string | undefined {
+        // Check X-API-Key header
+        const xApiKey = request.headers['x-api-key'];
+        if (xApiKey && typeof xApiKey === 'string' && xApiKey.startsWith('tc_live_')) {
+            return xApiKey;
+        }
+
+        // Check Bearer token with tc_live_ prefix
+        const authHeader = request.headers.authorization;
+        if (authHeader) {
+            const [type, token] = authHeader.split(' ');
+            if (type === 'Bearer' && token?.startsWith('tc_live_')) {
+                return token;
+            }
+        }
+
+        return undefined;
     }
 
     private extractTokenFromHeader(request: any): string | undefined {

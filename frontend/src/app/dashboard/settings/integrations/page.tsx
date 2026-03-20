@@ -1,9 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -24,7 +23,7 @@ import {
 } from '@/components/ui/select'
 import {
     Loader2, Plus, RefreshCw, Trash2, CheckCircle, XCircle,
-    Eye, EyeOff, ExternalLink, Clock, AlertTriangle, Filter, Settings,
+    Clock, AlertTriangle, Filter,
 } from 'lucide-react'
 import Link from 'next/link'
 import { toast } from 'sonner'
@@ -32,11 +31,19 @@ import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
 import { cn } from '@/lib/utils'
 import {
     getSources, createSource, deleteSource, triggerSync,
-    validateSource, listNotionDatabases, listClickUpWorkspaces,
+    listNotionDatabases, listClickUpWorkspaces,
     getCategories,
 } from './actions'
+import {
+    getDefinitionsByCategory,
+    createConnection,
+    updateConnection,
+} from './integration-actions'
 import { getAiProviderConfig } from '../ai-provider/actions'
 import { CommToolsSection } from '@/components/settings/comm-tools-section'
+import { IntegrationManager } from '@/components/integrations/integration-manager'
+import { IntegrationSetupDialog } from '@/components/integrations/integration-setup-dialog'
+import type { IntegrationDefinition, IntegrationConnection } from '@/types/integration'
 
 // ============================================================================
 // Types
@@ -95,12 +102,6 @@ const PROVIDERS: { id: Provider; name: string; description: string; icon: string
         icon: '⚡',
         color: '#7B68EE',
     },
-]
-
-const COMING_SOON = [
-    { name: 'Trello', icon: '📋', description: 'Coming soon' },
-    { name: 'Jira', icon: '🔧', description: 'Coming soon' },
-    { name: 'Asana', icon: '📊', description: 'Coming soon' },
 ]
 
 // ============================================================================
@@ -196,14 +197,16 @@ export default function IntegrationsPage() {
         <div className="container max-w-4xl mx-auto py-8 px-4">
             <div className="flex items-center justify-between mb-2">
                 <h1 className="text-3xl font-bold">Integrations</h1>
-                <Button onClick={() => setShowAddDialog(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Integration
-                </Button>
             </div>
             <p className="text-muted-foreground mb-6">
-                Connect external tools to sync tasks into your unified dashboard.
+                Connect external services and tools to power your AI workflows.
             </p>
+
+            {/* ── Integration Marketplace (new system) ── */}
+            <div className="mb-10">
+                <h2 className="text-lg font-semibold mb-4">Integration Marketplace</h2>
+                <IntegrationManager mode="settings" embedded excludeCategories={['communication', 'source']} />
+            </div>
 
             {alert && (
                 <Alert className={`mb-6 ${alert.type === 'success'
@@ -215,40 +218,52 @@ export default function IntegrationsPage() {
                 </Alert>
             )}
 
-            {/* Connected Sources */}
-            {sources.length > 0 && (
-                <div className="space-y-4 mb-8">
-                    <h2 className="text-lg font-semibold">Connected Sources</h2>
-                    {sources.map((source) => (
-                        <SourceCard
-                            key={source.id}
-                            source={source}
-                            syncing={syncingSourceId === source.id}
-                            isAnimatingDelete={deletingId === source.id}
-                            onSync={() => handleSync(source.id)}
-                            onDelete={() => setDeleteTarget(source.id)}
-                        />
-                    ))}
-                </div>
-            )}
-
-            {sources.length === 0 && (
-                <Card className="mb-8 border-dashed">
-                    <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                        <div className="text-4xl mb-4">🔌</div>
-                        <h3 className="text-lg font-semibold mb-2">No integrations connected</h3>
-                        <p className="text-muted-foreground mb-4">
-                            Connect Notion or ClickUp to start syncing tasks.
+            {/* ── Task Sources (existing Notion/ClickUp sync) ── */}
+            <div className="mb-8">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 className="text-lg font-semibold">Task Sources</h2>
+                        <p className="text-sm text-muted-foreground">
+                            Sync tasks from external project management tools.
                         </p>
-                        <Button onClick={() => setShowAddDialog(true)}>
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add Integration
-                        </Button>
-                    </CardContent>
-                </Card>
-            )}
+                    </div>
+                    <Button variant="outline" onClick={() => setShowAddDialog(true)}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Source
+                    </Button>
+                </div>
 
-            {/* Communication Tools */}
+                {sources.length > 0 ? (
+                    <div className="space-y-4">
+                        {sources.map((source) => (
+                            <SourceCard
+                                key={source.id}
+                                source={source}
+                                syncing={syncingSourceId === source.id}
+                                isAnimatingDelete={deletingId === source.id}
+                                onSync={() => handleSync(source.id)}
+                                onDelete={() => setDeleteTarget(source.id)}
+                            />
+                        ))}
+                    </div>
+                ) : (
+                    <Card className="border-dashed">
+                        <CardContent className="flex flex-col items-center justify-center py-8 text-center">
+                            <div className="text-3xl mb-3">📝</div>
+                            <h3 className="text-sm font-semibold mb-1">No task sources connected</h3>
+                            <p className="text-xs text-muted-foreground mb-3">
+                                Connect Notion or ClickUp to sync tasks.
+                            </p>
+                            <Button variant="outline" size="sm" onClick={() => setShowAddDialog(true)}>
+                                <Plus className="h-3 w-3 mr-1.5" />
+                                Add Source
+                            </Button>
+                        </CardContent>
+                    </Card>
+                )}
+            </div>
+
+            {/* ── Communication Tools ── */}
             <div className="mb-8">
                 <h2 className="text-lg font-semibold mb-1">Communication Tools</h2>
                 <p className="text-sm text-muted-foreground mb-4">
@@ -258,52 +273,7 @@ export default function IntegrationsPage() {
                 <CommToolsSection openClawConnected={openClawConnected} />
             </div>
 
-            {/* Available Integrations */}
-            <h2 className="text-lg font-semibold mb-4">Available Integrations</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                {PROVIDERS.map((p) => {
-                    const connected = sources.some((s) => s.provider === p.id)
-                    return (
-                        <Card key={p.id} className="hover:border-primary/50 transition-colors">
-                            <CardContent className="flex items-center gap-4 py-4">
-                                <div className="text-3xl">{p.icon}</div>
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                        <h3 className="font-semibold">{p.name}</h3>
-                                        {connected && (
-                                            <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                                                Connected
-                                            </Badge>
-                                        )}
-                                    </div>
-                                    <p className="text-sm text-muted-foreground">{p.description}</p>
-                                </div>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => setShowAddDialog(true)}
-                                >
-                                    {connected ? 'Add Another' : 'Connect'}
-                                </Button>
-                            </CardContent>
-                        </Card>
-                    )
-                })}
-                {COMING_SOON.map((p) => (
-                    <Card key={p.name} className="opacity-50">
-                        <CardContent className="flex items-center gap-4 py-4">
-                            <div className="text-3xl">{p.icon}</div>
-                            <div className="flex-1">
-                                <h3 className="font-semibold">{p.name}</h3>
-                                <p className="text-sm text-muted-foreground">{p.description}</p>
-                            </div>
-                            <Badge variant="outline">Coming Soon</Badge>
-                        </CardContent>
-                    </Card>
-                ))}
-            </div>
-
-            {/* Add Source Dialog */}
+            {/* Add Source Dialog (existing) */}
             <AddSourceDialog
                 open={showAddDialog}
                 onOpenChange={setShowAddDialog}
@@ -325,7 +295,7 @@ export default function IntegrationsPage() {
 }
 
 // ============================================================================
-// Source Card
+// Source Card (existing — unchanged)
 // ============================================================================
 
 function SourceCard({ source, syncing, isAnimatingDelete, onSync, onDelete }: {
@@ -423,7 +393,7 @@ function SyncStatusBadge({ status }: { status: string }) {
 }
 
 // ============================================================================
-// Add Source Wizard Dialog
+// Add Source Wizard Dialog (unified — uses IntegrationSetupDialog for credentials)
 // ============================================================================
 
 function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
@@ -432,21 +402,23 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
     categories: Category[]
     onCreated: () => void
 }) {
-    const [step, setStep] = useState<'provider' | 'credentials' | 'database' | 'category' | 'confirm'>('provider')
+    const [step, setStep] = useState<'provider' | 'setup' | 'database' | 'category'>('provider')
     const [provider, setProvider] = useState<Provider | null>(null)
-    const [showToken, setShowToken] = useState(false)
     const [saving, setSaving] = useState(false)
-    const [validating, setValidating] = useState(false)
+    const [savingSetup, setSavingSetup] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
+    // Integration connection created via IntegrationSetupDialog
+    const [sourceDefinitions, setSourceDefinitions] = useState<IntegrationDefinition[]>([])
+    const [selectedDefinition, setSelectedDefinition] = useState<IntegrationDefinition | null>(null)
+    const [createdConnection, setCreatedConnection] = useState<IntegrationConnection | null>(null)
+
     // Notion state
-    const [notionApiKey, setNotionApiKey] = useState('')
     const [notionDatabases, setNotionDatabases] = useState<NotionDatabase[]>([])
     const [selectedNotionDb, setSelectedNotionDb] = useState<string>('')
     const [loadingDbs, setLoadingDbs] = useState(false)
 
     // ClickUp state
-    const [clickupToken, setClickupToken] = useState('')
     const [clickupLists, setClickupLists] = useState<ClickUpList[]>([])
     const [selectedClickupOrg, setSelectedClickupOrg] = useState<string>('')
     const [selectedClickupList, setSelectedClickupList] = useState<string>('')
@@ -456,65 +428,129 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
     const [selectedCategory, setSelectedCategory] = useState<string>('')
     const [syncInterval, setSyncInterval] = useState(5)
 
-    // Reset when dialog opens/closes
+    // Load source definitions on mount
+    useEffect(() => {
+        if (open) {
+            getDefinitionsByCategory('source').then(setSourceDefinitions)
+        }
+    }, [open])
+
     useEffect(() => {
         if (open) {
             setStep('provider')
             setProvider(null)
-            setNotionApiKey('')
+            setSelectedDefinition(null)
+            setCreatedConnection(null)
             setNotionDatabases([])
             setSelectedNotionDb('')
-            setClickupToken('')
             setClickupLists([])
             setSelectedClickupOrg('')
             setSelectedClickupList('')
             setSelectedCategory('')
             setSyncInterval(5)
             setError(null)
-            setShowToken(false)
         }
     }, [open])
 
-    // Step 1: Select provider
-    const handleProviderSelect = (p: Provider) => {
-        setProvider(p)
-        setStep('credentials')
+    // Map provider id to definition slug
+    const PROVIDER_SLUG_MAP: Record<Provider, string> = {
+        notion: 'notion-source',
+        clickup: 'clickup-source',
     }
 
-    // Step 2: Enter credentials & fetch databases/lists
-    const handleCredentialsNext = async () => {
-        setError(null)
-
-        if (provider === 'notion') {
-            if (!notionApiKey.trim()) { setError('API key is required'); return }
-            setLoadingDbs(true)
-            try {
-                const dbs = await listNotionDatabases(notionApiKey)
-                if (dbs.error) { setError(dbs.error); setLoadingDbs(false); return }
-                setNotionDatabases(dbs)
-                setStep('database')
-            } catch (e: any) {
-                setError(e.message)
-            } finally {
-                setLoadingDbs(false)
-            }
-        } else if (provider === 'clickup') {
-            if (!clickupToken.trim()) { setError('API token is required'); return }
-            setLoadingLists(true)
-            try {
-                const lists = await listClickUpWorkspaces(clickupToken)
-                if (lists.error) { setError(lists.error); setLoadingLists(false); return }
-                setClickupLists(lists)
-                setStep('database')
-            } catch (e: any) {
-                setError(e.message)
-            } finally {
-                setLoadingLists(false)
-            }
+    const handleProviderSelect = (p: Provider) => {
+        setProvider(p)
+        const slug = PROVIDER_SLUG_MAP[p]
+        const def = sourceDefinitions.find((d) => d.slug === slug)
+        if (def) {
+            setSelectedDefinition(def)
+            setStep('setup')
+        } else {
+            setError(`No integration definition found for ${p}. Please try again.`)
         }
     }
 
-    // Step 3: Select database/list → go to category
+    // Called when IntegrationSetupDialog saves credentials
+    const handleSetupSave = async (
+        credentials: Record<string, string>,
+        config: Record<string, any>,
+        externalName?: string,
+    ) => {
+        if (!selectedDefinition) return
+        setSavingSetup(true)
+        setError(null)
+
+        try {
+            // Create or update the connection
+            let conn: IntegrationConnection | null = createdConnection
+
+            if (conn) {
+                const result = await updateConnection(conn.id, {
+                    credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
+                    config,
+                    external_account_name: externalName,
+                })
+                if (result.error) { setError(result.error); return }
+                conn = result.data ?? conn
+            } else {
+                const result = await createConnection({
+                    definition_id: selectedDefinition.id,
+                    credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
+                    config,
+                    external_account_name: externalName,
+                })
+                if (result.error) { setError(result.error); return }
+                conn = result.data ?? null
+            }
+
+            if (!conn) { setError('Failed to create connection'); return }
+            setCreatedConnection(conn)
+
+            // Now fetch databases/lists using the credentials that were just saved
+            // We need the raw credential values for the provider-specific discovery APIs
+            if (provider === 'notion') {
+                const apiKey = credentials.api_key
+                if (!apiKey || apiKey.includes('••')) {
+                    // Already saved but masked — just advance to database step
+                    setStep('database')
+                    return
+                }
+                setLoadingDbs(true)
+                try {
+                    const dbs = await listNotionDatabases(apiKey)
+                    if (dbs.error) { setError(dbs.error); return }
+                    setNotionDatabases(dbs)
+                } catch (e: any) {
+                    setError(e.message); return
+                } finally {
+                    setLoadingDbs(false)
+                }
+            } else if (provider === 'clickup') {
+                const apiToken = credentials.api_token
+                if (!apiToken || apiToken.includes('••')) {
+                    setStep('database')
+                    return
+                }
+                setLoadingLists(true)
+                try {
+                    const lists = await listClickUpWorkspaces(apiToken)
+                    if (lists.error) { setError(lists.error); return }
+                    setClickupLists(lists)
+                } catch (e: any) {
+                    setError(e.message); return
+                } finally {
+                    setLoadingLists(false)
+                }
+            }
+
+            setStep('database')
+        } catch (e: any) {
+            setError(e.message)
+        } finally {
+            setSavingSetup(false)
+        }
+    }
+
     const handleDatabaseNext = () => {
         if (provider === 'notion' && !selectedNotionDb) { setError('Select a database'); return }
         if (provider === 'clickup' && !selectedClickupList) { setError('Select a list'); return }
@@ -522,9 +558,9 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
         setStep('category')
     }
 
-    // Step 4: Select category → create
     const handleCreate = async () => {
         if (!selectedCategory) { setError('Select a category'); return }
+        if (!createdConnection) { setError('No connection found. Go back and enter credentials.'); return }
         setError(null)
         setSaving(true)
 
@@ -532,15 +568,12 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
             let config: Record<string, any> = {}
 
             if (provider === 'notion') {
-                const db = notionDatabases.find((d) => d.id === selectedNotionDb)
                 config = {
-                    api_key: notionApiKey,
                     database_id: selectedNotionDb,
                     data_source_id: selectedNotionDb,
                 }
             } else if (provider === 'clickup') {
                 config = {
-                    api_token: clickupToken,
                     list_id: selectedClickupList,
                 }
             }
@@ -550,6 +583,7 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
                 category_id: selectedCategory,
                 config,
                 sync_interval_minutes: syncInterval,
+                connection_id: createdConnection.id,
             })
 
             if (result.error) {
@@ -564,35 +598,23 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
         }
     }
 
-    const title: Record<string, string> = {
-        provider: 'Choose an Integration',
-        credentials: `Connect ${provider === 'notion' ? 'Notion' : 'ClickUp'}`,
-        database: provider === 'notion' ? 'Select Database' : 'Select List',
-        category: 'Assign Category',
-    }
+    // Step: provider selection
+    if (step === 'provider') {
+        return (
+            <Dialog open={open} onOpenChange={onOpenChange}>
+                <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Choose an Integration</DialogTitle>
+                        <DialogDescription>Select a tool to connect</DialogDescription>
+                    </DialogHeader>
 
-    return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-lg">
-                <DialogHeader>
-                    <DialogTitle>{title[step]}</DialogTitle>
-                    <DialogDescription>
-                        {step === 'provider' && 'Select a tool to connect'}
-                        {step === 'credentials' && 'Enter your API credentials'}
-                        {step === 'database' && (provider === 'notion' ? 'Choose which Notion database to sync' : 'Choose which ClickUp list to sync')}
-                        {step === 'category' && 'Choose which category to assign synced tasks to'}
-                    </DialogDescription>
-                </DialogHeader>
+                    {error && (
+                        <Alert className="bg-red-50 text-red-900 border-red-200 dark:bg-red-950 dark:text-red-100 dark:border-red-800">
+                            <XCircle className="h-4 w-4" />
+                            <AlertDescription>{error}</AlertDescription>
+                        </Alert>
+                    )}
 
-                {error && (
-                    <Alert className="bg-red-50 text-red-900 border-red-200 dark:bg-red-950 dark:text-red-100 dark:border-red-800">
-                        <XCircle className="h-4 w-4" />
-                        <AlertDescription>{error}</AlertDescription>
-                    </Alert>
-                )}
-
-                {/* Step 1: Provider Selection */}
-                {step === 'provider' && (
                     <div className="space-y-3 py-2">
                         {PROVIDERS.map((p) => (
                             <button
@@ -608,87 +630,60 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
                             </button>
                         ))}
                     </div>
+                </DialogContent>
+            </Dialog>
+        )
+    }
+
+    // Step: IntegrationSetupDialog for credentials + test chat
+    if (step === 'setup' && selectedDefinition) {
+        return (
+            <IntegrationSetupDialog
+                definition={selectedDefinition}
+                connection={createdConnection}
+                open={open}
+                onOpenChange={onOpenChange}
+                onSave={handleSetupSave}
+                saving={savingSetup}
+            />
+        )
+    }
+
+    // Steps: database and category use the same Dialog shell
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                    <DialogTitle>
+                        {step === 'database'
+                            ? (provider === 'notion' ? 'Select Database' : 'Select List')
+                            : 'Assign Category'
+                        }
+                    </DialogTitle>
+                    <DialogDescription>
+                        {step === 'database'
+                            ? (provider === 'notion' ? 'Choose which Notion database to sync' : 'Choose which ClickUp list to sync')
+                            : 'Choose which category to assign synced tasks to'
+                        }
+                    </DialogDescription>
+                </DialogHeader>
+
+                {error && (
+                    <Alert className="bg-red-50 text-red-900 border-red-200 dark:bg-red-950 dark:text-red-100 dark:border-red-800">
+                        <XCircle className="h-4 w-4" />
+                        <AlertDescription>{error}</AlertDescription>
+                    </Alert>
                 )}
 
-                {/* Step 2: Credentials */}
-                {step === 'credentials' && (
-                    <div className="space-y-4 py-2">
-                        {provider === 'notion' && (
-                            <>
-                                <div className="space-y-2">
-                                    <Label>Notion Integration Token</Label>
-                                    <div className="relative">
-                                        <Input
-                                            type={showToken ? 'text' : 'password'}
-                                            placeholder="ntn_xxxxxxxxxxxxx"
-                                            value={notionApiKey}
-                                            onChange={(e) => setNotionApiKey(e.target.value)}
-                                        />
-                                        <Button
-                                            type="button" variant="ghost" size="sm"
-                                            className="absolute right-0 top-0 h-full px-3"
-                                            onClick={() => setShowToken(!showToken)}
-                                        >
-                                            {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                        </Button>
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        Create an integration at{' '}
-                                        <a href="https://www.notion.so/my-integrations" target="_blank" className="underline">
-                                            notion.so/my-integrations
-                                        </a>
-                                        {' '}and share your database with it.
-                                    </p>
-                                </div>
-                            </>
-                        )}
-
-                        {provider === 'clickup' && (
-                            <>
-                                <div className="space-y-2">
-                                    <Label>ClickUp API Token</Label>
-                                    <div className="relative">
-                                        <Input
-                                            type={showToken ? 'text' : 'password'}
-                                            placeholder="pk_xxxxxxxxxxxxx"
-                                            value={clickupToken}
-                                            onChange={(e) => setClickupToken(e.target.value)}
-                                        />
-                                        <Button
-                                            type="button" variant="ghost" size="sm"
-                                            className="absolute right-0 top-0 h-full px-3"
-                                            onClick={() => setShowToken(!showToken)}
-                                        >
-                                            {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                        </Button>
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        Find your API token in ClickUp Settings → Apps → API Token.
-                                    </p>
-                                </div>
-                            </>
-                        )}
-
-                        <DialogFooter>
-                            <Button variant="outline" onClick={() => setStep('provider')}>Back</Button>
-                            <Button
-                                onClick={handleCredentialsNext}
-                                disabled={loadingDbs || loadingLists}
-                            >
-                                {(loadingDbs || loadingLists) ? (
-                                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...</>
-                                ) : (
-                                    'Next'
-                                )}
-                            </Button>
-                        </DialogFooter>
-                    </div>
-                )}
-
-                {/* Step 3: Database/List Selection */}
                 {step === 'database' && (
                     <div className="space-y-4 py-2">
-                        {provider === 'notion' && (
+                        {(loadingDbs || loadingLists) && (
+                            <div className="flex items-center justify-center py-8">
+                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                            </div>
+                        )}
+
+                        {!loadingDbs && provider === 'notion' && (
                             <div className="space-y-2 max-h-64 overflow-y-auto">
                                 {notionDatabases.length === 0 && (
                                     <p className="text-sm text-muted-foreground py-4 text-center">
@@ -718,19 +713,16 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
                             </div>
                         )}
 
-                        {provider === 'clickup' && (() => {
-                            // Derive unique organizations (teams) from the lists
+                        {!loadingLists && provider === 'clickup' && (() => {
                             const orgs = Array.from(
                                 new Map(clickupLists.map((l) => [l.team_id, { id: l.team_id, name: l.team_name }])).values()
                             )
-                            // Filter lists by selected org
                             const filteredLists = selectedClickupOrg
                                 ? clickupLists.filter((l) => l.team_id === selectedClickupOrg)
                                 : []
-                            // Group filtered lists by space → folder for display
                             const grouped = filteredLists.reduce<Record<string, ClickUpList[]>>((acc, l) => {
                                 const key = l.folder_name
-                                    ? `${l.space_name} → ${l.folder_name}`
+                                    ? `${l.space_name} \u2192 ${l.folder_name}`
                                     : l.space_name
                                 if (!acc[key]) acc[key] = []
                                 acc[key].push(l)
@@ -745,7 +737,6 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
                                         </p>
                                     ) : (
                                         <>
-                                            {/* Organization dropdown */}
                                             <div className="space-y-2">
                                                 <Label>Organization</Label>
                                                 <Select
@@ -768,7 +759,6 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
                                                 </Select>
                                             </div>
 
-                                            {/* Lists dropdown (grouped by space/folder) */}
                                             {selectedClickupOrg && (
                                                 <div className="space-y-2">
                                                     <Label>List</Label>
@@ -816,13 +806,12 @@ function AddSourceDialog({ open, onOpenChange, categories, onCreated }: {
                         })()}
 
                         <DialogFooter>
-                            <Button variant="outline" onClick={() => setStep('credentials')}>Back</Button>
+                            <Button variant="outline" onClick={() => setStep('setup')}>Back</Button>
                             <Button onClick={handleDatabaseNext}>Next</Button>
                         </DialogFooter>
                     </div>
                 )}
 
-                {/* Step 4: Category Selection */}
                 {step === 'category' && (
                     <div className="space-y-4 py-2">
                         <div className="space-y-2">

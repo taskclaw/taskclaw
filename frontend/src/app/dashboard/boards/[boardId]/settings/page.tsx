@@ -8,6 +8,7 @@ import {
     Archive,
     Trash2,
     Loader2,
+    Plug,
 } from 'lucide-react'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
@@ -16,6 +17,7 @@ import { useBoard, useUpdateBoard, useDeleteBoard } from '@/hooks/use-boards'
 import { exportBoard } from '@/app/dashboard/boards/actions'
 import { BoardSettingsForm } from '@/components/boards/board-settings-form'
 import { StepEditor } from '@/components/boards/step-editor'
+import { IntegrationManager } from '@/components/integrations/integration-manager'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
 import { toast } from 'sonner'
 
@@ -28,6 +30,7 @@ export default function BoardSettingsPage() {
     const deleteBoard = useDeleteBoard()
     const [showDelete, setShowDelete] = useState(false)
     const [deleteLoading, setDeleteLoading] = useState(false)
+    const [showIntegrationManager, setShowIntegrationManager] = useState(false)
 
     const handleExport = async () => {
         if (!board) return
@@ -142,6 +145,34 @@ export default function BoardSettingsPage() {
                         </div>
                     </section>
 
+                    {/* Integration Marketplace */}
+                    <section>
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-sm font-bold">Integrations</h2>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setShowIntegrationManager(true)}
+                            >
+                                <Plug className="w-3.5 h-3.5 mr-1" />
+                                Manage Integrations
+                            </Button>
+                        </div>
+                        <div className="bg-card border border-border rounded-xl p-5">
+                            <p className="text-xs text-muted-foreground mb-3">
+                                Connect services from the Integration Marketplace to give AI access to external tools.
+                            </p>
+                            <Button
+                                variant="default"
+                                size="sm"
+                                onClick={() => setShowIntegrationManager(true)}
+                            >
+                                <Plug className="w-3.5 h-3.5 mr-1" />
+                                Open Marketplace
+                            </Button>
+                        </div>
+                    </section>
+
                     {/* Export */}
                     <section>
                         <h2 className="text-sm font-bold mb-4">Export</h2>
@@ -215,6 +246,15 @@ export default function BoardSettingsPage() {
                 description="This will permanently delete this board. All tasks will become unassigned. This action cannot be undone."
                 loading={deleteLoading}
             />
+
+            {showIntegrationManager && (
+                <IntegrationManager
+                    mode="board"
+                    boardId={boardId}
+                    size="full"
+                    onClose={() => setShowIntegrationManager(false)}
+                />
+            )}
         </div>
     )
 }

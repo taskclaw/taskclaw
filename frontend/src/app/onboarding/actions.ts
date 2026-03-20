@@ -3,7 +3,7 @@
 import { getAuthToken, isTokenExpired } from '@/lib/auth'
 import { cookies } from 'next/headers'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
 
 async function getAuthHeaders() {
     const token = await getAuthToken()

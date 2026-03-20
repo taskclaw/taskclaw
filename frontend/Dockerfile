@@ -34,6 +34,6 @@ COPY --from=builder /app/public ./public
 # Run as non-root user
 USER node
 
-EXPOSE 3000
+EXPOSE 3002
 
 CMD ["npm", "start"]

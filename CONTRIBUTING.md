@@ -37,8 +37,8 @@ cd ../backend && npm run start:dev
 cd ../frontend && npm run dev
 ```
 
-Frontend: http://localhost:3000
-Backend: http://localhost:3001
+Frontend: http://localhost:3002
+Backend: http://localhost:3003
 
 ### Using Local Supabase
 

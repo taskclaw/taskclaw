@@ -7,10 +7,12 @@ import {
   UseGuards,
   Req,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { BoardTemplatesService } from './board-templates.service';
 import { InstallTemplateDto } from './dto/install-template.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
 
+@ApiTags('Board Templates')
 @Controller()
 @UseGuards(AuthGuard)
 export class BoardTemplatesController {

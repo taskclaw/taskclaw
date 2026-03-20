@@ -36,7 +36,7 @@ cp frontend/.env.example frontend/.env
 docker compose up -d
 
 # 6. Open the app
-open http://localhost:3000
+open http://localhost:3002
 ```
 
 The BYO Supabase stack starts three containers:
@@ -82,7 +82,7 @@ cp frontend/.env.example frontend/.env
 docker compose --profile supabase up -d
 
 # 8. Open the app
-open http://localhost:3000
+open http://localhost:3002
 ```
 
 The All-in-One stack starts the following services:
@@ -100,7 +100,7 @@ The All-in-One stack starts the following services:
 | meta      | --   | Postgres Meta (internal)           |
 
 After startup, you can access:
-- **TaskClaw app**: [http://localhost:3000](http://localhost:3000)
+- **TaskClaw app**: [http://localhost:3002](http://localhost:3002)
 - **Supabase Studio**: [http://localhost:7430](http://localhost:7430)
 
 ## Generating Supabase API Keys
@@ -194,7 +194,7 @@ If you place TaskClaw behind nginx, Caddy, or Traefik:
 
 **Frontend shows "Failed to fetch" errors**
 - Verify `NEXT_PUBLIC_API_URL` points to the backend from the browser's perspective
-- In Docker, the frontend container uses `http://backend:3001` internally, but your browser needs `http://localhost:3001`
+- In Docker, the frontend container uses `http://backend:3001` internally, but your browser needs `http://localhost:3003`
 
 **Supabase Studio won't load (All-in-One)**
 - Check that the `db` container is healthy: `docker compose ps`

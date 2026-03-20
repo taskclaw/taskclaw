@@ -3,10 +3,13 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
+import { OpenClawService } from '../conversations/openclaw.service';
 import { CreateAiProviderDto } from './dto/create-ai-provider.dto';
 import { UpdateAiProviderDto } from './dto/update-ai-provider.dto';
 import { VerifyConnectionDto } from './dto/verify-connection.dto';
@@ -24,6 +27,8 @@ export class AiProviderService {
     private readonly supabase: SupabaseService,
     private readonly supabaseAdmin: SupabaseAdminService,
     private readonly accessControl: AccessControlHelper,
+    @Inject(forwardRef(() => OpenClawService))
+    private readonly openClawService: OpenClawService,
   ) {}
 
   /**
@@ -293,7 +298,7 @@ export class AiProviderService {
     }
 
     try {
-      // Step 1: Quick connectivity check — GET / should return the SPA HTML (200)
+      // Step 1: Quick HTTP reachability check
       const connectivityCheck = await fetch(apiUrl, {
         method: 'GET',
         signal: AbortSignal.timeout(8000),
@@ -305,40 +310,18 @@ export class AiProviderService {
         );
       }
 
-      // Step 2: Auth + API check — POST /v1/responses with a minimal test
-      const testResponse = await fetch(`${apiUrl}/v1/responses`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${resolvedApiKey}`,
-        },
-        body: JSON.stringify({
-          input: 'ping',
-          model: 'openrouter/auto',
-        }),
-        signal: AbortSignal.timeout(15000),
+      this.logger.log(`OpenClaw reachable at ${apiUrl}`);
+
+      // Step 2: WebSocket auth check — OpenClaw uses WebSocket protocol
+      const wsResult = await this.openClawService.testConnection({
+        api_url: apiUrl,
+        api_key: resolvedApiKey!,
+        agent_id: dto.agent_id,
       });
 
-      if (testResponse.status === 401 || testResponse.status === 403) {
+      if (!wsResult) {
         throw new Error(
-          'Authentication failed — invalid API key',
-        );
-      }
-
-      // OpenClaw returns 200 even if the underlying model has quota issues.
-      // We consider any 200 with a valid response object as a successful connection.
-      if (!testResponse.ok) {
-        throw new Error(
-          `OpenClaw API returned status ${testResponse.status}: ${testResponse.statusText}`,
-        );
-      }
-
-      const responseBody = await testResponse.json();
-
-      // Check if response has the expected structure
-      if (!responseBody?.id || !responseBody?.object) {
-        throw new Error(
-          'Unexpected response format from OpenClaw — is this the correct URL?',
+          'WebSocket authentication failed — check your API key',
         );
       }
 
@@ -351,16 +334,9 @@ export class AiProviderService {
 
       this.logger.log(`AI provider verified for account ${accountId}`);
 
-      // Check if the model returned a quota/key error in output
-      const outputText = responseBody.output?.[0]?.content?.[0]?.text || '';
-      const hasQuotaIssue = outputText.toLowerCase().includes('limit exceeded') ||
-        outputText.toLowerCase().includes('key limit');
-
       return {
         success: true,
-        message: hasQuotaIssue
-          ? 'Connection verified! Note: OpenRouter reports a key limit — check your OpenRouter plan.'
-          : 'Connection to OpenClaw verified successfully',
+        message: 'Connection to OpenClaw verified successfully (WebSocket + Auth)',
         verified_at: new Date().toISOString(),
         assistant_name: 'Ottimus Claw',
       };

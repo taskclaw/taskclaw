@@ -1,8 +1,10 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../common/guards/auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { AccountsService } from './accounts.service';
 
+@ApiTags('Admin')
 @Controller('admin/accounts')
 @UseGuards(AuthGuard, AdminGuard)
 export class AdminAccountsController {

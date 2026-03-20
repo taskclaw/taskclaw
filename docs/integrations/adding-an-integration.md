@@ -1,17 +1,26 @@
 # Adding a New Integration
 
-This guide walks you through adding a new external integration to TaskClaw (e.g., Jira, Trello, Linear, Asana, GitHub Issues). The adapter pattern makes this straightforward -- you implement a standard interface, register it, and the sync engine handles the rest.
+This guide walks you through adding a new external integration to TaskClaw (e.g., Jira, Trello, Linear, Asana, GitHub Issues).
 
-## Overview
+## Integration Architecture
 
-TaskClaw uses an adapter pattern for integrations:
+TaskClaw uses a **unified integration system** with three layers:
 
-1. Each integration is a **SourceAdapter** -- a class that knows how to talk to one external API
-2. Adapters are auto-discovered at startup via the `@Adapter()` decorator
-3. The `AdapterRegistry` provides a factory to look up adapters by provider name
-4. The `SyncModule` dispatches sync jobs to the correct adapter
+1. **Integration Definition** — A catalog entry in `integration_definitions` describing the integration: its name, slug, categories, authentication type, credential fields, and a linked AI skill
+2. **Integration Connection** — A user-configured instance in `integration_connections` with encrypted credentials, status, health monitoring, and a test conversation
+3. **Source Adapter** (for task sync only) — A backend class implementing `SourceAdapter` that knows how to fetch/push tasks. Sources link to connections via `connection_id`
 
-The existing Notion and ClickUp adapters serve as real-world references.
+### Integration Categories
+
+The `categories` field on a definition determines where it appears in the UI:
+
+| Category | UI Section | Needs Adapter? | Examples |
+|---|---|---|---|
+| `source` | Task Sources | Yes | Notion, ClickUp, Jira |
+| `communication` | Communication Tools | No | Telegram, WhatsApp, Slack |
+| *(other/none)* | Marketplace | No | Discord, GitHub, Linear |
+
+**All categories** share the same setup dialog (credentials + live test chat with OpenClaw). Source integrations additionally need an adapter for the sync engine.
 
 ## Prerequisites
 
@@ -21,7 +30,69 @@ The existing Notion and ClickUp adapters serve as real-world references.
 
 ## Step-by-Step Guide
 
-### Step 1: Create the Adapter Directory
+### Step 0: Create the Integration Definition (Database Migration)
+
+Every integration needs a definition and a linked skill in the database. Create a SQL migration:
+
+```sql
+-- backend/supabase/migrations/YYYYMMDD000001_add_jira_integration.sql
+
+-- 1. Create the skill with AI instructions
+INSERT INTO public.skills (id, name, description, instructions, skill_type, is_system)
+VALUES (
+  'a1000000-0000-0000-0000-000000000099',  -- unique UUID
+  'Jira Task Sync',
+  'Syncs tasks bidirectionally with Jira projects',
+  'You have access to a Jira integration. When the user asks about Jira tasks, project status, or sprint progress, use your knowledge of their connected Jira project to help. Fields: external_id maps to issue key (e.g. PROJ-123), status maps to Jira workflow states, priority maps to Jira priority levels.',
+  'integration',
+  true
+);
+
+-- 2. Create the integration definition
+INSERT INTO public.integration_definitions (
+  id, slug, name, description, icon, categories, auth_type,
+  auth_config, config_fields, setup_guide, skill_id, is_system
+) VALUES (
+  'b1000000-0000-0000-0000-000000000099',
+  'jira-source',                          -- unique slug
+  'Jira',
+  'Sync tasks from Jira projects',
+  '🎯',                                   -- emoji icon
+  '{source}',                             -- categories: 'source', 'communication', or other
+  'api_key',                              -- 'api_key', 'oauth2', or 'none'
+  '{
+    "key_fields": [
+      {"key": "api_key", "label": "API Token", "type": "password", "required": true, "placeholder": "Your Jira API token"},
+      {"key": "email", "label": "Email", "type": "text", "required": true, "placeholder": "you@company.com"},
+      {"key": "domain", "label": "Jira Domain", "type": "text", "required": true, "placeholder": "yourcompany.atlassian.net"}
+    ]
+  }'::jsonb,
+  '[]'::jsonb,                            -- config_fields (non-credential settings)
+  $guide$## Setup Guide: Jira
+
+### Step 1: Get API Credentials
+1. Log into your Atlassian account at **cloud.atlassian.com**
+2. Go to **Account Settings** → **Security** → **API Tokens**
+3. Click **Create API Token**, name it "TaskClaw", and copy the token
+
+### Step 2: Connect in TaskClaw
+1. Paste your **API Token**, **email**, and **Jira domain** in the fields
+2. Click **Save & Connect**
+3. Test the connection using the chat on the right$guide$,
+  'a1000000-0000-0000-0000-000000000099',  -- links to the skill above
+  true
+);
+```
+
+The `auth_config` column contains a JSON object with a `key_fields` array. Each field in `key_fields` drives the **IntegrationSetupDialog** credentials form — rendered as inputs in the "Settings" tab. The `type` field supports `text`, `password`, `url`, `textarea`, and `number`.
+
+The `setup_guide` column contains markdown rendered by `SetupGuideRenderer` in the "Setup Guide" tab. It supports `##` headings, `###` section dividers, numbered lists (with step badges), bullets, `**bold**`, `` `code` ``, and `[links](url)`.
+
+The `config_fields` column stores optional non-credential settings (e.g., default channel, project ID) with the same field schema as `key_fields`.
+
+For **non-source integrations** (marketplace or communication tools), you can stop here -- no adapter code is needed. The definition + skill + setup dialog + test chat is all that's required.
+
+### Step 1: Create the Adapter Directory (Source Integrations Only)
 
 ```bash
 mkdir backend/src/adapters/jira   # Replace "jira" with your provider name
@@ -382,7 +453,14 @@ Once your adapter is working:
 
 ## Complete File Checklist
 
-After following this guide, you should have:
+### For all integrations (marketplace, communication, or source):
+
+```
+backend/supabase/migrations/
+└── YYYYMMDD000001_add_jira_integration.sql   # Definition + skill seed
+```
+
+### For source integrations (task sync), additionally:
 
 ```
 backend/src/adapters/jira/
@@ -407,6 +485,12 @@ backend/src/adapters/adapters.module.ts   # Added to providers + exports
 | `backend/src/adapters/adapters.module.ts` | Module where adapters are registered |
 | `backend/src/adapters/notion/notion.adapter.ts` | Notion adapter (real-world reference) |
 | `backend/src/adapters/clickup/clickup.adapter.ts` | ClickUp adapter (real-world reference) |
+| `backend/src/integrations/integrations.service.ts` | Unified integration service (connections, health checks, credentials) |
+| `backend/src/integrations/integrations.controller.ts` | REST endpoints for definitions, connections, toggle, health-check |
+| `frontend/src/components/integrations/integration-setup-dialog.tsx` | Setup dialog with credentials form + test chat |
+| `frontend/src/components/integrations/integration-manager.tsx` | Integration marketplace catalog UI |
+| `frontend/src/components/settings/comm-tools-section.tsx` | Communication tools section UI |
+| `backend/supabase/migrations/20260320000002_seed_comm_source_definitions.sql` | Example of seeding definitions + skills |
 
 ## Type Reference
 
@@ -460,13 +544,24 @@ interface SyncFilter {
 }
 ```
 
-## API Endpoints (Automatic)
+## API Endpoints
 
-Once your adapter is registered, the following endpoints become available automatically:
+### Integration System (all types)
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/accounts/:id/sources` | Create a source with `{ provider: 'jira', config: { ... } }` |
+| `GET` | `/accounts/:id/integrations/definitions` | List all definitions (add `?category=source` to filter) |
+| `GET` | `/accounts/:id/integrations/connections` | List all connections (add `?category=communication` to filter) |
+| `POST` | `/accounts/:id/integrations/connections` | Create a connection with `{ definition_id, credentials, config }` |
+| `PATCH` | `/accounts/:id/integrations/connections/:connId` | Update connection credentials/config |
+| `POST` | `/accounts/:id/integrations/connections/:connId/toggle` | Toggle connection on/off (`{ enabled: true/false }`) |
+| `POST` | `/accounts/:id/integrations/connections/:connId/health-check` | Trigger immediate health check |
+
+### Source Sync (source category only)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/accounts/:id/sources` | Create a source with `{ provider: 'jira', config: { ... }, connection_id: '...' }` |
 | `POST` | `/accounts/:id/sources/jira/workspaces` | List available workspaces (if `listWorkspaces` is implemented) |
 | `POST` | `/accounts/:id/sources/jira/properties` | Fetch schema/properties (if `getProperties` is implemented) |
 | `POST` | `/accounts/:id/sources/:sourceId/sync` | Trigger a manual sync |

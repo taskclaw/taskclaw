@@ -26,19 +26,30 @@ export class SkillsService {
   ) {}
 
   /**
-   * List all skills for an account (optionally filter by active status)
+   * List all skills for an account (optionally filter by active status).
+   * When include_system is true, also returns system-wide skills (account_id IS NULL).
    */
-  async findAll(accessToken: string, accountId: string, activeOnly?: boolean) {
+  async findAll(accessToken: string, accountId: string, activeOnly?: boolean, skillType?: string, includeSystem?: boolean) {
     try {
       const client = this.supabaseAdmin.getClient();
       let query = client
         .from('skills')
         .select('*')
-        .eq('account_id', accountId)
         .order('name', { ascending: true });
+
+      if (includeSystem) {
+        // Return both account-owned and system-wide skills
+        query = query.or(`account_id.eq.${accountId},account_id.is.null`);
+      } else {
+        query = query.eq('account_id', accountId);
+      }
 
       if (activeOnly) {
         query = query.eq('is_active', true);
+      }
+
+      if (skillType) {
+        query = query.eq('skill_type', skillType);
       }
 
       const { data, error } = await query;
@@ -227,6 +238,7 @@ export class SkillsService {
             description: createDto.description || '',
             instructions: createDto.instructions,
             is_active: createDto.is_active !== undefined ? createDto.is_active : true,
+            skill_type: createDto.skill_type || 'general',
           },
         ])
         .select()
@@ -276,6 +288,7 @@ export class SkillsService {
           ...(updateDto.description !== undefined && { description: updateDto.description }),
           ...(updateDto.instructions !== undefined && { instructions: updateDto.instructions }),
           ...(updateDto.is_active !== undefined && { is_active: updateDto.is_active }),
+          ...(updateDto.skill_type !== undefined && { skill_type: updateDto.skill_type }),
         })
         .eq('id', id)
         .eq('account_id', accountId)

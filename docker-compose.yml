@@ -27,7 +27,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "${BACKEND_PORT:-3001}:3001"
+      - "${BACKEND_PORT:-3003}:3003"
     env_file: ./backend/.env
     environment:
       EDITION: community
@@ -36,7 +36,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3003/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -50,11 +50,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_PORT:-3002}:3002"
     env_file: ./frontend/.env
     environment:
       NEXT_PUBLIC_EDITION: community
-      NEXT_PUBLIC_API_URL: http://backend:3001
+      NEXT_PUBLIC_API_URL: http://backend:3003
     depends_on:
       - backend
     restart: unless-stopped
@@ -125,7 +125,7 @@ services:
       API_EXTERNAL_URL: http://localhost:${SUPABASE_API_PORT:-7431}/auth/v1
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
-      GOTRUE_SITE_URL: http://localhost:${FRONTEND_PORT:-3000}
+      GOTRUE_SITE_URL: http://localhost:${FRONTEND_PORT:-3002}
       GOTRUE_URI_ALLOW_LIST: "*"
       GOTRUE_JWT_SECRET: ${JWT_SECRET:-change-me-generate-a-secret-at-least-32-chars-long}
       GOTRUE_JWT_EXP: 3600

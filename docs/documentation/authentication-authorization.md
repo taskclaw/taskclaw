@@ -386,7 +386,7 @@ Send password reset email.
 ```json
 {
   "email": "user@example.com",
-  "redirectTo": "http://localhost:3000/update-password"
+  "redirectTo": "http://localhost:3002/update-password"
 }
 ```
 
@@ -476,7 +476,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 # Backend API
-NEXT_PUBLIC_API_URL=http://localhost:3001
+NEXT_PUBLIC_API_URL=http://localhost:3003
 ```
 
 ### Initial Setup
@@ -804,6 +804,266 @@ async findAll(@Req() req: any) {
   return data;  // Only projects user can access
 }
 ```
+
+---
+
+## API Key Authentication
+
+TaskClaw supports **API key authentication** as an alternative to JWT tokens for programmatic access. API keys are ideal for:
+
+- **AI agents** (Claude Code, Cursor, MCP servers)
+- **CI/CD pipelines** and automation
+- **External integrations** and webhooks
+- **Long-running processes** that need persistent auth
+
+### API Key Format
+
+All API keys follow this format:
+
+```
+tc_live_xxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+- **Prefix**: `tc_live_` (production keys)
+- **Length**: 32 characters after prefix
+- **Encoding**: Base62 (alphanumeric)
+
+### Key Scopes
+
+API keys can be scoped to limit their permissions. Available scopes:
+
+| Scope | Description | Grants Access To |
+|-------|-------------|------------------|
+| `boards:read` | Read boards and steps | GET /accounts/:id/boards, GET /accounts/:id/boards/:bid |
+| `boards:write` | Create, update, delete boards | POST/PATCH/DELETE /accounts/:id/boards |
+| `tasks:read` | Read tasks | GET /accounts/:id/tasks |
+| `tasks:write` | Create, update, move, complete tasks | POST/PATCH/DELETE /accounts/:id/tasks |
+| `conversations:read` | Read conversations and messages | GET /accounts/:id/conversations |
+| `conversations:write` | Create conversations, send messages | POST /accounts/:id/conversations |
+| `skills:read` | Read skills and categories | GET /accounts/:id/skills, GET /accounts/:id/categories |
+| `knowledge:read` | Read knowledge documents | GET /accounts/:id/knowledge |
+| `integrations:read` | List integration definitions | GET /accounts/:id/integrations/definitions |
+| `integrations:write` | Trigger syncs | POST /accounts/:id/sync/sources/:sid |
+| `account:read` | Read account details and members | GET /accounts/:id, GET /accounts/:id/members |
+| `webhooks:read` | List webhooks and deliveries | GET /accounts/:id/webhooks |
+| `webhooks:write` | Create, update, delete webhooks | POST/PATCH/DELETE /accounts/:id/webhooks |
+
+**Note**: If no scopes are specified during creation, the key grants full access to all resources.
+
+### Creating API Keys
+
+#### Via Web UI
+
+1. Log in to TaskClaw
+2. Navigate to **Settings > API Keys**
+3. Click **Create API Key**
+4. Enter a descriptive name (e.g., "Claude Code MCP", "CI/CD Pipeline")
+5. Select scopes (check all for full access)
+6. Click **Create**
+7. **Copy the key immediately** — it's only shown once
+
+#### Via API
+
+**Endpoint**: `POST /accounts/:id/api-keys`
+
+**Request:**
+```bash
+curl -X POST http://localhost:3003/accounts/550e8400-e29b-41d4-a716-446655440000/api-keys \
+  -H "Authorization: Bearer <your-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "CI/CD Pipeline",
+    "scopes": ["tasks:read", "tasks:write"],
+    "expires_at": "2025-12-31T23:59:59Z"
+  }'
+```
+
+**Response:**
+```json
+{
+  "id": "key-123",
+  "key": "tc_live_abcdef1234567890abcdef1234567890",
+  "name": "CI/CD Pipeline",
+  "key_prefix": "tc_live_abcd",
+  "scopes": ["tasks:read", "tasks:write"],
+  "expires_at": "2025-12-31T23:59:59Z",
+  "created_at": "2025-01-15T10:00:00Z"
+}
+```
+
+**IMPORTANT**: The full `key` field is only returned once. Store it securely.
+
+### Using API Keys
+
+API keys can be sent in two ways:
+
+#### Option 1: Authorization Header (Recommended)
+
+```bash
+curl http://localhost:3003/accounts/550e8400-e29b-41d4-a716-446655440000/boards \
+  -H "Authorization: Bearer tc_live_abcdef1234567890abcdef1234567890"
+```
+
+#### Option 2: X-API-Key Header
+
+```bash
+curl http://localhost:3003/accounts/550e8400-e29b-41d4-a716-446655440000/boards \
+  -H "X-API-Key: tc_live_abcdef1234567890abcdef1234567890"
+```
+
+**Example: Create a task**
+
+```bash
+curl -X POST http://localhost:3003/accounts/550e8400-e29b-41d4-a716-446655440000/tasks \
+  -H "Authorization: Bearer tc_live_abcdef1234567890abcdef1234567890" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Fix authentication bug",
+    "board_id": "board-123",
+    "step_id": "step-456",
+    "priority": "high"
+  }'
+```
+
+### Listing API Keys
+
+**Endpoint**: `GET /accounts/:id/api-keys`
+
+Returns masked keys (shows prefix only, never the full key):
+
+```bash
+curl http://localhost:3003/accounts/550e8400-e29b-41d4-a716-446655440000/api-keys \
+  -H "Authorization: Bearer <your-jwt>"
+```
+
+**Response:**
+```json
+{
+  "keys": [
+    {
+      "id": "key-123",
+      "name": "CI/CD Pipeline",
+      "key_prefix": "tc_live_abcd",
+      "scopes": ["tasks:read", "tasks:write"],
+      "last_used_at": "2025-01-15T09:30:00Z",
+      "expires_at": "2025-12-31T23:59:59Z",
+      "created_at": "2025-01-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+### Revoking API Keys
+
+**Endpoint**: `DELETE /accounts/:id/api-keys/:keyId`
+
+```bash
+curl -X DELETE http://localhost:3003/accounts/550e8400-e29b-41d4-a716-446655440000/api-keys/key-123 \
+  -H "Authorization: Bearer <your-jwt>"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "API key revoked successfully"
+}
+```
+
+Once revoked, the key immediately stops working. All requests using that key will return `401 Unauthorized`.
+
+### Security Best Practices
+
+#### 1. Store Keys Securely
+
+❌ **Bad**: Commit keys to version control
+```bash
+# .env (committed to Git)
+API_KEY=tc_live_abcdef1234567890abcdef1234567890
+```
+
+✅ **Good**: Use environment variables, never commit
+```bash
+# .env.local (in .gitignore)
+API_KEY=tc_live_abcdef1234567890abcdef1234567890
+```
+
+#### 2. Use Scoped Keys
+
+❌ **Bad**: Full access for all keys
+```json
+{
+  "name": "Test Key",
+  "scopes": []  // Full access
+}
+```
+
+✅ **Good**: Minimal scopes needed
+```json
+{
+  "name": "CI Task Creator",
+  "scopes": ["tasks:write"]  // Only what's needed
+}
+```
+
+#### 3. Set Expiration Dates
+
+✅ **Good**: Keys expire automatically
+```json
+{
+  "name": "Temp Integration",
+  "expires_at": "2025-03-01T00:00:00Z"
+}
+```
+
+#### 4. Rotate Keys Regularly
+
+1. Create a new key
+2. Update services to use the new key
+3. Revoke the old key
+4. Repeat every 90 days (recommended)
+
+#### 5. Monitor Last Used Timestamp
+
+Check `last_used_at` to detect:
+- Unused keys (candidates for revocation)
+- Suspicious activity (unexpected usage times)
+
+### API Key vs JWT Comparison
+
+| Feature | JWT (Session Tokens) | API Keys |
+|---------|---------------------|----------|
+| **Expiry** | 1 hour (auto-refresh) | Optional (can be permanent) |
+| **Use Case** | User sessions, web UI | Agents, CI/CD, integrations |
+| **Scopes** | Based on user role | Explicitly defined scopes |
+| **Revocation** | Logout or token blacklist | Instant revocation via API |
+| **Storage** | HttpOnly cookies | Environment variables |
+| **Rotation** | Automatic (refresh token) | Manual (create new, revoke old) |
+
+**Recommendation**: Use JWT for user-facing applications, API keys for programmatic access.
+
+### Troubleshooting
+
+#### Error: "Invalid API key"
+
+**Causes**:
+- Key was revoked
+- Key has expired
+- Key prefix is incorrect (must start with `tc_live_`)
+
+**Solution**: Verify the key in Settings > API Keys, create a new one if revoked.
+
+#### Error: "Insufficient permissions"
+
+**Cause**: API key scopes don't include the required permission.
+
+**Solution**: Create a new key with the necessary scopes, or use a key with broader permissions.
+
+#### Error: "API key not found"
+
+**Cause**: Using a key that doesn't exist or was deleted.
+
+**Solution**: Create a new key and update your application config.
 
 ---
 

@@ -5,6 +5,7 @@ import {
   IsArray,
   IsInt,
   IsUUID,
+  IsObject,
   ValidateIf,
 } from 'class-validator';
 
@@ -46,4 +47,13 @@ export class UpdateBoardDto {
   @ValidateIf((_o, v) => v !== null)
   @IsUUID()
   default_category_id?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  orchestrator_category_id?: string | null;
+
+  @IsOptional()
+  @IsObject()
+  settings_override?: Record<string, any>;
 }

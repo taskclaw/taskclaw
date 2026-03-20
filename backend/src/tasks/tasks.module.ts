@@ -1,13 +1,14 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { TasksController } from './tasks.controller';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { SyncModule } from '../sync/sync.module';
 import { AdaptersModule } from '../adapters/adapters.module';
+import { ConversationsModule } from '../conversations/conversations.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule, SyncModule, AdaptersModule],
+  imports: [SupabaseModule, CommonModule, SyncModule, AdaptersModule, forwardRef(() => ConversationsModule)],
   controllers: [TasksController],
   providers: [TasksService],
   exports: [TasksService],

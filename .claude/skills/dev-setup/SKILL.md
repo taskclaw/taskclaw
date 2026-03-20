@@ -439,7 +439,7 @@ pnpm --filter taskclaw-backend run start:dev
 
 Wait for both to be ready:
 - Frontend: look for "Ready in XXXms" in output
-- Backend: look for "Nest application successfully started" in output, then verify with `curl -sf http://localhost:3001/health`
+- Backend: look for "Nest application successfully started" in output, then verify with `curl -sf http://localhost:3003/health`
 
 If the user chose **Docker containers**, they are already running from Phase 6.
 
@@ -451,10 +451,10 @@ Run all checks automatically and report results:
 
 ```bash
 # 1. Backend health
-curl -sf http://localhost:3001/health
+curl -sf http://localhost:3003/health
 
 # 2. Frontend loads
-curl -sf -o /dev/null -w "%{http_code}" http://localhost:3000
+curl -sf -o /dev/null -w "%{http_code}" http://localhost:3002
 
 # 3. Auth service
 curl -sf http://localhost:7431/auth/v1/health
@@ -483,7 +483,7 @@ And the login credentials:
 
 | | |
 |---|---|
-| **URL** | http://localhost:3000 |
+| **URL** | http://localhost:3002 |
 | **Email** | `admin@ott.dev` |
 | **Password** | `admin123456` |
 | **Role** | `super_admin` |
@@ -524,7 +524,7 @@ SUPABASE_ANON_KEY=<generated-anon-jwt>
 SUPABASE_SERVICE_ROLE_KEY=<generated-service-role-jwt>
 JWT_SECRET=<your-jwt-secret>
 ENCRYPTION_KEY=<run: openssl rand -hex 32>
-CORS_ORIGIN=http://localhost:3000
+CORS_ORIGIN=http://localhost:3002
 REDIS_URL=redis://localhost:6379
 OPENROUTER_API_KEY=<your-openrouter-key>
 OPENROUTER_MODEL=openai/gpt-4o-mini
@@ -539,7 +539,7 @@ SUPABASE_ANON_KEY=<generated-anon-jwt>
 SUPABASE_SERVICE_ROLE_KEY=<generated-service-role-jwt>
 JWT_SECRET=<your-jwt-secret>
 ENCRYPTION_KEY=<run: openssl rand -hex 32>
-CORS_ORIGIN=http://localhost:3000
+CORS_ORIGIN=http://localhost:3002
 REDIS_URL=redis://redis:6379
 OPENROUTER_API_KEY=<your-openrouter-key>
 OPENROUTER_MODEL=openai/gpt-4o-mini
@@ -550,9 +550,9 @@ OPENROUTER_MODEL=openai/gpt-4o-mini
 ```env
 NEXT_PUBLIC_SUPABASE_URL=http://localhost:7431
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<same-anon-jwt-as-backend>
-NEXT_PUBLIC_API_URL=http://localhost:3001
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-NEXT_PUBLIC_SITE_URL=http://localhost:3000
+NEXT_PUBLIC_API_URL=http://localhost:3003
+NEXT_PUBLIC_APP_URL=http://localhost:3002
+NEXT_PUBLIC_SITE_URL=http://localhost:3002
 NEXT_PUBLIC_BRAND_NAME="TaskClaw"
 APP_THEME_NAME=commercial
 ```
@@ -627,7 +627,7 @@ All containers are prefixed with `taskclaw-*` and use the `taskclaw_default` Doc
 | `Port 3001 already in use` | `lsof -ti:3001 \| xargs kill -9` |
 | `Port 3000 already in use` | `lsof -ti:3000 \| xargs kill -9` |
 | Backend can't connect to Supabase | Local terminal: use `localhost:7431`. Docker: use `kong:8000` |
-| Frontend shows "Failed to fetch" | Verify `NEXT_PUBLIC_API_URL=http://localhost:3001` |
+| Frontend shows "Failed to fetch" | Verify `NEXT_PUBLIC_API_URL=http://localhost:3003` |
 
 ### Database Issues
 

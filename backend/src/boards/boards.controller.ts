@@ -10,6 +10,7 @@ import {
   Req,
   Query,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { BoardsService } from './boards.service';
 import { BoardStepsService } from './board-steps.service';
 import { BoardTemplatesService } from './board-templates.service';
@@ -20,6 +21,7 @@ import { CreateBoardStepDto } from './dto/create-board-step.dto';
 import { UpdateBoardStepDto } from './dto/update-board-step.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
 
+@ApiTags('Boards')
 @Controller('accounts/:accountId/boards')
 @UseGuards(AuthGuard)
 export class BoardsController {
@@ -33,6 +35,7 @@ export class BoardsController {
   // ─── Board Instance CRUD ───────────────────────────────────
 
   @Get()
+  @ApiOperation({ summary: 'List all boards' })
   findAll(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -47,6 +50,7 @@ export class BoardsController {
   }
 
   @Post('import')
+  @ApiOperation({ summary: 'Import board from manifest' })
   importManifest(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -56,6 +60,7 @@ export class BoardsController {
   }
 
   @Post('bundle-import')
+  @ApiOperation({ summary: 'Import board from bundle' })
   importBundle(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -65,6 +70,7 @@ export class BoardsController {
   }
 
   @Get(':boardId')
+  @ApiOperation({ summary: 'Get board by ID' })
   findOne(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -74,6 +80,7 @@ export class BoardsController {
   }
 
   @Post()
+  @ApiOperation({ summary: 'Create a new board' })
   create(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -83,6 +90,7 @@ export class BoardsController {
   }
 
   @Patch(':boardId')
+  @ApiOperation({ summary: 'Update a board' })
   update(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -93,6 +101,7 @@ export class BoardsController {
   }
 
   @Delete(':boardId')
+  @ApiOperation({ summary: 'Delete a board' })
   remove(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -102,6 +111,7 @@ export class BoardsController {
   }
 
   @Post(':boardId/duplicate')
+  @ApiOperation({ summary: 'Duplicate a board' })
   duplicate(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -111,6 +121,7 @@ export class BoardsController {
   }
 
   @Get(':boardId/export')
+  @ApiOperation({ summary: 'Export board as manifest' })
   exportManifest(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -119,9 +130,76 @@ export class BoardsController {
     return this.boardsService.exportManifest(req.user.id, accountId, boardId);
   }
 
+  // ─── Board Integrations ──────────────────────────────────
+
+  @Get(':boardId/integrations')
+  @ApiOperation({ summary: 'Get board integration statuses' })
+  getIntegrations(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('boardId') boardId: string,
+  ) {
+    return this.boardsService.getIntegrationStatuses(
+      req.user.id,
+      accountId,
+      boardId,
+    );
+  }
+
+  @Post(':boardId/integrations')
+  @ApiOperation({ summary: 'Add integration to board' })
+  addIntegration(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('boardId') boardId: string,
+    @Body() body: any,
+  ) {
+    return this.boardsService.addIntegrationDefinition(
+      req.user.id,
+      accountId,
+      boardId,
+      body,
+    );
+  }
+
+  @Patch(':boardId/integrations/:slug')
+  @ApiOperation({ summary: 'Update board integration config' })
+  updateIntegration(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('boardId') boardId: string,
+    @Param('slug') slug: string,
+    @Body() body: { enabled: boolean; config: Record<string, string> },
+  ) {
+    return this.boardsService.updateIntegrationConfig(
+      req.user.id,
+      accountId,
+      boardId,
+      slug,
+      body,
+    );
+  }
+
+  @Delete(':boardId/integrations/:slug')
+  @ApiOperation({ summary: 'Remove integration from board' })
+  removeIntegration(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('boardId') boardId: string,
+    @Param('slug') slug: string,
+  ) {
+    return this.boardsService.removeIntegrationDefinition(
+      req.user.id,
+      accountId,
+      boardId,
+      slug,
+    );
+  }
+
   // ─── Board Steps CRUD ─────────────────────────────────────
 
   @Get(':boardId/steps')
+  @ApiOperation({ summary: 'List board steps' })
   findAllSteps(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -131,6 +209,7 @@ export class BoardsController {
   }
 
   @Post(':boardId/steps')
+  @ApiOperation({ summary: 'Create a board step' })
   createStep(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -141,6 +220,7 @@ export class BoardsController {
   }
 
   @Patch(':boardId/steps/:stepId')
+  @ApiOperation({ summary: 'Update a board step' })
   updateStep(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -152,6 +232,7 @@ export class BoardsController {
   }
 
   @Delete(':boardId/steps/:stepId')
+  @ApiOperation({ summary: 'Delete a board step' })
   removeStep(
     @Req() req,
     @Param('accountId') accountId: string,
@@ -162,6 +243,7 @@ export class BoardsController {
   }
 
   @Post(':boardId/steps/reorder')
+  @ApiOperation({ summary: 'Reorder board steps' })
   reorderSteps(
     @Req() req,
     @Param('accountId') accountId: string,
