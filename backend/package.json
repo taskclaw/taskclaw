@@ -7,6 +7,7 @@
   "license": "SEE LICENSE IN ../LICENSE.md",
   "scripts": {
     "build": "nest build",
+    "build:mcp": "tsc -p tsconfig.mcp.json",
     "setup:supabase": "ts-node scripts/setup-supabase.ts",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
@@ -24,6 +25,7 @@
     "@langchain/core": "^1.1.17",
     "@langchain/langgraph": "^1.1.2",
     "@langchain/openai": "^1.2.3",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
@@ -32,6 +34,7 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/schedule": "^6.1.1",
+    "@nestjs/swagger": "^11.2.6",
     "@notionhq/client": "^5.9.0",
     "@supabase/supabase-js": "^2.86.0",
     "bullmq": "^5.69.1",
@@ -45,6 +48,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "stripe": "^20.3.1",
+    "swagger-ui-express": "^5.0.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {

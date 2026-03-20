@@ -27,9 +27,9 @@ COPY --from=builder /app/package.json ./
 # Run as non-root user
 USER node
 
-EXPOSE 3001
+EXPOSE 3003
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
-  CMD wget -q --spider http://localhost:3001/health || exit 1
+  CMD wget -q --spider http://localhost:3003/health || exit 1
 
 CMD ["node", "dist/src/main"]

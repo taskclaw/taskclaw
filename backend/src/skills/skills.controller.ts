@@ -15,12 +15,14 @@ import {
   HttpStatus,
   BadRequestException,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { SkillsService } from './skills.service';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
 
+@ApiTags('Skills')
 @Controller('accounts/:accountId/skills')
 @UseGuards(AuthGuard)
 export class SkillsController {
@@ -31,8 +33,10 @@ export class SkillsController {
     @Request() req,
     @Param('accountId') accountId: string,
     @Query('active_only') activeOnly?: string,
+    @Query('skill_type') skillType?: string,
+    @Query('include_system') includeSystem?: string,
   ) {
-    return this.skillsService.findAll(req.accessToken, accountId, activeOnly === 'true');
+    return this.skillsService.findAll(req.accessToken, accountId, activeOnly === 'true', skillType, includeSystem === 'true');
   }
 
   @Get('agents/dashboard')

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
@@ -6,6 +6,8 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { OutboundSyncService } from '../sync/outbound-sync.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
+import { ConversationsService } from '../conversations/conversations.service';
+import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 
 interface TaskFilters {
   category_id?: string;
@@ -26,6 +28,9 @@ export class TasksService {
     private readonly accessControl: AccessControlHelper,
     private readonly outboundSync: OutboundSyncService,
     private readonly notionAdapter: NotionAdapter,
+    @Inject(forwardRef(() => ConversationsService))
+    private readonly conversationsService: ConversationsService,
+    private readonly webhookEmitter: WebhookEmitterService,
   ) {}
 
   async findAll(userId: string, accountId: string, filters?: TaskFilters, accessToken?: string) {
@@ -163,12 +168,111 @@ export class TasksService {
         due_date: createTaskDto.due_date || null,
         board_instance_id: createTaskDto.board_instance_id || null,
         current_step_id: createTaskDto.current_step_id || null,
+        card_data: createTaskDto.card_data || {},
       })
       .select('*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)')
       .single();
 
     if (error) {
       throw new Error(`Failed to create task: ${error.message}`);
+    }
+
+    this.webhookEmitter.emit(accountId, 'task.created', { task: data });
+
+    return data;
+  }
+
+  /**
+   * Bulk-create tasks for a board. Used by Board AI Chat after user confirms.
+   */
+  async bulkCreateForBoard(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    tasks: Array<{ title: string; priority?: string; notes?: string; card_data?: Record<string, any> }>,
+    accessToken?: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    // Verify board exists
+    const { data: board, error: boardError } = await client
+      .from('board_instances')
+      .select('id')
+      .eq('id', boardId)
+      .eq('account_id', accountId)
+      .single();
+
+    if (boardError || !board) {
+      throw new NotFoundException(`Board with ID ${boardId} not found`);
+    }
+
+    // Get first step for default placement (include ai_first for auto-trigger)
+    const { data: steps } = await client
+      .from('board_steps')
+      .select('id, name, step_key, step_type, trigger_type, ai_first, linked_category_id, position')
+      .eq('board_instance_id', boardId)
+      .order('position', { ascending: true })
+      .limit(1);
+
+    const firstStep = steps?.[0];
+    const status = firstStep?.name || 'To-Do';
+
+    // Create all tasks
+    const rows = tasks.map((t) => ({
+      account_id: accountId,
+      title: t.title,
+      priority: t.priority || 'Medium',
+      notes: t.notes || '',
+      board_instance_id: boardId,
+      current_step_id: firstStep?.id || null,
+      card_data: t.card_data || {},
+      status,
+      completed: false,
+    }));
+
+    const { data, error } = await client
+      .from('tasks')
+      .insert(rows)
+      .select('*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)');
+
+    if (error) {
+      throw new Error(`Failed to bulk-create tasks: ${error.message}`);
+    }
+
+    this.logger.log(`Bulk-created ${data?.length || 0} tasks for board ${boardId}`);
+
+    // Auto-trigger AI First if the first step has it enabled
+    if (firstStep?.ai_first && accessToken && data?.length) {
+      const logPrefix = `[BulkCreate:${boardId.slice(0, 8)}]`;
+      this.logger.log(`${logPrefix} First step "${firstStep.name}" has AI First enabled — triggering for ${data.length} tasks (max 2 concurrent, 5s stagger)`);
+
+      // Stagger triggers: max 2 concurrent, 5s delay between each pair
+      const CONCURRENCY = 2;
+      const STAGGER_MS = 5000;
+
+      const triggerWithStagger = async () => {
+        for (let i = 0; i < data.length; i += CONCURRENCY) {
+          const batch = data.slice(i, i + CONCURRENCY);
+          await Promise.allSettled(
+            batch.map((task) =>
+              this.conversationsService
+                .autoTriggerAiForStep(task.id, accountId, userId, accessToken, firstStep, logPrefix, 0)
+                .catch((err) => this.logger.error(`${logPrefix} AI trigger failed for task ${task.id}: ${err.message}`)),
+            ),
+          );
+          // Wait before next batch (skip delay after the last batch)
+          if (i + CONCURRENCY < data.length) {
+            await new Promise((r) => setTimeout(r, STAGGER_MS));
+          }
+        }
+      };
+
+      // Run in background — don't block response
+      triggerWithStagger().catch((err) =>
+        this.logger.error(`${logPrefix} Staggered AI trigger failed: ${err.message}`),
+      );
     }
 
     return data;
@@ -214,6 +318,12 @@ export class TasksService {
       updateData.completed_at = null;
     }
 
+    // Merge card_data: preserve prior step data, overwrite at step_key level
+    if (updateTaskDto.card_data) {
+      const existingCardData = existingTask.card_data || {};
+      updateData.card_data = { ...existingCardData, ...updateTaskDto.card_data };
+    }
+
     // Auto-sync status when current_step_id changes (board tasks)
     if (updateTaskDto.current_step_id && updateTaskDto.current_step_id !== existingTask.current_step_id) {
       const { data: step } = await client
@@ -250,6 +360,9 @@ export class TasksService {
       );
     }
 
+    const webhookEvent = data.completed ? 'task.completed' : 'task.updated';
+    this.webhookEmitter.emit(accountId, webhookEvent, { task: data });
+
     return data;
   }
 
@@ -274,6 +387,8 @@ export class TasksService {
     if (error) {
       throw new Error(`Failed to delete task: ${error.message}`);
     }
+
+    this.webhookEmitter.emit(accountId, 'task.deleted', { task_id: id });
 
     return { message: 'Task deleted successfully' };
   }
@@ -362,7 +477,7 @@ export class TasksService {
     userId: string,
     accountId: string,
     taskId: string,
-    body: { notes_append: string; conversation_id?: string },
+    body: { notes_append: string; conversation_id?: string; card_data?: Record<string, any> },
     accessToken?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
@@ -377,12 +492,20 @@ export class TasksService {
     const separator = `\n\n--- AI Findings (${timestamp}) ---\n`;
     const updatedNotes = (existingTask.notes || '') + separator + body.notes_append;
 
+    const updatePayload: any = {
+      notes: updatedNotes,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Merge card_data if provided by AI
+    if (body.card_data) {
+      const existingCardData = existingTask.card_data || {};
+      updatePayload.card_data = { ...existingCardData, ...body.card_data };
+    }
+
     const { data, error } = await client
       .from('tasks')
-      .update({
-        notes: updatedNotes,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', taskId)
       .eq('account_id', accountId)
       .select('*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)')
@@ -431,6 +554,99 @@ export class TasksService {
 
     const result = await this.outboundSync.syncTaskToSource(taskId);
     return result;
+  }
+
+  /**
+   * Full-text search on task title and notes
+   */
+  async search(userId: string, accountId: string, query: string, accessToken?: string) {
+    const client = this.supabaseAdmin.getClient();
+
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    if (!query || query.trim().length === 0) {
+      return [];
+    }
+
+    const searchTerm = `%${query.trim()}%`;
+
+    const { data, error } = await client
+      .from('tasks')
+      .select('*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)')
+      .eq('account_id', accountId)
+      .or(`title.ilike.${searchTerm},notes.ilike.${searchTerm}`)
+      .order('updated_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      throw new Error(`Failed to search tasks: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  /**
+   * Bulk update multiple tasks at once
+   */
+  async bulkUpdate(
+    userId: string,
+    accountId: string,
+    updates: Array<{ id: string; status?: string; priority?: string; current_step_id?: string; completed?: boolean }>,
+    accessToken?: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    if (!updates || updates.length === 0) {
+      throw new BadRequestException('No updates provided');
+    }
+
+    if (updates.length > 100) {
+      throw new BadRequestException('Maximum 100 tasks per bulk update');
+    }
+
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+
+    for (const update of updates) {
+      try {
+        const payload: Record<string, any> = {};
+        if (update.status !== undefined) payload.status = update.status;
+        if (update.priority !== undefined) payload.priority = update.priority;
+        if (update.current_step_id !== undefined) payload.current_step_id = update.current_step_id;
+        if (update.completed !== undefined) payload.completed = update.completed;
+
+        if (Object.keys(payload).length === 0) {
+          results.push({ id: update.id, success: true });
+          continue;
+        }
+
+        const { data, error } = await client
+          .from('tasks')
+          .update(payload)
+          .eq('id', update.id)
+          .eq('account_id', accountId)
+          .select()
+          .single();
+
+        if (error) {
+          results.push({ id: update.id, success: false, error: error.message });
+        } else {
+          const webhookEvent = update.completed ? 'task.completed' : 'task.updated';
+          this.webhookEmitter.emit(accountId, webhookEvent, { task: data });
+          results.push({ id: update.id, success: true });
+        }
+      } catch (err) {
+        results.push({ id: update.id, success: false, error: (err as Error).message });
+      }
+    }
+
+    return {
+      total: updates.length,
+      succeeded: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      results,
+    };
   }
 
   /**

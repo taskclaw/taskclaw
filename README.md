@@ -23,12 +23,48 @@ TaskClaw is a self-hostable task management platform that combines a visual Kanb
 - **AI Chat** — Talk to an AI assistant about your tasks (bring your own API key)
 - **Knowledge Base** — Feed context to the AI for smarter assistance
 - **Integrations** — Bidirectional sync with Notion, ClickUp, and more (community-extensible)
+- **MCP Server** — Model Context Protocol server for AI agents (Claude Code, Cursor, Windsurf)
+- **API Keys & Webhooks** — Programmatic access and real-time event notifications
+- **OpenAPI Spec** — Full REST API documentation at `/api/docs`
 - **Team Collaboration** — Share projects and tasks with your team
 - **Skills & Categories** — Organize tasks by context and teach the AI custom skills
 - **Pomodoro Timer** — Built-in focus timer with task association
 - **Dark Mode** — Premium, distraction-free interface
 
 ## Quick Start
+
+### For AI Agents (MCP Server)
+
+If you're an AI agent like Claude Code, Cursor, or Windsurf, you can access TaskClaw programmatically via the MCP server:
+
+1. **Build the MCP server**:
+   ```bash
+   cd backend && npm run build:mcp
+   ```
+
+2. **Configure in your IDE** (example for Claude Code):
+   ```json
+   {
+     "mcpServers": {
+       "taskclaw": {
+         "command": "node",
+         "args": ["/path/to/taskclaw/backend/dist/mcp-entry.js"],
+         "env": {
+           "TASKCLAW_API_URL": "http://localhost:3003",
+           "TASKCLAW_API_KEY": "tc_live_xxxxxxxxxxxxx"
+         }
+       }
+     }
+   }
+   ```
+
+3. **Use TaskClaw tools** directly in your AI conversations:
+   ```
+   @mcp taskclaw list_boards account_id=...
+   @mcp taskclaw create_task account_id=... title="Fix bug" board_id=...
+   ```
+
+See [MCP Server Documentation](./docs/mcp-server.md) for full setup and tool reference.
 
 ### Docker (Recommended)
 
@@ -47,7 +83,7 @@ cp frontend/.env.example frontend/.env
 docker compose up -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Open [http://localhost:3002](http://localhost:3002)
 
 **Option 2: All-in-one (includes local Supabase)**
 
@@ -65,7 +101,7 @@ cp frontend/.env.example frontend/.env
 docker compose --profile supabase up -d
 ```
 
-Open [http://localhost:3000](http://localhost:3000) | Supabase Studio: [http://localhost:7430](http://localhost:7430)
+Open [http://localhost:3002](http://localhost:3002) | Supabase Studio: [http://localhost:7430](http://localhost:7430)
 
 ### Local Development
 
@@ -93,7 +129,15 @@ TASKCLAW_VERSION=v1.2.0 docker compose pull && docker compose up -d
 | [Configuration](./docs/configuration.md) | All environment variables |
 | [Architecture](./docs/architecture.md) | System architecture overview |
 | [Development](./docs/development.md) | Local development setup |
+| [MCP Server](./docs/mcp-server.md) | Model Context Protocol server for AI agents |
+| [API Keys & Webhooks](./docs/documentation/authentication-authorization.md#api-key-authentication) | Programmatic access and event notifications |
 | [Adding Integrations](./docs/integrations/adding-an-integration.md) | How to build a new integration |
+
+### API Reference
+
+- **OpenAPI Spec**: Visit `http://localhost:3003/api/docs` when running locally
+- **Interactive Docs**: Test all endpoints directly from the Swagger UI
+- **JSON Spec**: Download from `http://localhost:3003/api/docs-json`
 
 ## Integrations
 

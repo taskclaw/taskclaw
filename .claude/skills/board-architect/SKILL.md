@@ -87,6 +87,30 @@ For each AI stage, you'll set:
 - `system_prompt` describing what the AI should do
 - `linked_category_slug` pointing to the responsible agent
 
+### Phase 3b: Integration Dependencies
+
+Ask the user:
+- "What external services or APIs does this board need to function?" (e.g., X API, Slack, SendGrid, image generation, CRM)
+- "Which are **required** for the board to work vs. **optional** enhancements?"
+
+For each integration, define:
+- `slug`: kebab-case identifier (e.g., `x-api`, `nano-banana`)
+- `name`: display name (e.g., "X (Twitter) API")
+- `description`: what it does for the board
+- `icon`: emoji (e.g., "𝕏", "🍌", "📧")
+- `required`: true if critical, false if optional
+- `setup_guide`: step-by-step setup instructions
+- `config_fields`: what credentials/settings the user needs to provide
+
+Common integration patterns:
+- **Social APIs**: X, LinkedIn, Instagram — API keys, OAuth tokens
+- **Image generation**: Nano Banana, DALL-E — API keys
+- **Email**: SendGrid, Mailgun — API keys, sender domains
+- **Webhooks**: Slack, Discord — webhook URLs
+- **CRM**: HubSpot, Salesforce — API keys, instance URLs
+
+If the board has no external dependencies, skip this phase.
+
 ### Phase 4: Routing & Error Handling
 
 For each step:
@@ -118,6 +142,7 @@ Based on the AI stages identified in Phase 3, design the agent categories:
 
 Generate the complete board manifest JSON including:
 - Board metadata (name, description, icon, color, tags)
+- Integration dependencies (if any external services are needed)
 - Categories with embedded skills
 - Steps with routing, schemas, and AI config
 

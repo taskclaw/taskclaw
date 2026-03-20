@@ -9,12 +9,14 @@ import {
   UseGuards,
   Req,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { AiProviderService } from './ai-provider.service';
 import { CreateAiProviderDto } from './dto/create-ai-provider.dto';
 import { UpdateAiProviderDto } from './dto/update-ai-provider.dto';
 import { VerifyConnectionDto } from './dto/verify-connection.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
 
+@ApiTags('AI Provider')
 @Controller('accounts/:accountId/ai-provider')
 @UseGuards(AuthGuard)
 export class AiProviderController {

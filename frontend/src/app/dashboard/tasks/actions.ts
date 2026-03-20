@@ -5,7 +5,7 @@ import { getAuthToken, isTokenExpired } from '@/lib/auth'
 import { cookies } from 'next/headers'
 import type { Task, Category } from '@/types/task'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
 
 async function getAuthHeaders() {
     const token = await getAuthToken()
@@ -137,6 +137,7 @@ export async function createTask(data: {
     notes?: string
     board_instance_id?: string
     current_step_id?: string
+    card_data?: Record<string, Record<string, any>>
 }): Promise<{ success?: boolean; task?: Task; error?: string }> {
     const headers = await getAuthHeaders()
     if (!headers) return { error: 'Not authenticated' }
@@ -177,6 +178,7 @@ export async function updateTask(
         time_spent: number
         current_step_id: string
         override_category_id: string | null
+        card_data: Record<string, Record<string, any>>
     }>
 ): Promise<{ success?: boolean; task?: Task; error?: string }> {
     const headers = await getAuthHeaders()

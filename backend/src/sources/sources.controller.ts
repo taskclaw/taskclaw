@@ -10,6 +10,7 @@ import {
   Req,
   BadRequestException,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { SourcesService } from './sources.service';
 import { CreateSourceDto } from './dto/create-source.dto';
 import { UpdateSourceDto } from './dto/update-source.dto';
@@ -17,6 +18,7 @@ import { AuthGuard } from '../common/guards/auth.guard';
 import { PlanLimitGuard, PlanResource } from '../common/guards/plan-limit.guard';
 import { AdapterRegistry } from '../adapters/adapter.registry';
 
+@ApiTags('Sources')
 @Controller('accounts/:accountId/sources')
 @UseGuards(AuthGuard)
 export class SourcesController {

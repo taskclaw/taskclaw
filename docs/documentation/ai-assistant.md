@@ -138,7 +138,7 @@ import { chatWithAi } from "./actions"
 const response = await chatWithAi(input, history);
 
 // ❌ Bad: Direct fetch
-fetch('http://localhost:3001/ai-assistant/chat', ...)
+fetch('http://localhost:3003/ai-assistant/chat', ...)
 ```
 
 ---
@@ -237,7 +237,7 @@ VECTOR_DIMENSIONS=1536 # Must match model output
 For existing projects/messages without embeddings, use the admin endpoint:
 
 ```bash
-curl -X POST http://localhost:3001/ai-assistant/admin/generate-embeddings \
+curl -X POST http://localhost:3003/ai-assistant/admin/generate-embeddings \
   -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

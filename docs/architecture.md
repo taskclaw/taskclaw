@@ -35,6 +35,10 @@ Turborepo orchestrates builds, linting, and dev servers across both packages. Th
 │  │ Sources  │ │ Adapters │ │Knowledge │ │  AI Provider  │  │
 │  │  Module  │ │  Module  │ │  Module  │ │    Module     │  │
 │  └──────────┘ └──────────┘ └──────────┘ └───────────────┘  │
+│  ┌──────────────────┐ ┌──────────┐ ┌──────────────────┐    │
+│  │  Integrations    │ │  Skills  │ │     Boards       │    │
+│  │     Module       │ │  Module  │ │     Module       │    │
+│  └──────────────────┘ └──────────┘ └──────────────────┘    │
 └──────┬─────────────┬────────────┬───────────────┬───────────┘
        │             │            │               │
        ▼             ▼            ▼               ▼
@@ -70,9 +74,10 @@ The backend follows NestJS module-based architecture. Each module is a self-cont
 
 | Module | Path | Purpose |
 |---|---|---|
+| **IntegrationsModule** | `src/integrations/` | Unified integration system. Manages `integration_definitions` (catalog of available integrations) and `integration_connections` (user-configured instances with encrypted credentials). Handles health checks for communication tools, category-based filtering, toggle/health-check endpoints, and board-level integration refs. Provides credential decryption for downstream consumers |
 | **AdaptersModule** | `src/adapters/` | Registry of source adapters (Notion, ClickUp, etc.). Auto-discovers adapters via the `@Adapter()` decorator |
-| **SourcesModule** | `src/sources/` | CRUD for external source configurations (connects an adapter + credentials to an account) |
-| **SyncModule** | `src/sync/` | Background sync engine using BullMQ. Processes inbound (fetch from external) and outbound (push to external) sync jobs |
+| **SourcesModule** | `src/sources/` | CRUD for external source configurations. Sources link to `integration_connections` via `connection_id` FK for centralized credential management |
+| **SyncModule** | `src/sync/` | Background sync engine using BullMQ. Processes inbound (fetch from external) and outbound (push to external) sync jobs. Reads credentials from linked `integration_connections` when available |
 
 ### AI Modules
 
@@ -111,7 +116,7 @@ The frontend is built with **Next.js 15** using the **App Router**.
 | `/dashboard/knowledge` | Knowledge base management (upload and manage documents) |
 | `/dashboard/projects` | Project list and project-specific views |
 | `/dashboard/settings/general` | General account settings |
-| `/dashboard/settings/integrations` | Manage external integrations (Notion, ClickUp, etc.) |
+| `/dashboard/settings/integrations` | Unified integrations page: Integration Marketplace, Task Sources, and Communication Tools. All use the same IntegrationSetupDialog with test chat |
 | `/dashboard/settings/ai-provider` | Configure AI provider (OpenRouter model selection) |
 | `/dashboard/settings/categories` | Manage task categories and labels |
 | `/dashboard/settings/skills` | Configure AI skills |
@@ -170,8 +175,10 @@ Browser (React)
 ```
 Inbound Sync (external → TaskClaw):
   SyncModule (BullMQ job)
+    → If source.connection_id → decrypt credentials from integration_connections
+    → Merge credentials into effective config
     → AdapterRegistry.getAdapter(provider)
-      → Adapter.fetchTasks(config, filters)
+      → Adapter.fetchTasks(effectiveConfig, filters)
         → External API (Notion, ClickUp, etc.)
       ← ExternalTask[]
     → Upsert into tasks table (match by external_id)
@@ -241,16 +248,177 @@ const editionModules = isCloudEdition
 
 The `ee/` directory contains all cloud-only code. Community contributors do not need to touch this directory.
 
-## Adapter Pattern
+## MCP Server
 
-External integrations (Notion, ClickUp, and any future providers) follow a consistent adapter pattern:
+TaskClaw provides a **Model Context Protocol (MCP) server** that allows AI agents to programmatically access the TaskClaw API. The MCP server is a standalone Node.js process that communicates with AI assistants (Claude Code, Cursor, Windsurf) via stdio and with the TaskClaw backend via HTTP.
+
+### Architecture
+
+```
+┌────────────────────────────────────────┐
+│    AI Agent (Claude Code, Cursor)     │
+└───────────────┬────────────────────────┘
+                │ stdio (MCP Protocol)
+                ▼
+┌────────────────────────────────────────┐
+│        TaskClaw MCP Server             │
+│  (standalone Node.js process)          │
+│                                        │
+│  27 Tools:                             │
+│  - Board tools (7)                     │
+│  - Task tools (8)                      │
+│  - Conversation tools (3)              │
+│  - Skill/knowledge tools (3)           │
+│  - Integration tools (2)               │
+│  - Account tools (2)                   │
+│  - Board step tools (4)                │
+└───────────────┬────────────────────────┘
+                │ HTTP (REST API)
+                │ JWT or API Key auth
+                ▼
+┌────────────────────────────────────────┐
+│        TaskClaw Backend (NestJS)       │
+└────────────────────────────────────────┘
+```
+
+### Key Files
+
+- `backend/mcp-entry.ts` — MCP server entry point
+- `backend/src/mcp/tools/` — Tool implementations
+- `~/.claude/mcp.json` — User config (Claude Code)
+
+The MCP server authenticates using either:
+- **JWT** (email/password login) — automatic token refresh
+- **API Key** (recommended for agents) — persistent, scoped access
+
+See [MCP Server Documentation](./mcp-server.md) for full details.
+
+## Webhook Event System
+
+TaskClaw supports webhooks for real-time event notifications. External applications can subscribe to events (task created, board updated, sync completed, etc.) and receive HTTP POST callbacks when they occur.
+
+### Architecture
+
+```
+┌────────────────────────────────────────┐
+│         TaskClaw Backend               │
+│                                        │
+│  ┌──────────────┐  Event emitted      │
+│  │ TasksService │──────────┐          │
+│  └──────────────┘          │          │
+│                            ▼          │
+│  ┌──────────────────────────────────┐ │
+│  │   WebhookEmitterService          │ │
+│  │  - Find matching webhooks        │ │
+│  │  - Queue delivery jobs           │ │
+│  └──────────────┬───────────────────┘ │
+└─────────────────┼─────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│      BullMQ Delivery Queue (Redis)      │
+│  - HMAC-SHA256 signature generation     │
+│  - Exponential backoff retry (3 tries)  │
+└─────────────────┬───────────────────────┘
+                  │ POST /webhook
+                  ▼
+┌─────────────────────────────────────────┐
+│         External Application            │
+│  - Verify HMAC signature                │
+│  - Process event                        │
+│  - Return 200 OK                        │
+└─────────────────────────────────────────┘
+```
+
+### Supported Events
+
+| Event | Description |
+|-------|-------------|
+| `task.created` | Task created |
+| `task.updated` | Task fields updated |
+| `task.moved` | Task moved to different step |
+| `task.completed` | Task marked complete |
+| `task.deleted` | Task deleted |
+| `board.created` | Board created |
+| `board.updated` | Board updated |
+| `board.deleted` | Board deleted |
+| `conversation.created` | Conversation started |
+| `message.created` | Message sent |
+| `sync.completed` | Sync job succeeded |
+| `sync.failed` | Sync job failed |
+
+### Delivery Guarantees
+
+- **At-least-once delivery**: Events may be delivered multiple times
+- **HMAC-SHA256 signatures**: All payloads signed with webhook secret
+- **Retry logic**: 3 attempts with exponential backoff (0s, 60s, 5min)
+- **Timeout**: 10 seconds per delivery
+- **Idempotency**: Consumer must handle duplicate deliveries
+
+See [Webhook Documentation](./documentation/webhooks.md) for full details.
+
+## Unified Integration System
+
+All external integrations — marketplace integrations (Discord, GitHub, etc.), communication tools (Telegram, WhatsApp, Slack), and task sources (Notion, ClickUp) — share a single unified data model:
+
+### Database Tables
+
+| Table | Purpose |
+|---|---|
+| `integration_definitions` | Catalog of available integrations. Each has a `slug`, `categories` (e.g. `['communication']`, `['source']`), `auth_type`, `key_fields` schema, and a linked `skill_id`. System definitions (`is_system = true`) are seeded; users can also create custom definitions |
+| `integration_connections` | User-configured instances of definitions. Stores encrypted `credentials`, `status`, `config`, `health_status`, and health check metadata. One connection per account per definition |
+| `board_integration_refs` | Links connections to boards for context injection into AI prompts |
+| `sources` | Task sync-specific configuration (category, sync interval, filters). Links to `integration_connections` via `connection_id` FK for credential management |
+| `skills` | Integration-linked skills (`skill_type = 'integration'`) provide AI instructions for each integration |
+
+### Category-Based Routing
+
+The `categories` text array on `integration_definitions` determines where each integration appears in the UI:
+
+| Category | UI Section | Examples |
+|---|---|---|
+| `communication` | Communication Tools | Telegram, WhatsApp, Slack |
+| `source` | Task Sources | Notion, ClickUp |
+| *(other/none)* | Integration Marketplace | Discord, GitHub, Linear, Jira |
+
+### Integration Flow
+
+```
+User opens Settings > Integrations
+  → IntegrationManager shows marketplace (excludes communication + source categories)
+  → CommToolsSection shows communication tools (category = 'communication')
+  → Task Sources section shows source integrations (category = 'source')
+
+User clicks "Connect" on any integration:
+  → IntegrationSetupDialog opens (60% credentials, 40% test chat)
+    → Left panel: credential fields from definition.key_fields schema
+    → Right panel: live test chat with OpenClaw to verify the integration works
+  → On save: creates integration_connection with encrypted credentials
+  → For sources: additional wizard steps (database/list selection, category assignment)
+```
+
+### Health Monitoring (Communication Tools)
+
+Communication tools use health checks to verify OpenClaw gateway reachability:
+
+- `IntegrationsService` runs a 60-second cron that checks due connections
+- Each connection has `health_status` (`healthy`/`unhealthy`/`checking`/`unknown`), `last_checked_at`, and `check_interval_minutes`
+- The `ConversationsService` reads active+healthy comm tools to inject into AI system prompts
+
+### Credential Encryption
+
+All credentials are stored encrypted using AES-256-GCM via `encrypt()`/`decrypt()` from `common/utils/encryption.util.ts`. Credentials migrated from legacy tables may be stored as plain JSON initially and are auto-encrypted on first read.
+
+## Adapter Pattern (Source Sync)
+
+Task source adapters (Notion, ClickUp, and any future providers) follow a consistent adapter pattern:
 
 1. Each adapter implements the `SourceAdapter` interface (`src/adapters/interfaces/source-adapter.interface.ts`)
 2. Adapters are decorated with `@Adapter('providerName')` for auto-discovery
 3. The `AdaptersModule` uses NestJS `DiscoveryService` to find and register all adapters at startup
 4. The `AdapterRegistry` provides a factory to retrieve adapters by provider name
-5. The `SourcesModule` manages the CRUD for source configurations (which adapter + credentials)
-6. The `SyncModule` uses the registry to dispatch sync jobs to the correct adapter
+5. The `SourcesModule` manages the CRUD for source configurations, linked to `integration_connections` via `connection_id`
+6. The `SyncModule` reads credentials from the linked `integration_connection` (falling back to `source.config` for backward compatibility) and dispatches sync jobs to the correct adapter
 
 To add a new integration, see [Adding an Integration](./integrations/adding-an-integration.md).
 

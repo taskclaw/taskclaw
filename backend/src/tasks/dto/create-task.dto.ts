@@ -4,6 +4,7 @@ import {
   IsUUID,
   IsBoolean,
   IsISO8601,
+  IsObject,
 } from 'class-validator';
 
 export class CreateTaskDto {
@@ -45,4 +46,8 @@ export class CreateTaskDto {
   @IsOptional()
   @IsUUID()
   current_step_id?: string;
+
+  @IsOptional()
+  @IsObject()
+  card_data?: Record<string, any>;
 }

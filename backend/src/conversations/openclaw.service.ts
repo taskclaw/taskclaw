@@ -1,6 +1,8 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { withRetry } from '../common/utils/retry.util';
 import { LangfuseService } from '../ee/langfuse/langfuse.service';
+import WebSocket from 'ws';
+import { v4 as uuid } from 'uuid';
 
 export interface OpenClawMessage {
   role: 'user' | 'assistant' | 'system';
@@ -72,7 +74,7 @@ export class OpenClawService {
 
       if (err.name === 'AbortError') {
         throw new BadRequestException(
-          'AI request timed out after 30 seconds',
+          'AI request timed out after 120 seconds',
         );
       }
 
@@ -90,7 +92,6 @@ export class OpenClawService {
         usage: result?.metadata?.tokens_used
           ? {
               totalTokens: result.metadata.tokens_used,
-              // Estimate split: ~30% prompt, ~70% completion
               promptTokens: Math.round(result.metadata.tokens_used * 0.3),
               completionTokens: Math.round(result.metadata.tokens_used * 0.7),
             }
@@ -110,80 +111,58 @@ export class OpenClawService {
 
   /**
    * Execute a single AI API request (without retry — called by sendMessage via withRetry).
+   * Uses WebSocket protocol for OpenClaw, HTTP for OpenRouter.
    */
   private async executeAIRequest(
     config: OpenClawConfig,
     messages: OpenClawMessage[],
   ): Promise<OpenClawResponse> {
-    // Detect if this is OpenRouter based on URL
     const isOpenRouter = config.api_url.includes('openrouter.ai');
 
-    let requestBody: any;
-    let endpoint: string;
-
     if (isOpenRouter) {
-      // OpenRouter format
-      requestBody = {
-        model: 'openai/gpt-3.5-turbo', // Default model
-        messages: messages,
-      };
-      endpoint = `${config.api_url}/chat/completions`;
-
-      this.logger.log(
-        `Sending ${messages.length} messages to OpenRouter`,
-      );
-    } else {
-      // OpenClaw format — uses OpenResponses API (/v1/responses)
-      const input = messages.map((m) => ({
-        type: 'message' as const,
-        role: m.role,
-        content: m.content,
-      }));
-
-      requestBody = {
-        model: 'openclaw',
-        input,
-        stream: false,
-      };
-
-      if (config.agent_id) {
-        requestBody.agent_id = config.agent_id;
-      }
-
-      endpoint = `${config.api_url}/v1/responses`;
-
-      this.logger.log(
-        `Sending ${messages.length} messages to OpenClaw at ${config.api_url}`,
-      );
+      return this.executeOpenRouterRequest(config, messages);
     }
+
+    return this.executeOpenClawWebSocket(config, messages);
+  }
+
+  /**
+   * Execute OpenRouter request via HTTP (unchanged).
+   */
+  private async executeOpenRouterRequest(
+    config: OpenClawConfig,
+    messages: OpenClawMessage[],
+  ): Promise<OpenClawResponse> {
+    const requestBody = {
+      model: 'openai/gpt-3.5-turbo',
+      messages: messages,
+    };
+    const endpoint = `${config.api_url}/chat/completions`;
+
+    this.logger.log(
+      `[OpenRouter] Sending ${messages.length} messages`,
+    );
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.api_key}`,
     };
 
-    if (!isOpenRouter && config.agent_id) {
-      headers['x-openclaw-agent-id'] = config.agent_id;
-    }
-
     const response = await fetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(120000), // 120 second timeout for OpenClaw
+      signal: AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(
-        `API error (${response.status}): ${errorText}`,
-      );
+      throw new Error(`API error (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
 
-    // Handle OpenRouter response format
-    if (isOpenRouter && data.choices && data.choices[0]) {
+    if (data.choices && data.choices[0]) {
       return {
         response: data.choices[0].message.content,
         metadata: {
@@ -193,88 +172,393 @@ export class OpenClawService {
       };
     }
 
-    // Handle OpenClaw/OpenResponses response format
-    // Format: { output: [{ type: "message", content: [{ type: "output_text", text: "..." }] }] }
-    if (data.output && Array.isArray(data.output)) {
-      const textItems = data.output.filter(
-        (item: { type: string }) => item.type === 'message',
-      );
-      if (textItems.length > 0) {
-        const lastMessage = textItems[textItems.length - 1];
-        if (lastMessage.content) {
-          if (typeof lastMessage.content === 'string') {
-            return { response: lastMessage.content, metadata: { model: data.model } };
-          }
-          if (Array.isArray(lastMessage.content)) {
-            const text = lastMessage.content
-              .filter((c: { type: string }) => c.type === 'output_text')
-              .map((c: { text: string }) => c.text)
-              .join('');
-            if (text) {
-              return { response: text, metadata: { model: data.model } };
-            }
-          }
-        }
-      }
-    }
-
-    if (data.output_text) {
-      return { response: data.output_text, metadata: { model: data.model } };
-    }
-
-    // Handle simple response formats
-    if (typeof data === 'string') {
-      return { response: data };
-    }
-
-    if (data.response) {
-      return data;
-    }
-
-    if (data.message) {
-      return { response: data.message, metadata: data };
-    }
-
-    if (data.content) {
-      return { response: data.content, metadata: data };
-    }
-
-    this.logger.warn('Unexpected OpenClaw response shape', JSON.stringify(data).slice(0, 500));
-    throw new Error('Unexpected response format from AI provider');
+    throw new Error('Unexpected response format from OpenRouter');
   }
 
   /**
-   * Test connection to OpenClaw/OpenRouter instance
+   * Execute OpenClaw request via WebSocket protocol.
+   *
+   * OpenClaw uses a WebSocket-based API:
+   * 1. Connect to ws://<host>
+   * 2. Receive connect.challenge with nonce
+   * 3. Respond with connect request (auth token + client info)
+   * 4. Send chat.send with the user message
+   * 5. Collect streaming text chunks until chat.done event
+   * 6. Close connection
+   */
+  private async executeOpenClawWebSocket(
+    config: OpenClawConfig,
+    messages: OpenClawMessage[],
+  ): Promise<OpenClawResponse> {
+    // Convert HTTP URL to WebSocket URL
+    const wsUrl = config.api_url
+      .replace(/^https:\/\//, 'wss://')
+      .replace(/^http:\/\//, 'ws://');
+
+    this.logger.log(
+      `[OpenClaw WS] Connecting to ${wsUrl} with ${messages.length} messages`,
+    );
+
+    // Build the user message: combine system prompt + history into a single message
+    // OpenClaw expects a single text input via chat.send, with system context prepended
+    const userInput = this.buildOpenClawInput(messages);
+
+    return new Promise<OpenClawResponse>((resolve, reject) => {
+      const timeoutMs = 180000; // 3 minutes for full conversation
+      let responseChunks: string[] = [];
+      let connected = false;
+      let chatSent = false;
+      let chatAcknowledged = false;
+      let resolved = false;
+      let currentSessionKey: string = '';
+      let runId: string | null = null;
+
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          this.logger.error('[OpenClaw WS] Request timed out after 180s');
+          try { ws.close(); } catch {}
+          reject(new Error('OpenClaw request timed out after 180 seconds'));
+        }
+      }, timeoutMs);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        try { ws.close(); } catch {}
+      };
+
+      const ws = new WebSocket(wsUrl, {
+        headers: { 'User-Agent': 'TaskClaw/1.0' },
+      });
+
+      ws.on('open', () => {
+        this.logger.log('[OpenClaw WS] Connection opened, waiting for challenge...');
+      });
+
+      ws.on('message', (raw: WebSocket.RawData) => {
+        if (resolved) return;
+
+        let data: any;
+        try {
+          data = JSON.parse(raw.toString());
+        } catch {
+          this.logger.warn('[OpenClaw WS] Non-JSON message:', raw.toString().slice(0, 200));
+          return;
+        }
+
+        // Skip noisy events
+        if (data.event === 'health' || data.event === 'tick') return;
+
+        this.logger.debug(`[OpenClaw WS] ${data.type}/${data.event || 'res'}`);
+
+        // ── Step 1: Connect challenge ──
+        if (data.type === 'event' && data.event === 'connect.challenge') {
+          this.logger.log('[OpenClaw WS] Authenticating...');
+          ws.send(JSON.stringify({
+            type: 'req',
+            id: uuid(),
+            method: 'connect',
+            params: {
+              auth: { token: config.api_key },
+              client: {
+                id: 'webchat-ui',
+                version: '1.0.0',
+                platform: 'web',
+                mode: 'webchat',
+              },
+              minProtocol: 3,
+              maxProtocol: 3,
+              role: 'operator',
+              scopes: ['operator.admin'],
+            },
+          }));
+          return;
+        }
+
+        // ── Step 2: Connect success ──
+        if (data.type === 'res' && data.ok === true && !connected) {
+          connected = true;
+          this.logger.log('[OpenClaw WS] Authenticated successfully');
+
+          currentSessionKey = `taskclaw-${uuid().slice(0, 12)}`;
+          ws.send(JSON.stringify({
+            type: 'req',
+            id: uuid(),
+            method: 'chat.send',
+            params: {
+              sessionKey: currentSessionKey,
+              message: userInput,
+              idempotencyKey: uuid(),
+              ...(config.agent_id ? { agent: config.agent_id } : {}),
+            },
+          }));
+
+          this.logger.log(`[OpenClaw WS] Sent chat.send (${userInput.length} chars, session: ${currentSessionKey})`);
+          chatSent = true;
+          return;
+        }
+
+        // ── Connect failure ──
+        if (data.type === 'res' && data.ok === false && !connected) {
+          resolved = true;
+          const errMsg = data.error?.message || data.error || 'Authentication failed';
+          this.logger.error(`[OpenClaw WS] Auth failed: ${errMsg}`);
+          cleanup();
+          reject(new Error(`OpenClaw authentication failed: ${errMsg}`));
+          return;
+        }
+
+        // ── chat.send acknowledgment ──
+        if (data.type === 'res' && data.ok === true && chatSent && !chatAcknowledged) {
+          chatAcknowledged = true;
+          runId = data.payload?.runId || null;
+          this.logger.log(`[OpenClaw WS] chat.send acknowledged (runId: ${runId})`);
+          return;
+        }
+
+        // ── chat.send error ──
+        if (data.type === 'res' && data.ok === false && chatSent && !chatAcknowledged) {
+          resolved = true;
+          const errMsg = data.error?.message || data.error || 'Chat request failed';
+          this.logger.error(`[OpenClaw WS] chat.send failed: ${errMsg}`);
+          cleanup();
+          reject(new Error(`OpenClaw chat error: ${errMsg}`));
+          return;
+        }
+
+        // ── Agent streaming (text or assistant stream) ──
+        if (data.type === 'event' && data.event === 'agent') {
+          const payload = data.payload;
+          // Capture delta text from "assistant" stream (primary streaming method)
+          if (payload?.stream === 'assistant' && payload?.data?.delta) {
+            responseChunks.push(payload.data.delta);
+          }
+          // Also capture from "text" stream (alternative streaming method)
+          if (payload?.stream === 'text' && payload?.data?.text) {
+            responseChunks.push(payload.data.text);
+          }
+          return;
+        }
+
+        // ── Chat completion (final state) ──
+        // The final event includes the full response in payload.message.content
+        if (data.type === 'event' && data.event === 'chat' && data.payload?.state === 'final') {
+          this.logger.log('[OpenClaw WS] Chat reached final state');
+          resolved = true;
+
+          // Priority 1: Extract full text from the final event's message content
+          let fullResponse = '';
+          const finalMessage = data.payload?.message;
+          if (finalMessage?.content && Array.isArray(finalMessage.content)) {
+            for (const block of finalMessage.content) {
+              if (block.type === 'text' && block.text) {
+                fullResponse += block.text;
+              }
+            }
+          }
+
+          // Priority 2: Streaming chunks (if final event didn't include full text)
+          if (!fullResponse && responseChunks.length > 0) {
+            fullResponse = responseChunks.join('');
+            this.logger.log(`[OpenClaw WS] Using ${responseChunks.length} streaming chunks (${fullResponse.length} chars)`);
+          }
+
+          // Priority 3: Fall back to the accumulated text from the last assistant stream event
+          if (!fullResponse) {
+            this.logger.warn('[OpenClaw WS] No response text in final event or stream');
+            fullResponse = 'The AI agent processed this task but did not generate a text response. This may indicate a model configuration issue on the OpenClaw instance.';
+          } else {
+            this.logger.log(`[OpenClaw WS] Chat completed with ${fullResponse.length} chars`);
+          }
+
+          cleanup();
+          resolve({
+            response: fullResponse,
+            metadata: { model: 'openclaw', runId },
+          });
+          return;
+        }
+
+        // ── Chat delta events (also carry accumulated text) ──
+        // These are emitted alongside agent stream events but carry content blocks
+        if (data.type === 'event' && data.event === 'chat' && data.payload?.state === 'delta') {
+          // We don't need to process deltas since we collect from agent stream
+          // But if we missed stream events, the final event has the full text
+          return;
+        }
+
+        // ── Error events ──
+        if (data.type === 'event' && (data.event === 'chat.error' || data.event === 'error')) {
+          resolved = true;
+          const errMsg = data.data?.message || data.payload?.message || 'Unknown error';
+          this.logger.error(`[OpenClaw WS] Error event: ${errMsg}`);
+          cleanup();
+          reject(new Error(`OpenClaw error: ${errMsg}`));
+          return;
+        }
+      });
+
+      ws.on('error', (err) => {
+        if (!resolved) {
+          resolved = true;
+          this.logger.error(`[OpenClaw WS] Connection error: ${err.message}`);
+          cleanup();
+          reject(new Error(`OpenClaw connection error: ${err.message}`));
+        }
+      });
+
+      ws.on('close', (code, reason) => {
+        this.logger.log(`[OpenClaw WS] Closed: code=${code}`);
+        if (!resolved) {
+          resolved = true;
+          if (responseChunks.length > 0) {
+            cleanup();
+            resolve({
+              response: responseChunks.join(''),
+              metadata: { model: 'openclaw' },
+            });
+          } else {
+            cleanup();
+            reject(new Error(`OpenClaw connection closed unexpectedly (code: ${code})`));
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * Build a single input string for OpenClaw from message array.
+   * Prepends system prompt and conversation history as context.
+   */
+  private buildOpenClawInput(messages: OpenClawMessage[]): string {
+    const parts: string[] = [];
+
+    const systemMsgs = messages.filter((m) => m.role === 'system');
+    const nonSystemMsgs = messages.filter((m) => m.role !== 'system');
+
+    // Prepend system context
+    if (systemMsgs.length > 0) {
+      parts.push('[System Context]\n' + systemMsgs.map((m) => m.content).join('\n'));
+    }
+
+    // Add conversation history (all but last user message)
+    const historyMsgs = nonSystemMsgs.slice(0, -1);
+    if (historyMsgs.length > 0) {
+      parts.push(
+        '[Conversation History]\n' +
+          historyMsgs.map((m) => `${m.role}: ${m.content}`).join('\n'),
+      );
+    }
+
+    // Add current user message
+    const lastMsg = nonSystemMsgs[nonSystemMsgs.length - 1];
+    if (lastMsg) {
+      parts.push(lastMsg.content);
+    }
+
+    return parts.join('\n\n');
+  }
+
+  /**
+   * Test connection to OpenClaw/OpenRouter instance.
+   * For OpenClaw, opens a WebSocket, authenticates, and closes.
    */
   async testConnection(config: OpenClawConfig): Promise<boolean> {
-    try {
-      const isOpenRouter = config.api_url.includes('openrouter.ai');
-      
-      if (isOpenRouter) {
-        // OpenRouter doesn't have a /health endpoint, test with models list
+    const isOpenRouter = config.api_url.includes('openrouter.ai');
+
+    if (isOpenRouter) {
+      try {
         const response = await fetch(`${config.api_url}/models`, {
           method: 'GET',
-          headers: {
-            Authorization: `Bearer ${config.api_key}`,
-          },
+          headers: { Authorization: `Bearer ${config.api_key}` },
           signal: AbortSignal.timeout(5000),
         });
         return response.ok;
-      } else {
-        // OpenClaw health endpoint
-        const response = await fetch(`${config.api_url}/health`, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${config.api_key}`,
-          },
-          signal: AbortSignal.timeout(5000),
-        });
-        return response.ok;
+      } catch (error) {
+        this.logger.error('[OpenRouter] Connection test failed:', error.message);
+        return false;
       }
-    } catch (error) {
-      this.logger.error('AI connection test failed:', error.message);
-      return false;
     }
+
+    // OpenClaw: test via WebSocket auth
+    return this.testOpenClawConnection(config);
+  }
+
+  /**
+   * Test OpenClaw connection via WebSocket handshake.
+   */
+  private async testOpenClawConnection(config: OpenClawConfig): Promise<boolean> {
+    const wsUrl = config.api_url
+      .replace(/^https:\/\//, 'wss://')
+      .replace(/^http:\/\//, 'ws://');
+
+    this.logger.log(`[OpenClaw WS] Testing connection to ${wsUrl}`);
+
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        this.logger.warn('[OpenClaw WS] Connection test timed out');
+        try { ws.close(); } catch {}
+        resolve(false);
+      }, 10000);
+
+      const ws = new WebSocket(wsUrl, {
+        headers: { 'User-Agent': 'TaskClaw/1.0' },
+      });
+
+      ws.on('message', (raw: WebSocket.RawData) => {
+        let data: any;
+        try { data = JSON.parse(raw.toString()); } catch { return; }
+
+        if (data.type === 'event' && data.event === 'connect.challenge') {
+          const connectMsg = {
+            type: 'req',
+            id: uuid(),
+            method: 'connect',
+            params: {
+              auth: { token: config.api_key },
+              client: {
+                id: 'webchat-ui',
+                version: '1.0.0',
+                platform: 'web',
+                mode: 'webchat',
+              },
+              minProtocol: 3,
+              maxProtocol: 3,
+              role: 'operator',
+              scopes: ['operator.admin'],
+            },
+          };
+          ws.send(JSON.stringify(connectMsg));
+          return;
+        }
+
+        if (data.type === 'res' && data.ok === true) {
+          this.logger.log('[OpenClaw WS] Connection test passed');
+          clearTimeout(timer);
+          try { ws.close(); } catch {}
+          resolve(true);
+          return;
+        }
+
+        if (data.type === 'res' && data.ok === false) {
+          this.logger.warn(`[OpenClaw WS] Connection test auth failed: ${data.error?.message || 'unknown'}`);
+          clearTimeout(timer);
+          try { ws.close(); } catch {}
+          resolve(false);
+          return;
+        }
+      });
+
+      ws.on('error', (err) => {
+        this.logger.error(`[OpenClaw WS] Connection test error: ${err.message}`);
+        clearTimeout(timer);
+        resolve(false);
+      });
+
+      ws.on('close', () => {
+        clearTimeout(timer);
+      });
+    });
   }
 
   /**
@@ -287,16 +571,11 @@ export class OpenClawService {
   ): OpenClawMessage[] {
     const messages: OpenClawMessage[] = [];
 
-    // Add system prompt
     if (systemPrompt) {
-      messages.push({
-        role: 'system',
-        content: systemPrompt,
-      });
+      messages.push({ role: 'system', content: systemPrompt });
     }
 
-    // Add conversation history (limit to last N messages to avoid token limits)
-    const recentHistory = conversationHistory.slice(-10); // Last 10 messages
+    const recentHistory = conversationHistory.slice(-10);
     for (const msg of recentHistory) {
       messages.push({
         role: msg.role as 'user' | 'assistant',
@@ -304,11 +583,7 @@ export class OpenClawService {
       });
     }
 
-    // Add current user message
-    messages.push({
-      role: 'user',
-      content: userMessage,
-    });
+    messages.push({ role: 'user', content: userMessage });
 
     return messages;
   }

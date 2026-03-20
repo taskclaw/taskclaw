@@ -55,7 +55,10 @@ export function useUpdateTask() {
     return useMutation({
         mutationFn: ({ id, ...updates }: { id: string } & Parameters<typeof updateTask>[1]) =>
             updateTask(id, updates),
-        onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['tasks'] })
+            qc.invalidateQueries({ queryKey: ['boardTasks'] })
+        },
     })
 }
 
@@ -82,7 +85,10 @@ export function useMoveTask() {
         onError: (_err, _vars, context) => {
             if (context?.prev) qc.setQueryData(['tasks'], context.prev)
         },
-        onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+        onSettled: () => {
+            qc.invalidateQueries({ queryKey: ['tasks'] })
+            qc.invalidateQueries({ queryKey: ['boardTasks'] })
+        },
     })
 }
 
@@ -90,7 +96,10 @@ export function useCompleteTask() {
     const qc = useQueryClient()
     return useMutation({
         mutationFn: (id: string) => updateTask(id, { completed: true, status: 'Done' }),
-        onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['tasks'] })
+            qc.invalidateQueries({ queryKey: ['boardTasks'] })
+        },
     })
 }
 
@@ -107,7 +116,10 @@ export function useDeleteTask() {
     const qc = useQueryClient()
     return useMutation({
         mutationFn: deleteTask,
-        onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['tasks'] })
+            qc.invalidateQueries({ queryKey: ['boardTasks'] })
+        },
     })
 }
 

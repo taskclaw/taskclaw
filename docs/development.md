@@ -97,9 +97,11 @@ pnpm run dev
 ```
 
 Once running:
-- **Frontend**: [http://localhost:3000](http://localhost:3000)
-- **Backend API**: [http://localhost:3001](http://localhost:3001)
-- **Health check**: [http://localhost:3001/health](http://localhost:3001/health)
+- **Frontend**: [http://localhost:3002](http://localhost:3002)
+- **Backend API**: [http://localhost:3003](http://localhost:3003)
+- **Health check**: [http://localhost:3003/health](http://localhost:3003/health)
+- **OpenAPI Docs (Swagger UI)**: [http://localhost:3003/api/docs](http://localhost:3003/api/docs)
+- **OpenAPI JSON Spec**: [http://localhost:3003/api/docs-json](http://localhost:3003/api/docs-json)
 
 ## Project Structure
 
@@ -218,6 +220,31 @@ pnpm run format        # Prettier formatting for backend code
 ```
 
 ## Common Development Tasks
+
+### Building the MCP Server
+
+The MCP (Model Context Protocol) server allows AI agents to access TaskClaw programmatically.
+
+```bash
+cd backend
+npm run build:mcp
+```
+
+This compiles the MCP server to `backend/dist/mcp-entry.js`. You can then configure it in your AI IDE (Claude Code, Cursor, Windsurf) to access TaskClaw tools.
+
+See [MCP Server Documentation](./mcp-server.md) for configuration and usage.
+
+### Accessing Swagger UI (OpenAPI Docs)
+
+TaskClaw exposes a full OpenAPI specification at `/api/docs`:
+
+1. Start the backend: `cd backend && pnpm run start:dev`
+2. Open [http://localhost:3003/api/docs](http://localhost:3003/api/docs) in your browser
+3. Browse all API endpoints with schemas, parameters, and responses
+4. Click "Try it out" to test endpoints directly from the UI
+5. Download the OpenAPI JSON spec from [http://localhost:3003/api/docs-json](http://localhost:3003/api/docs-json)
+
+**Tip**: You can use the Swagger UI to explore all available endpoints, test authentication with API keys or JWTs, and generate client SDKs for other languages.
 
 ### Killing Stale Processes
 

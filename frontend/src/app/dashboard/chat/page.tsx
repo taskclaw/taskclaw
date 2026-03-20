@@ -254,11 +254,14 @@ export default function ChatPage() {
               </div>
             ) : (
               conversations.map((conv) => (
-                <button
+                <div
                   key={conv.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setCurrentConversation(conv)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setCurrentConversation(conv) }}
                   className={cn(
-                    'w-full text-left p-3 rounded-lg hover:bg-accent transition-colors',
+                    'w-full text-left p-3 rounded-lg hover:bg-accent transition-colors cursor-pointer',
                     currentConversation?.id === conv.id && 'bg-accent border border-accent-foreground/20',
                     deletingId === conv.id && 'animate-deleting',
                   )}
@@ -289,7 +292,7 @@ export default function ChatPage() {
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
-                </button>
+                </div>
               ))
             )}
           </div>

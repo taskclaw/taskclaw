@@ -6,6 +6,7 @@ import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AdapterRegistry } from '../adapters/adapter.registry';
 import { SYNC_QUEUE_NAME } from './sync-queue.module';
 import { SyncJobData } from './sync.processor';
+import { encrypt, decrypt } from '../common/utils/encryption.util';
 
 export interface SyncResult {
   tasks_synced: number;
@@ -274,7 +275,18 @@ export class SyncService {
       this.logger.log(
         `Fetching tasks from ${source.provider} (source ${source.id})${syncFilters ? ` with ${syncFilters.length} filter(s)` : ''}...`,
       );
-      const externalTasks = await adapter.fetchTasks(source.config, syncFilters);
+      // If source is linked to an integration connection, merge decrypted credentials
+      let effectiveConfig = source.config;
+      if (source.connection_id) {
+        try {
+          const connCredentials = await this.getConnectionCredentials(source.connection_id);
+          effectiveConfig = { ...source.config, ...connCredentials };
+        } catch (err) {
+          this.logger.warn(`Failed to get connection credentials for source ${source.id}, falling back to source config: ${(err as Error).message}`);
+        }
+      }
+
+      const externalTasks = await adapter.fetchTasks(effectiveConfig, syncFilters);
 
       this.logger.log(
         `Fetched ${externalTasks.length} tasks from external source`,
@@ -402,5 +414,34 @@ export class SyncService {
     });
 
     return Promise.all(syncStatusPromises);
+  }
+
+  private async getConnectionCredentials(connectionId: string): Promise<Record<string, string>> {
+    const { data, error } = await this.db
+      .from('integration_connections')
+      .select('credentials')
+      .eq('id', connectionId)
+      .single();
+
+    if (error || !data || !data.credentials) return {};
+
+    try {
+      const json = decrypt(data.credentials);
+      return JSON.parse(json);
+    } catch {
+      // May be unencrypted JSON from migration
+      try {
+        const parsed = JSON.parse(data.credentials);
+        // Re-encrypt for next time
+        const encrypted = encrypt(JSON.stringify(parsed));
+        void this.db
+          .from('integration_connections')
+          .update({ credentials: encrypted })
+          .eq('id', connectionId);
+        return parsed;
+      } catch {
+        return {};
+      }
+    }
   }
 }

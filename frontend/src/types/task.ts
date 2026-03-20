@@ -20,6 +20,7 @@ export interface Task {
   created_at: string
   updated_at: string
   metadata?: Record<string, any>
+  card_data?: Record<string, Record<string, any>>
   // Joined from sources table
   sources?: {
     id: string

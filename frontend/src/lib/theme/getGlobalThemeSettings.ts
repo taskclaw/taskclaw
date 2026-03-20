@@ -17,7 +17,7 @@ const DEFAULT_SETTINGS: GlobalThemeSettings = {
  * Default API URL for development
  * In production, set NEXT_PUBLIC_API_URL or API_URL environment variable
  */
-const DEFAULT_API_URL = "http://localhost:3001";
+const DEFAULT_API_URL = "http://localhost:3003";
 
 async function fetchThemeSettings(): Promise<GlobalThemeSettings> {
   try {

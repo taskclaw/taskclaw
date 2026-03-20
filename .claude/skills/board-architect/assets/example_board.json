@@ -12,6 +12,65 @@
     "allow_manual_column_move": true,
     "card_retention_days": 90
   },
+  "integrations": [
+    {
+      "slug": "x-api",
+      "name": "X (Twitter) API",
+      "description": "Required for publishing posts directly to X. Used by the Scheduled and Published steps to post content.",
+      "icon": "𝕏",
+      "required": true,
+      "setup_guide": "1. Go to developer.x.com and create a project.\n2. Generate API Key, API Secret, Access Token, and Access Token Secret.\n3. Make sure your app has Read and Write permissions.\n4. Paste the credentials below.",
+      "config_fields": [
+        {
+          "key": "api_key",
+          "label": "API Key",
+          "type": "password",
+          "required": true,
+          "placeholder": "xAI_xxxxx",
+          "help_text": "Found in your X Developer Portal under Keys and Tokens"
+        },
+        {
+          "key": "api_secret",
+          "label": "API Secret",
+          "type": "password",
+          "required": true,
+          "placeholder": "xxxxxxxxxxxxxxxx"
+        },
+        {
+          "key": "access_token",
+          "label": "Access Token",
+          "type": "password",
+          "required": true,
+          "placeholder": "xxxxxxxx-xxxxxxxx"
+        },
+        {
+          "key": "access_token_secret",
+          "label": "Access Token Secret",
+          "type": "password",
+          "required": true,
+          "placeholder": "xxxxxxxxxxxxxxxx"
+        }
+      ]
+    },
+    {
+      "slug": "nano-banana",
+      "name": "Nano Banana",
+      "description": "AI image generation for visual content. Used by the Visual step to create custom graphics, quote cards, and infographics.",
+      "icon": "🍌",
+      "required": false,
+      "setup_guide": "1. Sign up at nanobanana.com.\n2. Go to Settings → API Keys.\n3. Generate a new API key and paste it below.",
+      "config_fields": [
+        {
+          "key": "api_key",
+          "label": "API Key",
+          "type": "password",
+          "required": true,
+          "placeholder": "nb_xxxxxxxxxxxxx",
+          "help_text": "Your Nano Banana API key for image generation"
+        }
+      ]
+    }
+  ],
   "categories": [
     {
       "slug": "x-idea-generator",

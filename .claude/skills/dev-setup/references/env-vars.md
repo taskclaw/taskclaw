@@ -31,7 +31,7 @@ Used by `docker-compose.yml` for service configuration.
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | — | Supabase service role key |
 | `JWT_SECRET` | Yes | — | JWT signing secret (must match Supabase) |
 | `ENCRYPTION_KEY` | Yes | — | 64-char hex for encrypting secrets at rest |
-| `CORS_ORIGIN` | No | `http://localhost:3000` | Allowed CORS origin |
+| `CORS_ORIGIN` | No | `http://localhost:3002` | Allowed CORS origin |
 | `REDIS_URL` | No | `redis://localhost:6379` | Redis connection URL |
 | `OPENROUTER_API_KEY` | No | — | OpenRouter API key for AI features |
 | `LANGFUSE_PUBLIC_KEY` | No | — | Langfuse public key (cloud edition only) |
@@ -47,8 +47,8 @@ Used by `docker-compose.yml` for service configuration.
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | — | Supabase URL (must be accessible from browser) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | — | Supabase anonymous key |
 | `NEXT_PUBLIC_API_URL` | Yes | — | Backend API URL (must be accessible from browser) |
-| `NEXT_PUBLIC_APP_URL` | No | `http://localhost:3000` | Application URL |
-| `NEXT_PUBLIC_SITE_URL` | No | `http://localhost:3000` | Site URL for auth redirects |
+| `NEXT_PUBLIC_APP_URL` | No | `http://localhost:3002` | Application URL |
+| `NEXT_PUBLIC_SITE_URL` | No | `http://localhost:3002` | Site URL for auth redirects |
 | `NEXT_PUBLIC_BRAND_NAME` | No | `TaskClaw` | Brand name shown in UI |
 | `APP_THEME_NAME` | No | `commercial` | Theme identifier |
 

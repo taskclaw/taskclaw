@@ -3,9 +3,9 @@
 import { revalidatePath } from 'next/cache'
 import { getAuthToken, isTokenExpired } from '@/lib/auth'
 import { cookies } from 'next/headers'
-import type { Board, BoardStep, BoardTemplate } from '@/types/board'
+import type { Board, BoardStep, BoardTemplate, IntegrationStatus, ManifestIntegration } from '@/types/board'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
 
 async function getAuthHeaders() {
     const token = await getAuthToken()
@@ -117,6 +117,7 @@ export async function updateBoard(
         display_order: number
         is_archived: boolean
         default_category_id: string | null
+        settings_override: Record<string, any>
     }>
 ): Promise<{ success?: boolean; board?: Board; error?: string }> {
     const headers = await getAuthHeaders()
@@ -450,6 +451,126 @@ export async function importManifest(manifest: any): Promise<{ success?: boolean
     }
 }
 
+// ─── Board Integrations ──────────────────────────────────────────────
+
+export async function getBoardIntegrations(boardId: string): Promise<IntegrationStatus[]> {
+    const headers = await getAuthHeaders()
+    if (!headers) return []
+
+    const accountId = await getActiveAccountId()
+    if (!accountId) return []
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/boards/${boardId}/integrations`,
+            { headers, cache: 'no-store' }
+        )
+        if (!res.ok) return []
+        return await res.json()
+    } catch {
+        return []
+    }
+}
+
+export async function updateBoardIntegration(
+    boardId: string,
+    slug: string,
+    data: { enabled: boolean; config: Record<string, string> }
+): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/boards/${boardId}/integrations/${slug}`,
+            {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify(data),
+            }
+        )
+
+        if (!res.ok) {
+            const err = await res.json()
+            return { error: err.message || 'Failed to update integration' }
+        }
+
+        revalidatePath(`/dashboard/boards/${boardId}`)
+        revalidatePath(`/dashboard/boards/${boardId}/settings`)
+        return { success: true }
+    } catch (error: any) {
+        return { error: error.message }
+    }
+}
+
+export async function addBoardIntegration(
+    boardId: string,
+    integration: ManifestIntegration
+): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/boards/${boardId}/integrations`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(integration),
+            }
+        )
+
+        if (!res.ok) {
+            const err = await res.json()
+            return { error: err.message || 'Failed to add integration' }
+        }
+
+        revalidatePath(`/dashboard/boards/${boardId}`)
+        revalidatePath(`/dashboard/boards/${boardId}/settings`)
+        return { success: true }
+    } catch (error: any) {
+        return { error: error.message }
+    }
+}
+
+export async function removeBoardIntegration(
+    boardId: string,
+    slug: string
+): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/boards/${boardId}/integrations/${slug}`,
+            {
+                method: 'DELETE',
+                headers,
+            }
+        )
+
+        if (!res.ok) {
+            const err = await res.json()
+            return { error: err.message || 'Failed to remove integration' }
+        }
+
+        revalidatePath(`/dashboard/boards/${boardId}`)
+        revalidatePath(`/dashboard/boards/${boardId}/settings`)
+        return { success: true }
+    } catch (error: any) {
+        return { error: error.message }
+    }
+}
+
 // ─── Board Tasks (extends existing tasks actions) ─────────────────────
 
 export async function getBoardTasks(boardId: string): Promise<any[]> {
@@ -468,5 +589,40 @@ export async function getBoardTasks(boardId: string): Promise<any[]> {
         return await res.json()
     } catch {
         return []
+    }
+}
+
+/**
+ * Bulk-create tasks on a board (used by Board AI Chat after user confirms).
+ */
+export async function bulkCreateBoardTasks(
+    boardId: string,
+    tasks: Array<{ title: string; priority?: string; notes?: string; card_data?: Record<string, any> }>,
+): Promise<{ data?: any[]; error?: string }> {
+    const headers = await getAuthHeaders()
+    const accountId = await getActiveAccountId()
+
+    if (!headers || !accountId) {
+        return { error: 'Not authenticated' }
+    }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/tasks/bulk/${boardId}`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ tasks }),
+            }
+        )
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ message: 'Unknown error' }))
+            return { error: errorData.message || 'Failed to create tasks' }
+        }
+
+        return { data: await res.json() }
+    } catch (error: any) {
+        return { error: error.message || 'Network error' }
     }
 }

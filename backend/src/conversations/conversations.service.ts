@@ -13,7 +13,9 @@ import { KnowledgeService } from '../knowledge/knowledge.service';
 import { SkillsService } from '../skills/skills.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
-import { CommToolsService } from '../comm-tools/comm-tools.service';
+
+import { IntegrationsService } from '../integrations/integrations.service';
+import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
@@ -32,7 +34,8 @@ export class ConversationsService {
     private readonly skillsService: SkillsService,
     private readonly notionAdapter: NotionAdapter,
     private readonly agentSyncService: AgentSyncService,
-    private readonly commToolsService: CommToolsService,
+    private readonly integrationsService: IntegrationsService,
+    private readonly webhookEmitter: WebhookEmitterService,
   ) {}
 
   /**
@@ -68,6 +71,25 @@ export class ConversationsService {
       }
     }
 
+    // Verify board exists if board_id provided
+    if (dto.board_id) {
+      const { data: board, error: boardError } = await client
+        .from('board_instances')
+        .select('id, name')
+        .eq('id', dto.board_id)
+        .eq('account_id', accountId)
+        .single();
+
+      if (boardError || !board) {
+        throw new NotFoundException(`Board with ID ${dto.board_id} not found`);
+      }
+
+      // Auto-generate title from board if not provided
+      if (!dto.title) {
+        dto.title = `Board Chat: ${board.name}`;
+      }
+    }
+
     // Prepare metadata with skill_ids if provided
     const metadata: any = {};
     if (dto.skill_ids && dto.skill_ids.length > 0) {
@@ -80,6 +102,7 @@ export class ConversationsService {
         user_id: userId,
         account_id: accountId,
         task_id: dto.task_id,
+        board_id: dto.board_id || null,
         title: dto.title || 'New Conversation',
         metadata: Object.keys(metadata).length > 0 ? metadata : null,
       })
@@ -91,6 +114,8 @@ export class ConversationsService {
     }
 
     this.logger.log(`Conversation created: ${data.id} with ${dto.skill_ids?.length || 0} skills`);
+
+    this.webhookEmitter.emit(accountId, 'conversation.created', { conversation: data });
 
     return data;
   }
@@ -104,6 +129,8 @@ export class ConversationsService {
     accessToken: string,
     page: number = 1,
     limit: number = 20,
+    taskId?: string,
+    boardId?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
 
@@ -112,16 +139,32 @@ export class ConversationsService {
 
     const offset = (page - 1) * limit;
 
-    const { data, error, count } = await client
+    let query = client
       .from('conversations')
       .select('*, task:tasks(id, title)', { count: 'exact' })
       .eq('user_id', userId)
-      .eq('account_id', accountId)
+      .eq('account_id', accountId);
+
+    if (taskId) {
+      query = query.eq('task_id', taskId);
+    }
+
+    if (boardId) {
+      query = query.eq('board_id', boardId);
+    }
+
+    const { data, error, count } = await query
       .order('updated_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (error) {
       throw new Error(`Failed to fetch conversations: ${error.message}`);
+    }
+
+    if (taskId) {
+      this.logger.debug(
+        `findAll(task_id=${taskId}): found ${data?.length || 0} conversations (total: ${count})`,
+      );
     }
 
     return {
@@ -151,7 +194,7 @@ export class ConversationsService {
 
     const { data, error } = await client
       .from('conversations')
-      .select('*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, source_id, category_id, current_step_id, board_instance_id, override_category_id, sources(id, provider), categories:categories!category_id(id, name, color, icon), override_category:categories!override_category_id(id, name, color, icon))')
+      .select('*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, card_data, source_id, category_id, current_step_id, board_instance_id, override_category_id, sources(id, provider), categories:categories!category_id(id, name, color, icon), override_category:categories!override_category_id(id, name, color, icon)), board:board_instances(id, name, description, default_category_id, orchestrator_category_id, settings_override)')
       .eq('id', conversationId)
       .eq('user_id', userId)
       .eq('account_id', accountId)
@@ -194,6 +237,10 @@ export class ConversationsService {
     if (error) {
       throw new Error(`Failed to fetch messages: ${error.message}`);
     }
+
+    this.logger.debug(
+      `getMessages(conv=${conversationId.slice(0, 8)}): ${data?.length || 0} messages (total: ${count})`,
+    );
 
     return {
       data,
@@ -247,6 +294,11 @@ export class ConversationsService {
       throw new Error(`Failed to store user message: ${userMsgError.message}`);
     }
 
+    this.webhookEmitter.emit(accountId, 'message.created', {
+      message: userMessage,
+      conversation_id: conversationId,
+    });
+
     try {
       // Get conversation history
       const history = await this.getConversationHistory(
@@ -254,11 +306,10 @@ export class ConversationsService {
         accessToken,
       );
 
-      // Build system prompt with context
-      const systemPrompt = await this.buildSystemPrompt(
-        conversation,
-        accessToken,
-      );
+      // Build system prompt with context (board chat uses board-specific prompt)
+      const systemPrompt = conversation.board_id
+        ? await this.buildBoardSystemPrompt(conversation, accessToken)
+        : await this.buildSystemPrompt(conversation, accessToken);
 
       // Build message array for OpenClaw
       const messages = this.openClawService.buildMessageHistory(
@@ -295,6 +346,11 @@ export class ConversationsService {
           `Failed to store AI response: ${aiMsgError.message}`,
         );
       }
+
+      this.webhookEmitter.emit(accountId, 'message.created', {
+        message: assistantMessage,
+        conversation_id: conversationId,
+      });
 
       // Auto-generate conversation title from first user message if needed
       if (!conversation.title || conversation.title === 'New Conversation') {
@@ -336,7 +392,7 @@ export class ConversationsService {
 
   /**
    * Send a message in background mode — stores user message and returns immediately.
-   * Task moves to "AI Running" immediately, then to "In Review" when AI finishes.
+   * Task moves to "AI Running" immediately, then routed based on board settings when AI finishes.
    */
   async sendMessageBackground(
     userId: string,
@@ -344,6 +400,7 @@ export class ConversationsService {
     conversationId: string,
     dto: SendMessageDto,
     accessToken: string,
+    pipelineDepth = 0,
   ) {
     const client = this.supabaseAdmin.getClient();
 
@@ -370,6 +427,11 @@ export class ConversationsService {
       throw new Error(`Failed to store user message: ${userMsgError.message}`);
     }
 
+    this.webhookEmitter.emit(accountId, 'message.created', {
+      message: userMessage,
+      conversation_id: conversationId,
+    });
+
     // Move task to "AI Running" immediately
     if (conversation.task_id) {
       const { error: runningError } = await client
@@ -393,6 +455,7 @@ export class ConversationsService {
       conversation,
       dto.content,
       accessToken,
+      pipelineDepth,
     );
 
     return {
@@ -403,7 +466,7 @@ export class ConversationsService {
 
   /**
    * Process AI request in background. When done, stores response, mirrors to Notion,
-   * and moves the task to "In Review" status.
+   * and routes the task based on board settings (Full AI mode or "In Review").
    */
   private processAiInBackground(
     userId: string,
@@ -412,44 +475,60 @@ export class ConversationsService {
     conversation: any,
     userContent: string,
     accessToken: string,
+    pipelineDepth = 0,
   ): void {
+    const startTime = Date.now();
+    const taskId = conversation.task_id;
+    const logPrefix = `[BG-AI conv=${conversationId.slice(0, 8)} task=${taskId?.slice(0, 8) || 'none'}]`;
+
     (async () => {
       const client = this.supabaseAdmin.getClient();
       try {
-        // Get AI provider config
+        this.logger.log(`${logPrefix} Starting background AI processing`);
+
+        // Step 1: Get AI provider config
+        this.logger.debug(`${logPrefix} Step 1/5: Fetching AI provider config`);
         const aiConfig = await this.aiProviderService.getDecryptedConfig(
           accountId,
           accessToken,
         );
+        this.logger.debug(`${logPrefix} Provider: ${aiConfig.api_url}`);
 
-        // Get conversation history
+        // Step 2: Get conversation history
+        this.logger.debug(`${logPrefix} Step 2/5: Fetching conversation history`);
         const history = await this.getConversationHistory(
           conversationId,
           accessToken,
         );
+        this.logger.debug(`${logPrefix} History: ${history.length} messages`);
 
-        // Build system prompt with context
-        const systemPrompt = await this.buildSystemPrompt(
-          conversation,
-          accessToken,
-        );
+        // Step 3: Build system prompt with context (board chat uses board-specific prompt)
+        this.logger.debug(`${logPrefix} Step 3/5: Building system prompt`);
+        const systemPrompt = conversation.board_id
+          ? await this.buildBoardSystemPrompt(conversation, accessToken)
+          : await this.buildSystemPrompt(conversation, accessToken);
 
-        // Build message array for OpenClaw
+        // Step 4: Send to OpenClaw
         const messages = this.openClawService.buildMessageHistory(
           systemPrompt,
           history,
           userContent,
         );
+        this.logger.log(`${logPrefix} Step 4/5: Sending ${messages.length} messages to OpenClaw`);
 
-        // Send to OpenClaw
         const aiResponse = await this.openClawService.sendMessage(
           aiConfig,
           messages,
           { userId, accountId, conversationId },
         );
 
-        // Store AI response
-        await client
+        this.logger.log(
+          `${logPrefix} AI responded (${aiResponse.response.length} chars, model: ${aiResponse.metadata?.model || 'unknown'})`,
+        );
+
+        // Step 5: Store AI response
+        this.logger.debug(`${logPrefix} Step 5/5: Storing response and updating task`);
+        const { error: insertError } = await client
           .from('messages')
           .insert({
             conversation_id: conversationId,
@@ -457,6 +536,10 @@ export class ConversationsService {
             content: aiResponse.response,
             metadata: aiResponse.metadata || {},
           });
+
+        if (insertError) {
+          this.logger.error(`${logPrefix} Failed to store AI response: ${insertError.message}`);
+        }
 
         // Auto-generate conversation title if needed
         if (!conversation.title || conversation.title === 'New Conversation') {
@@ -466,40 +549,384 @@ export class ConversationsService {
         // Mirror messages to Notion
         this.mirrorToNotion(conversation, userContent, aiResponse.response);
 
-        // Move the task to "In Review" status
-        if (conversation.task_id) {
-          const { error: updateError } = await client
-            .from('tasks')
-            .update({ status: 'In Review' })
-            .eq('id', conversation.task_id)
-            .eq('account_id', accountId);
-
-          if (updateError) {
-            this.logger.error(
-              `Failed to move task ${conversation.task_id} to "In Review": ${updateError.message}`,
-            );
-          } else {
-            this.logger.log(
-              `Task ${conversation.task_id} moved to "In Review" after AI response`,
-            );
-          }
+        // Extract structured output from AI response and save to card_data
+        if (taskId) {
+          await this.extractAndSaveOutput(client, taskId, accountId, aiResponse.response, logPrefix);
         }
 
-        this.logger.log(`Background AI processing completed for conversation ${conversationId}`);
+        // Route task based on board settings (Full AI mode or "In Review")
+        if (taskId) {
+          await this.handlePostAiRouting(
+            client, taskId, accountId, userId, accessToken, logPrefix, pipelineDepth,
+          );
+        }
+
+        const durationMs = Date.now() - startTime;
+        this.logger.log(`${logPrefix} Completed in ${durationMs}ms`);
       } catch (err) {
+        const durationMs = Date.now() - startTime;
+        const errorMessage = (err as Error).message || 'Unknown error';
+        const errorStack = (err as Error).stack || '';
+
         this.logger.error(
-          `Background AI processing failed for conversation ${conversationId}: ${(err as Error).message}`,
+          `${logPrefix} FAILED after ${durationMs}ms: ${errorMessage}`,
         );
+        this.logger.debug(`${logPrefix} Stack: ${errorStack}`);
 
         // Store error message for user feedback
-        await client.from('messages').insert({
-          conversation_id: conversationId,
-          role: 'system',
-          content: `Error: ${(err as Error).message}`,
-          metadata: { error: true },
-        });
+        try {
+          await client.from('messages').insert({
+            conversation_id: conversationId,
+            role: 'system',
+            content: `AI processing failed: ${errorMessage}`,
+            metadata: { error: true, duration_ms: durationMs },
+          });
+        } catch (storeErr) {
+          this.logger.error(`${logPrefix} Failed to store error message: ${(storeErr as Error).message}`);
+        }
+
+        // Handle task status on failure
+        if (taskId) {
+          try {
+            await this.handlePostAiError(
+              client, taskId, accountId, conversation.task?.status || 'Idea', logPrefix,
+            );
+          } catch (revertErr) {
+            this.logger.error(`${logPrefix} Failed to handle post-AI error: ${(revertErr as Error).message}`);
+          }
+        }
       }
     })();
+  }
+
+  /**
+   * After AI processing completes, route the task based on board "Full AI" setting.
+   * Full AI ON: follow on_success_step_id routing and auto-trigger next step.
+   * Full AI OFF: move task to "In Review" for human approval.
+   */
+  private async handlePostAiRouting(
+    client: any,
+    taskId: string,
+    accountId: string,
+    userId: string,
+    accessToken: string,
+    logPrefix: string,
+    pipelineDepth: number,
+  ): Promise<void> {
+    // 1. Fetch task with board + step info
+    const { data: task } = await client
+      .from('tasks')
+      .select('id, current_step_id, board_instance_id')
+      .eq('id', taskId)
+      .single();
+
+    if (!task?.board_instance_id || !task?.current_step_id) {
+      // Not a board task — fall back to "In Review"
+      await client.from('tasks').update({ status: 'In Review' }).eq('id', taskId).eq('account_id', accountId);
+      this.logger.log(`${logPrefix} Task moved to "In Review" (non-board task)`);
+      return;
+    }
+
+    // 2. Fetch board settings_override to check full_ai flag
+    const { data: board } = await client
+      .from('board_instances')
+      .select('settings_override')
+      .eq('id', task.board_instance_id)
+      .single();
+
+    const fullAi = board?.settings_override?.full_ai === true;
+
+    if (!fullAi) {
+      await client.from('tasks').update({ status: 'In Review' }).eq('id', taskId).eq('account_id', accountId);
+      this.logger.log(`${logPrefix} Task moved to "In Review" (Full AI off)`);
+      return;
+    }
+
+    // 3. Pipeline depth guard
+    if (pipelineDepth >= 10) {
+      await client.from('tasks').update({ status: 'In Review' }).eq('id', taskId).eq('account_id', accountId);
+      this.logger.warn(`${logPrefix} Pipeline depth limit reached (${pipelineDepth}). Task moved to "In Review".`);
+      return;
+    }
+
+    // 4. Fetch current step routing config
+    const { data: currentStep } = await client
+      .from('board_steps')
+      .select('id, step_key, name, on_success_step_id, position, board_instance_id')
+      .eq('id', task.current_step_id)
+      .single();
+
+    if (!currentStep) {
+      await client.from('tasks').update({ status: 'In Review' }).eq('id', taskId).eq('account_id', accountId);
+      return;
+    }
+
+    // 5. Determine next step
+    let nextStep: any = null;
+
+    if (currentStep.on_success_step_id) {
+      const { data } = await client
+        .from('board_steps')
+        .select('id, step_key, name, step_type, trigger_type, ai_first, linked_category_id, position')
+        .eq('id', currentStep.on_success_step_id)
+        .single();
+      nextStep = data;
+    } else {
+      // Fallback: next step by position
+      const { data } = await client
+        .from('board_steps')
+        .select('id, step_key, name, step_type, trigger_type, ai_first, linked_category_id, position')
+        .eq('board_instance_id', task.board_instance_id)
+        .gt('position', currentStep.position)
+        .order('position', { ascending: true })
+        .limit(1)
+        .single();
+      nextStep = data;
+    }
+
+    if (!nextStep) {
+      // No next step — mark task complete
+      await client.from('tasks')
+        .update({ status: 'Done', completed: true })
+        .eq('id', taskId).eq('account_id', accountId);
+      this.logger.log(`${logPrefix} Full AI: no next step — task marked Done`);
+      return;
+    }
+
+    // 6. Move task to next step
+    await client.from('tasks')
+      .update({ current_step_id: nextStep.id, status: nextStep.name })
+      .eq('id', taskId).eq('account_id', accountId);
+
+    this.logger.log(`${logPrefix} Full AI: moved task to step "${nextStep.name}"`);
+
+    // 7. Auto-trigger AI if next step has on_entry trigger + AI agent
+    if (nextStep.trigger_type === 'on_entry' && (nextStep.ai_first || nextStep.linked_category_id)) {
+      this.logger.log(`${logPrefix} Full AI: auto-triggering AI on step "${nextStep.name}" (depth=${pipelineDepth + 1})`);
+      await this.autoTriggerAiForStep(taskId, accountId, userId, accessToken, nextStep, logPrefix, pipelineDepth + 1);
+    }
+  }
+
+  /**
+   * Auto-trigger AI processing for a task that just entered a step with on_entry trigger.
+   */
+  async autoTriggerAiForStep(
+    taskId: string,
+    accountId: string,
+    userId: string,
+    accessToken: string,
+    step: any,
+    logPrefix: string,
+    pipelineDepth: number,
+  ): Promise<void> {
+    try {
+      const client = this.supabaseAdmin.getClient();
+
+      // Fetch task title
+      const { data: task } = await client
+        .from('tasks')
+        .select('title, notes')
+        .eq('id', taskId)
+        .single();
+
+      if (!task) return;
+
+      // Get existing conversation for this task
+      const { data: existingConvs } = await client
+        .from('conversations')
+        .select('id')
+        .eq('task_id', taskId)
+        .eq('account_id', accountId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      let conversationId: string;
+
+      if (existingConvs?.length) {
+        conversationId = existingConvs[0].id;
+      } else {
+        const { data: newConv, error } = await client
+          .from('conversations')
+          .insert({
+            user_id: userId,
+            account_id: accountId,
+            task_id: taskId,
+            title: task.title,
+          })
+          .select()
+          .single();
+
+        if (error || !newConv) {
+          this.logger.error(`${logPrefix} Failed to create conversation for auto-trigger: ${error?.message}`);
+          return;
+        }
+        conversationId = newConv.id;
+      }
+
+      const message = `[Auto-triggered: Step "${step.name}"]\nPlease process this task according to the current step instructions and schema.`;
+      const dto = { content: message } as SendMessageDto;
+      await this.sendMessageBackground(userId, accountId, conversationId, dto, accessToken, pipelineDepth);
+
+      this.logger.log(`${logPrefix} Auto-triggered AI for step "${step.name}" on conversation ${conversationId.slice(0, 8)}`);
+    } catch (err) {
+      this.logger.error(`${logPrefix} Failed to auto-trigger AI: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Handle task status when AI processing fails.
+   * If Full AI is on and error routing is configured, move to error step.
+   * Otherwise, revert to previous status.
+   */
+  private async handlePostAiError(
+    client: any,
+    taskId: string,
+    accountId: string,
+    previousStatus: string,
+    logPrefix: string,
+  ): Promise<void> {
+    // Fetch task to check if it's a board task with Full AI
+    const { data: task } = await client
+      .from('tasks')
+      .select('id, current_step_id, board_instance_id')
+      .eq('id', taskId)
+      .single();
+
+    if (task?.board_instance_id && task?.current_step_id) {
+      const { data: board } = await client
+        .from('board_instances')
+        .select('settings_override')
+        .eq('id', task.board_instance_id)
+        .single();
+
+      const fullAi = board?.settings_override?.full_ai === true;
+
+      if (fullAi) {
+        // Check for error routing
+        const { data: currentStep } = await client
+          .from('board_steps')
+          .select('on_error_step_id')
+          .eq('id', task.current_step_id)
+          .single();
+
+        if (currentStep?.on_error_step_id) {
+          const { data: errorStep } = await client
+            .from('board_steps')
+            .select('id, name')
+            .eq('id', currentStep.on_error_step_id)
+            .single();
+
+          if (errorStep) {
+            await client.from('tasks')
+              .update({ current_step_id: errorStep.id, status: errorStep.name })
+              .eq('id', taskId).eq('account_id', accountId);
+            this.logger.log(`${logPrefix} Full AI error routing: task moved to "${errorStep.name}"`);
+            return;
+          }
+        }
+      }
+    }
+
+    // Default: revert to previous status
+    const { error: revertError } = await client
+      .from('tasks')
+      .update({ status: previousStatus })
+      .eq('id', taskId)
+      .eq('account_id', accountId);
+
+    if (revertError) {
+      this.logger.error(`${logPrefix} Failed to revert task status: ${revertError.message}`);
+    } else {
+      this.logger.log(`${logPrefix} Task status reverted to "${previousStatus}"`);
+    }
+  }
+
+  /**
+   * Extract structured output from AI response based on the step's output_schema.
+   * Looks for ```output_json blocks, parses them, and saves to card_data[step_key].
+   */
+  private async extractAndSaveOutput(
+    client: any,
+    taskId: string,
+    accountId: string,
+    aiResponse: string,
+    logPrefix: string,
+  ): Promise<void> {
+    try {
+      // Fetch task to get current step
+      const { data: task } = await client
+        .from('tasks')
+        .select('id, current_step_id, board_instance_id, card_data')
+        .eq('id', taskId)
+        .single();
+
+      if (!task?.current_step_id) return;
+
+      // Fetch step's output schema
+      const { data: step } = await client
+        .from('board_steps')
+        .select('step_key, output_schema')
+        .eq('id', task.current_step_id)
+        .single();
+
+      if (!step?.output_schema?.length) return;
+
+      // Try to extract ```output_json block from AI response
+      const jsonMatch = aiResponse.match(/```output_json\s*\n([\s\S]*?)```/);
+      if (!jsonMatch) {
+        this.logger.debug(`${logPrefix} No output_json block found in AI response`);
+        return;
+      }
+
+      let extracted: Record<string, any>;
+      try {
+        extracted = JSON.parse(jsonMatch[1].trim());
+      } catch {
+        this.logger.warn(`${logPrefix} Failed to parse output_json block`);
+        return;
+      }
+
+      // Validate against output_schema — only keep declared keys
+      const validKeys = new Set(step.output_schema.map((f: any) => f.key));
+      const validated: Record<string, any> = {};
+      for (const [key, value] of Object.entries(extracted)) {
+        if (validKeys.has(key) && value !== null && value !== undefined && value !== '') {
+          const fieldDef = step.output_schema.find((f: any) => f.key === key);
+          // Coerce types
+          if (fieldDef?.type === 'boolean') {
+            validated[key] = value === true || value === 'true';
+          } else if (fieldDef?.type === 'number') {
+            validated[key] = Number(value);
+          } else {
+            validated[key] = value;
+          }
+        }
+      }
+
+      if (Object.keys(validated).length === 0) {
+        this.logger.debug(`${logPrefix} No valid output fields extracted`);
+        return;
+      }
+
+      // Merge into card_data[step_key]
+      const existingCardData = task.card_data || {};
+      const existingStepData = existingCardData[step.step_key] || {};
+      const updatedCardData = {
+        ...existingCardData,
+        [step.step_key]: { ...existingStepData, ...validated },
+      };
+
+      await client
+        .from('tasks')
+        .update({ card_data: updatedCardData })
+        .eq('id', taskId)
+        .eq('account_id', accountId);
+
+      this.logger.log(`${logPrefix} Extracted ${Object.keys(validated).length} output fields for step "${step.step_key}": ${JSON.stringify(validated)}`);
+    } catch (err) {
+      this.logger.warn(`${logPrefix} Output extraction failed: ${(err as Error).message}`);
+      // Non-fatal — pipeline continues
+    }
   }
 
   /**
@@ -810,15 +1237,74 @@ Current Context:
           }
         }
       }
+      // Card data (structured field values accumulated across steps)
+      if (conversation.task.card_data && typeof conversation.task.card_data === 'object') {
+        const cardEntries = Object.entries(conversation.task.card_data);
+        if (cardEntries.length > 0) {
+          prompt += `\nCard Data (accumulated across board steps):\n`;
+          for (const [stepKey, fields] of cardEntries) {
+            prompt += `  Step "${stepKey}":\n`;
+            if (typeof fields === 'object' && fields !== null) {
+              for (const [fieldKey, val] of Object.entries(fields as Record<string, any>)) {
+                if (val !== null && val !== undefined && val !== '') {
+                  prompt += `    - ${fieldKey}: ${JSON.stringify(val)}\n`;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Current step schema (if board task)
+      if (conversation.task.current_step_id) {
+        try {
+          const client = this.supabaseAdmin.getClient();
+          const { data: currentStep } = await client
+            .from('board_steps')
+            .select('step_key, name, input_schema, output_schema, system_prompt')
+            .eq('id', conversation.task.current_step_id)
+            .single();
+
+          if (currentStep) {
+            if (currentStep.system_prompt) {
+              prompt += `\n=== STEP-LEVEL INSTRUCTIONS ===\n`;
+              prompt += currentStep.system_prompt + `\n`;
+            }
+            if (currentStep.input_schema?.length > 0) {
+              prompt += `\nCurrent step "${currentStep.name}" expects these input fields:\n`;
+              for (const f of currentStep.input_schema) {
+                prompt += `  - ${f.key} (${f.type}${f.required ? ', required' : ''}): ${f.label}\n`;
+              }
+            }
+            if (currentStep.output_schema?.length > 0) {
+              prompt += `\nExpected output fields for step "${currentStep.name}":\n`;
+              for (const f of currentStep.output_schema) {
+                prompt += `  - ${f.key} (${f.type}): ${f.label}\n`;
+              }
+              prompt += `\nIMPORTANT: At the end of your response, you MUST include a structured output block with the values for the expected output fields above. Use this exact format:\n`;
+              prompt += '```output_json\n';
+              prompt += JSON.stringify(
+                Object.fromEntries(currentStep.output_schema.map((f: any) => [f.key, f.type === 'boolean' ? false : f.type === 'number' ? 0 : ''])),
+                null, 2,
+              );
+              prompt += '\n```\n';
+              prompt += `Replace the placeholder values with your actual results. This block will be automatically parsed and saved as structured data.\n`;
+            }
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to fetch step schema for prompt: ${error.message}`);
+        }
+      }
+
       prompt += `\nThe user is asking for help with this specific task. Provide relevant, actionable advice.\n`;
       prompt += `When you produce findings or insights, the user can save them directly to the task card.\n`;
     }
 
     // ═══════════════════════════════════════════════════════════
-    // COMMUNICATION TOOLS AVAILABILITY
+    // COMMUNICATION TOOLS AVAILABILITY (unified via IntegrationsService)
     // ═══════════════════════════════════════════════════════════
     try {
-      const availableTools = await this.commToolsService.getAvailableTools(
+      const availableTools = await this.integrationsService.getAvailableCommTools(
         conversation.account_id,
       );
       const allTools = ['telegram', 'whatsapp', 'slack'];
@@ -842,6 +1328,185 @@ Current Context:
       }
     } catch (error) {
       this.logger.warn(`Failed to fetch comm tools for prompt: ${error.message}`);
+    }
+
+    return prompt;
+  }
+
+  /**
+   * Build a system prompt for board-level AI chat (task creation mode).
+   * Includes board structure, steps, schemas, and orchestrator agent skills.
+   */
+  private async buildBoardSystemPrompt(
+    conversation: any,
+    accessToken: string,
+  ): Promise<string> {
+    const client = this.supabaseAdmin.getClient();
+
+    // Fetch board with full details
+    const { data: board } = await client
+      .from('board_instances')
+      .select('id, name, description, default_category_id, orchestrator_category_id, settings_override')
+      .eq('id', conversation.board_id)
+      .single();
+
+    if (!board) {
+      this.logger.warn(`Board ${conversation.board_id} not found, falling back to generic prompt`);
+      return this.buildSystemPrompt(conversation, accessToken);
+    }
+
+    // Fetch steps with linked agent names
+    const { data: steps } = await client
+      .from('board_steps')
+      .select('step_key, name, step_type, position, input_schema, output_schema, linked_category:categories!linked_category_id(id, name)')
+      .eq('board_instance_id', board.id)
+      .order('position', { ascending: true });
+
+    const firstStep = steps?.[0];
+
+    let prompt = `You are OpenClaw, an AI assistant acting as the Board Orchestrator for "${board.name}".
+${board.description ? `Board purpose: ${board.description}` : ''}
+
+=== YOUR ROLE ===
+You help users create and manage tasks on this board through conversation.
+- When the user describes tasks they want, ask clarifying questions if the request is vague
+- When you have enough information, generate a structured list of tasks
+- Be proactive in suggesting good task titles, priorities, and descriptions
+- You can create multiple tasks in a single response
+
+=== BOARD PIPELINE ===
+This board has the following steps (columns):
+${(steps || []).map((s, i) => {
+  let desc = `${i + 1}. "${s.name}" (${s.step_type})`;
+  if ((s as any).linked_category?.name) {
+    desc += ` — Agent: ${(s as any).linked_category.name}`;
+  }
+  if (s.input_schema && Array.isArray(s.input_schema) && s.input_schema.length > 0) {
+    desc += `\n   Input fields: ${s.input_schema.map((f: any) => `${f.key} (${f.type}${f.required ? ', required' : ''}): ${f.label}`).join(', ')}`;
+  }
+  return desc;
+}).join('\n')}
+
+New tasks will be placed in the first step: "${firstStep?.name || 'To-Do'}"
+
+=== TASK OUTPUT FORMAT ===
+When you are ready to create tasks, output them inside a fenced code block with the language tag \`tasks_json\`. Example:
+
+\`\`\`tasks_json
+[
+  {
+    "title": "Task title here",
+    "priority": "Medium",
+    "notes": "Brief description or context for this task"
+  }
+]
+\`\`\`
+
+Rules:
+- "title" is REQUIRED for every task
+- "priority" must be "High", "Medium", or "Low" (defaults to "Medium")
+- "notes" is optional but helpful for providing context
+- Always output tasks as a JSON array, even for a single task
+- After outputting the tasks_json block, briefly summarize what you proposed
+- The user will review and confirm before tasks are actually created
+
+`;
+
+    // ═══════════════════════════════════════════════════════════
+    // ORCHESTRATOR AGENT SKILLS & KNOWLEDGE
+    // ═══════════════════════════════════════════════════════════
+    const agentCategoryId = board.orchestrator_category_id || board.default_category_id;
+
+    if (agentCategoryId) {
+      // Check if synced to provider
+      let providerSynced = false;
+      try {
+        providerSynced = await this.agentSyncService.isSynced(
+          conversation.account_id,
+          agentCategoryId,
+        );
+      } catch {
+        // Fallback to inline injection
+      }
+
+      if (!providerSynced) {
+        // Inline skills injection
+        try {
+          const categorySkills = await this.skillsService.findDefaultForCategory(
+            accessToken,
+            conversation.account_id,
+            agentCategoryId,
+          );
+
+          if (categorySkills && categorySkills.length > 0) {
+            prompt += `\n=== ORCHESTRATOR SKILLS ===\n`;
+            categorySkills.forEach((skill, index) => {
+              prompt += `Skill ${index + 1}: ${skill.name}\n`;
+              if (skill.description) {
+                prompt += `Description: ${skill.description}\n`;
+              }
+              prompt += `Instructions:\n${skill.instructions}\n\n`;
+            });
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to fetch orchestrator skills: ${error.message}`);
+        }
+
+        // Inline knowledge injection
+        try {
+          const masterDoc = await this.knowledgeService.findMasterForCategory(
+            accessToken,
+            conversation.account_id,
+            agentCategoryId,
+          );
+
+          if (masterDoc) {
+            prompt += `\n=== KNOWLEDGE BASE ===\n`;
+            prompt += `Master Document: "${masterDoc.title}"\n\n`;
+            prompt += `${masterDoc.content}\n\n`;
+            prompt += `Use this knowledge to provide contextually relevant task suggestions.\n`;
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to fetch orchestrator knowledge: ${error.message}`);
+        }
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // BOARD INTEGRATION SKILLS + CREDENTIALS
+    // ═══════════════════════════════════════════════════════════
+    try {
+      const integrationContext = await this.integrationsService
+        .getIntegrationContextForBoard(board.id);
+
+      if (integrationContext.length > 0) {
+        prompt += `\n=== BOARD INTEGRATIONS ===\n`;
+        for (const integration of integrationContext) {
+          prompt += `\n--- INTEGRATION: ${integration.name} ---\n`;
+          prompt += `Status: ${integration.status}\n`;
+          if (integration.external_account_name) {
+            prompt += `Connected Account: ${integration.external_account_name}\n`;
+          }
+          if (integration.skill_instructions) {
+            prompt += `\nHow to use ${integration.name}:\n`;
+            prompt += `${integration.skill_instructions}\n`;
+          }
+          if (integration.credentials && Object.keys(integration.credentials).length > 0) {
+            prompt += `\nCredentials:\n`;
+            for (const [key, value] of Object.entries(integration.credentials)) {
+              prompt += `  ${key}: ${value}\n`;
+            }
+          }
+          if (integration.config && Object.keys(integration.config).length > 0) {
+            prompt += `\nConfiguration:\n`;
+            for (const [key, value] of Object.entries(integration.config)) {
+              prompt += `  ${key}: ${value}\n`;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to fetch board integrations: ${error.message}`);
     }
 
     return prompt;

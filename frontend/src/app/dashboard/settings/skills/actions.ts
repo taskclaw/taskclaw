@@ -2,7 +2,7 @@
 
 import { cookies } from 'next/headers';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003';
 
 async function getAuthHeaders() {
   const cookieStore = await cookies();
@@ -24,16 +24,20 @@ async function getCurrentAccountId(): Promise<string | null> {
   return accountId || null;
 }
 
-export async function getSkills(activeOnly?: boolean) {
+export async function getSkills(activeOnly?: boolean, skillType?: string, includeSystem?: boolean) {
   try {
     const accountId = await getCurrentAccountId();
     if (!accountId) {
       throw new Error('No account ID found');
     }
 
-    const url = activeOnly
-      ? `${API_URL}/accounts/${accountId}/skills?active_only=true`
-      : `${API_URL}/accounts/${accountId}/skills`;
+    const params = new URLSearchParams();
+    if (activeOnly) params.set('active_only', 'true');
+    if (skillType) params.set('skill_type', skillType);
+    if (includeSystem) params.set('include_system', 'true');
+
+    const qs = params.toString();
+    const url = `${API_URL}/accounts/${accountId}/skills${qs ? `?${qs}` : ''}`;
 
     const response = await fetch(url, {
       headers: await getAuthHeaders(),

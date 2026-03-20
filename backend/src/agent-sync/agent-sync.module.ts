@@ -11,7 +11,7 @@ import { SkillsModule } from '../skills/skills.module';
 @Module({
   imports: [
     SupabaseModule,
-    AiProviderModule,
+    forwardRef(() => AiProviderModule),
     forwardRef(() => KnowledgeModule),
     forwardRef(() => SkillsModule),
   ],

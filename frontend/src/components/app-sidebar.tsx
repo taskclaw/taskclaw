@@ -94,6 +94,14 @@ const data = {
                         url: "/dashboard/settings/usage",
                     },
                 ] : []),
+                {
+                    title: "API Keys",
+                    url: "/dashboard/settings/api-keys",
+                },
+                {
+                    title: "Webhooks",
+                    url: "/dashboard/settings/webhooks",
+                },
             ],
         },
     ],

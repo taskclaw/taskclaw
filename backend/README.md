@@ -35,7 +35,7 @@ This is the NestJS backend for the Microfactory Scaffold.
     ```bash
     npm run start:dev
     ```
-    The API will run on `http://localhost:3001`.
+    The API will run on `http://localhost:3003`.
 
 ## Architecture
 

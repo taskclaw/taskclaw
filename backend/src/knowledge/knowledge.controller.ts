@@ -15,12 +15,14 @@ import {
   HttpStatus,
   BadRequestException,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { KnowledgeService } from './knowledge.service';
 import { CreateKnowledgeDocDto } from './dto/create-knowledge-doc.dto';
 import { UpdateKnowledgeDocDto } from './dto/update-knowledge-doc.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
 
+@ApiTags('Knowledge')
 @Controller('accounts/:accountId/knowledge')
 @UseGuards(AuthGuard)
 export class KnowledgeController {

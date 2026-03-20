@@ -104,6 +104,6 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-key-for-build
-          NEXT_PUBLIC_API_URL: http://localhost:3001
+          NEXT_PUBLIC_API_URL: http://localhost:3003
           NEXT_PUBLIC_BRAND_NAME: TaskClaw
           NEXT_PUBLIC_EDITION: community

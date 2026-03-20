@@ -26,7 +26,9 @@ import { KnowledgeModule } from './knowledge/knowledge.module';
 import { SkillsModule } from './skills/skills.module';
 import { AgentSyncModule } from './agent-sync/agent-sync.module';
 import { BoardsModule } from './boards/boards.module';
-import { CommToolsModule } from './comm-tools/comm-tools.module';
+
+import { IntegrationsModule } from './integrations/integrations.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 // Edition-gated modules (cloud-only)
 import { LangfuseModule } from './ee/langfuse/langfuse.module';
@@ -72,7 +74,8 @@ const editionModules = isCloudEdition
     SyncModule,
     AgentSyncModule,
     BoardsModule,
-    CommToolsModule,
+    IntegrationsModule,
+    WebhooksModule,
   ],
   controllers: [AppController],
   providers: [AppService],

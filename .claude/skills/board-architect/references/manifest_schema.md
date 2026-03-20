@@ -15,6 +15,7 @@
 | `tags` | string[] | No | Searchable tags |
 | `default_category_slug` | string\|null | No | Fallback agent category slug |
 | `settings` | object | No | Board-level settings |
+| `integrations` | array | No | External service dependencies |
 | `categories` | array | No | Agent categories with embedded skills |
 | `steps` | array | Yes | Pipeline steps (Kanban columns) |
 
@@ -24,6 +25,29 @@
 |-------|------|---------|-------------|
 | `allow_manual_column_move` | boolean | `true` | Allow drag-drop between columns |
 | `card_retention_days` | number\|null | `null` | Days before done cards archive (`null` = never) |
+
+## Integration Object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `slug` | string | Yes | Kebab-case unique identifier (e.g. `x-api`, `nano-banana`) |
+| `name` | string | Yes | Display name (e.g. "X (Twitter) API") |
+| `description` | string | Yes | What this integration does for the board |
+| `icon` | string | Yes | Emoji or short icon (e.g. "𝕏", "🍌") |
+| `required` | boolean | Yes | `true` if board needs this to function, `false` if optional enhancement |
+| `setup_guide` | string | Yes | Step-by-step instructions for setting up this integration |
+| `config_fields` | array | Yes | Credential/config fields the user must provide |
+
+## Integration Config Field Object
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `key` | string | Yes | Machine-readable field key |
+| `label` | string | Yes | Human display label |
+| `type` | string | Yes | `text` \| `password` \| `url` \| `number` \| `boolean` |
+| `required` | boolean | Yes | Whether this field is required |
+| `placeholder` | string | No | Input placeholder text |
+| `help_text` | string | No | Help text shown below the field |
 
 ## Category Object
 

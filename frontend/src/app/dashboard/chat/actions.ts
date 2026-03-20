@@ -3,7 +3,7 @@
 import { getAuthToken, isTokenExpired } from '@/lib/auth'
 import { cookies } from 'next/headers'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
 
 async function getAuthHeaders() {
     const token = await getAuthToken()
@@ -48,22 +48,29 @@ export async function getConversations() {
 export async function getMessages(conversationId: string) {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()
-    
-    if (!headers || !accountId) return { data: [] }
+
+    if (!headers || !accountId) {
+        console.warn('[getMessages] Missing auth — headers:', !!headers, 'accountId:', accountId)
+        return { data: [] }
+    }
 
     try {
-        const res = await fetch(
-            `${API_URL}/accounts/${accountId}/conversations/${conversationId}/messages`,
-            {
-                headers,
-                cache: 'no-store',
-            }
-        )
-        
-        if (!res.ok) return { data: [] }
-        return await res.json()
+        const url = `${API_URL}/accounts/${accountId}/conversations/${conversationId}/messages`
+        const res = await fetch(url, {
+            headers,
+            cache: 'no-store',
+        })
+
+        if (!res.ok) {
+            const errorBody = await res.text().catch(() => 'unknown')
+            console.error('[getMessages] API error:', res.status, errorBody)
+            return { data: [] }
+        }
+        const data = await res.json()
+        console.log('[getMessages] Loaded', data?.data?.length || 0, 'messages for conversation', conversationId.slice(0, 8))
+        return data
     } catch (error) {
-        console.error('Failed to load messages:', error)
+        console.error('[getMessages] Failed to load messages:', error)
         return { data: [] }
     }
 }
@@ -95,13 +102,13 @@ export async function getSkills() {
 export async function createConversation(title?: string, taskId?: string, skillIds?: string[]) {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()
-    
-    console.log('[createConversation] Debug:', { 
-        hasHeaders: !!headers, 
+
+    console.log('[createConversation] Debug:', {
+        hasHeaders: !!headers,
         accountId,
         timestamp: new Date().toISOString()
     })
-    
+
     if (!headers || !accountId) {
         console.error('[createConversation] Missing auth:', { headers: !!headers, accountId })
         return { error: 'Not authenticated' }
@@ -110,7 +117,7 @@ export async function createConversation(title?: string, taskId?: string, skillI
     try {
         const url = `${API_URL}/accounts/${accountId}/conversations`
         console.log('[createConversation] Calling API:', url)
-        
+
         const res = await fetch(url, {
             method: 'POST',
             headers,
@@ -120,21 +127,88 @@ export async function createConversation(title?: string, taskId?: string, skillI
                 skill_ids: skillIds || [],
             }),
         })
-        
+
         console.log('[createConversation] Response status:', res.status)
-        
+
         if (!res.ok) {
             const errorData = await res.json().catch(() => ({ message: 'Unknown error' }))
             console.error('[createConversation] API error:', errorData)
             return { error: errorData.message || 'Failed to create conversation' }
         }
-        
+
         const data = await res.json()
         console.log('[createConversation] Success:', data.id)
         return data
     } catch (error: any) {
         console.error('[createConversation] Exception:', error)
         return { error: error.message || 'Network error' }
+    }
+}
+
+/**
+ * Check if a task already has a conversation with messages (lightweight check).
+ */
+export async function hasTaskConversation(taskId: string): Promise<boolean> {
+    const headers = await getAuthHeaders()
+    const accountId = await getCurrentAccountId()
+
+    if (!headers || !accountId) return false
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/conversations?task_id=${taskId}&limit=1`,
+            { headers, cache: 'no-store' },
+        )
+        if (!res.ok) return false
+        const data = await res.json()
+        return (data?.data?.length || 0) > 0
+    } catch {
+        return false
+    }
+}
+
+/**
+ * Find existing conversation for a task, or create a new one.
+ * Prevents duplicate conversations and preserves chat history.
+ */
+export async function getOrCreateConversation(taskId: string, taskTitle: string, skillIds?: string[]) {
+    const headers = await getAuthHeaders()
+    const accountId = await getCurrentAccountId()
+
+    if (!headers || !accountId) {
+        console.warn('[getOrCreateConversation] Missing auth — headers:', !!headers, 'accountId:', accountId)
+        return { error: 'Not authenticated' }
+    }
+
+    try {
+        // First: look for an existing conversation linked to this task
+        const listUrl = `${API_URL}/accounts/${accountId}/conversations?task_id=${taskId}&limit=1`
+        console.log('[getOrCreateConversation] Looking for existing conversation:', listUrl)
+
+        const listRes = await fetch(listUrl, { headers, cache: 'no-store' })
+
+        if (listRes.ok) {
+            const listData = await listRes.json()
+            console.log('[getOrCreateConversation] List response:', {
+                dataLength: listData?.data?.length || 0,
+                firstId: listData?.data?.[0]?.id?.slice(0, 8) || 'none',
+                total: listData?.pagination?.total || 0,
+            })
+            const existing = listData?.data?.[0]
+            if (existing?.id) {
+                console.log('[getOrCreateConversation] Reusing existing conversation:', existing.id)
+                return existing
+            }
+        } else {
+            console.error('[getOrCreateConversation] List request failed:', listRes.status)
+        }
+
+        // No existing conversation — create a new one
+        console.log('[getOrCreateConversation] No existing conversation, creating new one for task:', taskId)
+        return await createConversation(`Task: ${taskTitle}`, taskId, skillIds)
+    } catch (error: any) {
+        console.error('[getOrCreateConversation] Error:', error)
+        return { error: error.message || 'Failed to get or create conversation' }
     }
 }
 
@@ -259,6 +333,52 @@ export async function saveAiToTask(
         return await res.json()
     } catch (error: any) {
         return { error: error.message || 'Network error' }
+    }
+}
+
+/**
+ * Find existing conversation for a board, or create a new one.
+ * Prevents duplicate board conversations and preserves chat history.
+ */
+export async function getOrCreateBoardConversation(boardId: string, boardName: string) {
+    const headers = await getAuthHeaders()
+    const accountId = await getCurrentAccountId()
+
+    if (!headers || !accountId) {
+        return { error: 'Not authenticated' }
+    }
+
+    try {
+        // Look for existing board conversation
+        const listUrl = `${API_URL}/accounts/${accountId}/conversations?board_id=${boardId}&limit=1`
+        const listRes = await fetch(listUrl, { headers, cache: 'no-store' })
+
+        if (listRes.ok) {
+            const listData = await listRes.json()
+            const existing = listData?.data?.[0]
+            if (existing?.id) {
+                return existing
+            }
+        }
+
+        // No existing conversation — create a new one
+        const res = await fetch(`${API_URL}/accounts/${accountId}/conversations`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                title: `Board Chat: ${boardName}`,
+                board_id: boardId,
+            }),
+        })
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ message: 'Unknown error' }))
+            return { error: errorData.message || 'Failed to create board conversation' }
+        }
+
+        return await res.json()
+    } catch (error: any) {
+        return { error: error.message || 'Failed to get or create board conversation' }
     }
 }
 
