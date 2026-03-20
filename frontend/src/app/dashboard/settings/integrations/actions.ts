@@ -45,6 +45,7 @@ export async function createSource(data: {
     category_id: string
     config: Record<string, any>
     sync_interval_minutes?: number
+    connection_id?: string
 }) {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()

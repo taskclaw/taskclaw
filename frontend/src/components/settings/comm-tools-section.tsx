@@ -189,7 +189,17 @@ function CommToolCard({
                         </p>
                     </div>
 
-                    <div className="shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                            onClick={onOpenSetup}
+                            title={`Configure ${definition.name}`}
+                        >
+                            <Settings2 className="h-3.5 w-3.5" />
+                            Configure
+                        </Button>
                         {toggling ? (
                             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                         ) : (
