@@ -10,6 +10,7 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  Query,
 } from '@nestjs/common';
 import { IntegrationsService } from './integrations.service';
 import { CreateDefinitionDto } from './dto/create-definition.dto';
@@ -29,7 +30,11 @@ export class IntegrationsController {
   findAllDefinitions(
     @Req() req,
     @Param('accountId') accountId: string,
+    @Query('category') category?: string,
   ) {
+    if (category) {
+      return this.integrationsService.findAllDefinitionsByCategory(req.user.id, accountId, category);
+    }
     return this.integrationsService.findAllDefinitions(req.user.id, accountId);
   }
 
@@ -78,7 +83,11 @@ export class IntegrationsController {
   findAllConnections(
     @Req() req,
     @Param('accountId') accountId: string,
+    @Query('category') category?: string,
   ) {
+    if (category) {
+      return this.integrationsService.findAllConnectionsByCategory(req.user.id, accountId, category);
+    }
     return this.integrationsService.findAllConnections(req.user.id, accountId);
   }
 
@@ -119,6 +128,29 @@ export class IntegrationsController {
     @Param('connId') connId: string,
   ) {
     return this.integrationsService.removeConnection(req.user.id, accountId, connId);
+  }
+
+  @Post('connections/:connId/toggle')
+  async toggleConnection(
+    @Req() req: any,
+    @Param('accountId') accountId: string,
+    @Param('connId') connId: string,
+    @Body('enabled') enabled: boolean,
+  ) {
+    return this.integrationsService.toggleConnection(
+      req.user.id, accountId, connId, enabled,
+    );
+  }
+
+  @Post('connections/:connId/health-check')
+  async checkConnectionHealth(
+    @Req() req: any,
+    @Param('accountId') accountId: string,
+    @Param('connId') connId: string,
+  ) {
+    return this.integrationsService.checkConnectionHealth(
+      req.user.id, accountId, connId,
+    );
   }
 }
 

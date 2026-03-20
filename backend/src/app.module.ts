@@ -26,7 +26,7 @@ import { KnowledgeModule } from './knowledge/knowledge.module';
 import { SkillsModule } from './skills/skills.module';
 import { AgentSyncModule } from './agent-sync/agent-sync.module';
 import { BoardsModule } from './boards/boards.module';
-import { CommToolsModule } from './comm-tools/comm-tools.module';
+
 import { IntegrationsModule } from './integrations/integrations.module';
 
 // Edition-gated modules (cloud-only)
@@ -73,7 +73,6 @@ const editionModules = isCloudEdition
     SyncModule,
     AgentSyncModule,
     BoardsModule,
-    CommToolsModule,
     IntegrationsModule,
   ],
   controllers: [AppController],

@@ -135,6 +135,7 @@ export class SourcesService {
         sync_interval_minutes: createSourceDto.sync_interval_minutes || 30,
         is_active: createSourceDto.is_active !== false, // Default to true
         sync_status: 'idle',
+        connection_id: createSourceDto.connection_id || null,
       })
       .select()
       .single();
