@@ -10,6 +10,15 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Accept NEXT_PUBLIC_* vars as build args (baked into the JS bundle)
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_APP_URL
+ARG NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_BRAND_NAME=TaskClaw
+ARG NEXT_PUBLIC_EDITION=community
+
 RUN npm run build
 
 # ── Production stage ──────────────────────────────────────

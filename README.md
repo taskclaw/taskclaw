@@ -33,6 +33,31 @@ TaskClaw is a self-hostable task management platform that combines a visual Kanb
 
 ## Quick Start
 
+Run TaskClaw with a single command — no configuration needed:
+
+```bash
+git clone https://github.com/DevOtts/taskclaw.git && cd taskclaw
+docker compose -f docker-compose.quickstart.yml up -d
+```
+
+Open **[http://localhost:3000](http://localhost:3000)** and log in:
+
+| | |
+|---|---|
+| **Email** | `super@admin.com` |
+| **Password** | `password123` |
+
+That's it! Everything starts automatically: database, auth, API, and frontend — all behind a single port.
+
+To stop: `docker compose -f docker-compose.quickstart.yml down`
+To reset: `docker compose -f docker-compose.quickstart.yml down -v`
+
+### One-Line Install (without cloning)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DevOtts/taskclaw/main/scripts/install.sh | sh
+```
+
 ### For AI Agents (MCP Server)
 
 If you're an AI agent like Claude Code, Cursor, or Windsurf, you can access TaskClaw programmatically via the MCP server:
@@ -66,42 +91,25 @@ If you're an AI agent like Claude Code, Cursor, or Windsurf, you can access Task
 
 See [MCP Server Documentation](./docs/mcp-server.md) for full setup and tool reference.
 
-### Docker (Recommended)
+### Advanced Setup
 
-**Option 1: Bring your own Supabase**
+**Bring your own Supabase** (for production or cloud Supabase):
 
 ```bash
-git clone https://github.com/taskclaw/taskclaw.git
-cd taskclaw
-
-# Configure environment
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 # Edit .env files with your Supabase URL and keys
-
-# Start
 docker compose up -d
 ```
 
-Open [http://localhost:3002](http://localhost:3002)
-
-**Option 2: All-in-one (includes local Supabase)**
+**Full local stack** (includes Supabase Studio for DB inspection):
 
 ```bash
-git clone https://github.com/taskclaw/taskclaw.git
-cd taskclaw
-
-# Configure environment
 cp .env.example .env
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
-# Edit .env files (see docs/configuration.md)
-
-# Start with local Supabase
 docker compose --profile supabase up -d
 ```
-
-Open [http://localhost:3002](http://localhost:3002) | Supabase Studio: [http://localhost:7430](http://localhost:7430)
 
 ### Local Development
 

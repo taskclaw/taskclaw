@@ -172,9 +172,7 @@ taskclaw/
 ├── docker/                     # Docker support files (Kong config, DB init scripts)
 ├── docs/                       # Documentation (you are here)
 ├── docker-compose.yml          # Docker Compose configuration
-├── turbo.json                  # Turborepo configuration
-├── pnpm-workspace.yaml         # pnpm workspace definition
-└── package.json                # Root package.json (Turborepo scripts)
+└── package.json                # Root package.json (workspace scripts)
 ```
 
 ## Running Tests
