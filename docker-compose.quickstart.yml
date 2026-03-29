@@ -1,0 +1,237 @@
+# ============================================================
+# TaskClaw — Quick Start (zero-config)
+# ============================================================
+#
+# Usage:
+#   docker compose -f docker-compose.quickstart.yml up -d
+#
+# Open http://localhost:3000
+# Login: super@admin.com / password123
+#
+# Stop:
+#   docker compose -f docker-compose.quickstart.yml down
+#
+# Reset (delete all data):
+#   docker compose -f docker-compose.quickstart.yml down -v
+#
+# ============================================================
+# SECURITY NOTE: This file ships with hardcoded keys for
+# instant local setup. For production, regenerate:
+#   - JWT_SECRET (openssl rand -hex 32)
+#   - ANON_KEY and SERVICE_ROLE_KEY (sign with new secret)
+#   - POSTGRES_PASSWORD
+#   - ENCRYPTION_KEY
+# See: https://github.com/taskclaw/taskclaw#production-setup
+# ============================================================
+
+name: taskclaw
+
+# ── Hardcoded defaults ─────────────────────────────────────
+# Override any value with a .env file or shell environment.
+x-jwt-secret: &jwt-secret "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+x-anon-key: &anon-key "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjIwMDAwMDAwMDB9.lpzEvYnIQnnOnv-ntK7MffStIIRjMW7C-AZZ2aRZddY"
+x-service-role-key: &service-role-key "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.1cLFukXDsaomGgSXNJaB6XTIERzH3f-fCbxPCFwh_68"
+x-postgres-password: &postgres-password "postgres"
+
+services:
+  # ── Database ───────────────────────────────────────────────
+
+  db:
+    image: supabase/postgres:15.8.1.085
+    environment:
+      POSTGRES_PASSWORD: *postgres-password
+      JWT_SECRET: *jwt-secret
+      JWT_EXP: "3600"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./docker/volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+      - ./docker/volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── Supabase Auth (GoTrue) ────────────────────────────────
+
+  auth:
+    image: supabase/gotrue:v2.186.0
+    environment:
+      GOTRUE_API_HOST: "0.0.0.0"
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: http://localhost:3000/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@db:5432/postgres
+      GOTRUE_SITE_URL: http://localhost:3000
+      GOTRUE_URI_ALLOW_LIST: "*"
+      GOTRUE_JWT_SECRET: *jwt-secret
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SMTP_ADMIN_EMAIL: admin@taskclaw.local
+      GOTRUE_SMTP_HOST: localhost
+      GOTRUE_SMTP_PORT: "2500"
+      GOTRUE_SMTP_USER: fake
+      GOTRUE_SMTP_PASS: fake
+      GOTRUE_SMTP_SENDER_NAME: TaskClaw
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9999/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Supabase REST (PostgREST) ─────────────────────────────
+
+  rest:
+    image: postgrest/postgrest:v12.2.0
+    environment:
+      PGRST_DB_URI: postgres://authenticator:postgres@db:5432/postgres
+      PGRST_DB_SCHEMAS: public,storage,graphql_public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: *jwt-secret
+      PGRST_DB_USE_LEGACY_GUC_VARS: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Supabase Storage ──────────────────────────────────────
+
+  storage:
+    image: public.ecr.aws/supabase/storage-api:v1.35.3
+    environment:
+      ANON_KEY: *anon-key
+      SERVICE_KEY: *service-role-key
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: *jwt-secret
+      DATABASE_URL: postgres://supabase_storage_admin:postgres@db:5432/postgres
+      FILE_SIZE_LIMIT: "52428800"
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+    volumes:
+      - storage_data:/var/lib/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      auth:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── API Gateway (Kong) — single port: 3000 ────────────────
+
+  kong:
+    image: kong:2.8.1
+    ports:
+      - "3000:8000"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl
+    volumes:
+      - ./docker/volumes/api/kong.quickstart.yml:/var/lib/kong/kong.yml:ro
+    depends_on:
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Redis ──────────────────────────────────────────────────
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ── Backend (NestJS) ──────────────────────────────────────
+
+  backend:
+    image: taskclaw/backend:${TASKCLAW_VERSION:-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      PORT: "3003"
+      EDITION: community
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_ANON_KEY: *anon-key
+      SUPABASE_SERVICE_ROLE_KEY: *service-role-key
+      JWT_SECRET: *jwt-secret
+      ENCRYPTION_KEY: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+      CORS_ORIGIN: http://localhost:3000
+      REDIS_URL: redis://redis:6379
+      # Migration + init vars (used by entrypoint.sh)
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
+      GOTRUE_URL: http://auth:9999
+      STORAGE_URL: http://kong:8000/storage/v1
+      QUICKSTART: "true"
+      EXTERNAL_PORT: "3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      kong:
+        condition: service_started
+      auth:
+        condition: service_healthy
+      storage:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── Frontend (Next.js) ────────────────────────────────────
+
+  frontend:
+    image: taskclaw/frontend:${TASKCLAW_VERSION:-latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: http://localhost:3000
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: *anon-key
+        NEXT_PUBLIC_API_URL: http://localhost:3000/api
+        NEXT_PUBLIC_APP_URL: http://localhost:3000
+        NEXT_PUBLIC_SITE_URL: http://localhost:3000
+        NEXT_PUBLIC_BRAND_NAME: TaskClaw
+        NEXT_PUBLIC_EDITION: community
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: http://localhost:3000
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: *anon-key
+      NEXT_PUBLIC_API_URL: http://localhost:3000/api
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      NEXT_PUBLIC_BRAND_NAME: TaskClaw
+      NEXT_PUBLIC_EDITION: community
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  redis_data:
+  storage_data:
