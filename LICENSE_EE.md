@@ -1,29 +1,27 @@
-# TaskClaw Enterprise Edition License
+# The TaskClaw Enterprise License (the "Enterprise License")
 
-Copyright (c) 2025 TaskClaw
+Copyright (c) 2025-present TaskClaw.
 
-## Scope
+With regard to the TaskClaw Software:
 
-This license applies to all files located in the `backend/src/ee/` directory
-of the TaskClaw repository. These files contain enterprise features including
-billing, subscription management, and advanced AI observability.
+This software and associated documentation files (the "Software") may only be used in production, if
+you (and any entity that you represent) hold a valid TaskClaw Enterprise License corresponding to your
+usage. Subject to the foregoing sentence, you are free to modify this Software and publish patches
+to the Software. You agree that TaskClaw and/or its licensors (as applicable) retain all right, title and
+interest in and to all such modifications and/or patches, and all such modifications and/or patches
+may only be used, copied, modified, displayed, distributed, or otherwise exploited with a valid TaskClaw
+Enterprise License for the corresponding usage. Notwithstanding the foregoing, you may copy and
+modify the Software for development and testing purposes, without requiring a subscription. You
+agree that TaskClaw and/or its licensors (as applicable) retain all right, title and interest in and to
+all such modifications. You are not granted any other rights beyond what is expressly stated herein.
+Subject to the foregoing, it is forbidden to copy, merge, publish, distribute, sublicense, and/or
+sell the Software.
 
-## Terms
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-These files are **source-available** for transparency and auditability, but
-they are NOT open-source. Without a valid Enterprise License from TaskClaw:
-
-- You may **read** the source code
-- You may **NOT** use, copy, modify, merge, publish, distribute, sublicense,
-  or sell copies of these files
-- You may **NOT** incorporate these files into derivative works
-
-## Enterprise License
-
-To obtain an Enterprise License that permits use of these files, contact:
-
-**enterprise@taskclaw.co**
-
-The Enterprise License grants the right to use, modify, and deploy the
-enterprise edition features in your own infrastructure or as part of a
-managed service offering.
+For all third party components incorporated into the TaskClaw Software, those components are licensed
+under the original license provided by the owner of the applicable component.
