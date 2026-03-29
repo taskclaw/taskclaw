@@ -22,7 +22,7 @@ import { get as httpsGet } from "node:https";
 // ── Config ────────────────────────────────────────────────────
 
 const REPO_RAW =
-  "https://raw.githubusercontent.com/DevOtts/taskclaw/main";
+  "https://raw.githubusercontent.com/taskclaw/taskclaw/main";
 const INSTALL_DIR = process.env.TASKCLAW_DIR || join(homedir(), "taskclaw");
 const PORT = process.env.TASKCLAW_PORT || "3000";
 
@@ -267,6 +267,6 @@ Options:
   TASKCLAW_DIR=./my-dir npx taskclaw   Custom install directory
   TASKCLAW_PORT=8080 npx taskclaw      Custom port (requires compose edit)
 
-Documentation: https://github.com/DevOtts/taskclaw
+Documentation: https://github.com/taskclaw/taskclaw
 `);
 }

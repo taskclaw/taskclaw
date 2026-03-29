@@ -3,15 +3,15 @@
 # TaskClaw — One-Line Installer
 # ============================================================
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/DevOtts/taskclaw/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/taskclaw/taskclaw/main/scripts/install.sh | sh
 #
 # Or download and run manually:
-#   wget -qO install.sh https://raw.githubusercontent.com/DevOtts/taskclaw/main/scripts/install.sh
+#   wget -qO install.sh https://raw.githubusercontent.com/taskclaw/taskclaw/main/scripts/install.sh
 #   chmod +x install.sh && ./install.sh
 # ============================================================
 set -euo pipefail
 
-REPO_URL="https://raw.githubusercontent.com/DevOtts/taskclaw/main"
+REPO_URL="https://raw.githubusercontent.com/taskclaw/taskclaw/main"
 INSTALL_DIR="${TASKCLAW_DIR:-$HOME/taskclaw}"
 
 # ── Colors ──────────────────────────────────────────────────

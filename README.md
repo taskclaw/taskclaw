@@ -43,7 +43,7 @@ Or deploy with [Docker](https://docs.docker.com/get-docker/) directly:
 
 ```bash
 docker volume create taskclaw_data
-curl -fsSL https://raw.githubusercontent.com/DevOtts/taskclaw/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/taskclaw/taskclaw/main/scripts/install.sh | sh
 ```
 
 Open **[http://localhost:3000](http://localhost:3000)** and log in:
@@ -65,7 +65,7 @@ npx taskclaw reset      # Stop + delete all data
 ### Alternative: Docker Compose (manual)
 
 ```bash
-git clone https://github.com/DevOtts/taskclaw.git && cd taskclaw
+git clone https://github.com/taskclaw/taskclaw.git && cd taskclaw
 docker compose -f docker-compose.quickstart.yml up -d
 ```
 

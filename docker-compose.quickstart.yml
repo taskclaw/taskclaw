@@ -21,7 +21,7 @@
 #   - ANON_KEY and SERVICE_ROLE_KEY (sign with new secret)
 #   - POSTGRES_PASSWORD
 #   - ENCRYPTION_KEY
-# See: https://github.com/DevOtts/taskclaw#production-setup
+# See: https://github.com/taskclaw/taskclaw#production-setup
 # ============================================================
 
 name: taskclaw

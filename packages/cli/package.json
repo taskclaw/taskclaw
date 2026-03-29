@@ -4,10 +4,10 @@
   "description": "Open-source AI-powered task management — run with npx taskclaw",
   "license": "SEE LICENSE IN LICENSE.md",
   "author": "DevOtts <hello@devotts.com>",
-  "homepage": "https://github.com/DevOtts/taskclaw",
+  "homepage": "https://github.com/taskclaw/taskclaw",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DevOtts/taskclaw.git",
+    "url": "https://github.com/taskclaw/taskclaw.git",
     "directory": "packages/cli"
   },
   "keywords": [
