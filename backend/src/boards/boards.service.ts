@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+} from '@nestjs/common';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
@@ -31,7 +36,9 @@ export class BoardsService {
 
     let query = client
       .from('board_instances')
-      .select('*, default_category:categories!default_category_id(id, name, color, icon), orchestrator_category:categories!orchestrator_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, linked_category:categories!linked_category_id(id, name, color, icon))')
+      .select(
+        '*, default_category:categories!default_category_id(id, name, color, icon), orchestrator_category:categories!orchestrator_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, linked_category:categories!linked_category_id(id, name, color, icon))',
+      )
       .eq('account_id', accountId);
 
     if (filters?.archived !== undefined) {
@@ -45,7 +52,8 @@ export class BoardsService {
       query = query.eq('is_favorite', filters.favorite);
     }
 
-    query = query.order('is_favorite', { ascending: false })
+    query = query
+      .order('is_favorite', { ascending: false })
       .order('display_order', { ascending: true })
       .order('updated_at', { ascending: false });
 
@@ -66,10 +74,11 @@ export class BoardsService {
       if (!countError && taskCounts) {
         const countMap: Record<string, number> = {};
         taskCounts.forEach((t) => {
-          countMap[t.board_instance_id] = (countMap[t.board_instance_id] || 0) + 1;
+          countMap[t.board_instance_id] =
+            (countMap[t.board_instance_id] || 0) + 1;
         });
         data.forEach((board) => {
-          (board as any).task_count = countMap[board.id] || 0;
+          board.task_count = countMap[board.id] || 0;
         });
       }
     }
@@ -90,7 +99,9 @@ export class BoardsService {
 
     const { data, error } = await client
       .from('board_instances')
-      .select('*, default_category:categories!default_category_id(id, name, color, icon), orchestrator_category:categories!orchestrator_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, trigger_type, ai_first, input_schema, output_schema, on_success_step_id, on_error_step_id, webhook_url, webhook_auth_header, schedule_cron, system_prompt, linked_category:categories!linked_category_id(id, name, color, icon))')
+      .select(
+        '*, default_category:categories!default_category_id(id, name, color, icon), orchestrator_category:categories!orchestrator_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, trigger_type, ai_first, input_schema, output_schema, on_success_step_id, on_error_step_id, webhook_url, webhook_auth_header, schedule_cron, system_prompt, linked_category:categories!linked_category_id(id, name, color, icon))',
+      )
       .eq('id', boardId)
       .eq('account_id', accountId)
       .single();
@@ -114,7 +125,8 @@ export class BoardsService {
     if (taskCounts) {
       taskCounts.forEach((t) => {
         if (t.current_step_id) {
-          stepCountMap[t.current_step_id] = (stepCountMap[t.current_step_id] || 0) + 1;
+          stepCountMap[t.current_step_id] =
+            (stepCountMap[t.current_step_id] || 0) + 1;
         }
       });
     }
@@ -123,7 +135,7 @@ export class BoardsService {
       step.task_count = stepCountMap[step.id] || 0;
     });
 
-    (data as any).task_count = taskCounts?.length || 0;
+    data.task_count = taskCounts?.length || 0;
 
     return data;
   }
@@ -180,7 +192,9 @@ export class BoardsService {
         .insert(stepRows);
 
       if (stepsError) {
-        this.logger.error(`Failed to create board steps: ${stepsError.message}`);
+        this.logger.error(
+          `Failed to create board steps: ${stepsError.message}`,
+        );
       }
     }
 
@@ -190,7 +204,12 @@ export class BoardsService {
     return this.findOne(userId, accountId, board.id);
   }
 
-  async update(userId: string, accountId: string, boardId: string, dto: UpdateBoardDto) {
+  async update(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    dto: UpdateBoardDto,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
     await this.findOne(userId, accountId, boardId);
@@ -250,7 +269,9 @@ export class BoardsService {
     const cleanedSettings = { ...(original.settings_override || {}) };
     if (cleanedSettings.integrations) {
       const cleaned: Record<string, any> = {};
-      for (const [slug, cfg] of Object.entries(cleanedSettings.integrations as Record<string, any>)) {
+      for (const [slug, cfg] of Object.entries(
+        cleanedSettings.integrations as Record<string, any>,
+      )) {
         cleaned[slug] = { enabled: false, config: {}, test_status: 'untested' };
       }
       cleanedSettings.integrations = cleaned;
@@ -327,7 +348,9 @@ export class BoardsService {
       // Fetch categories with skills
       const { data: cats } = await client
         .from('categories')
-        .select('id, name, color, icon, category_skills(skill:skills(id, name, description, instructions, is_active, file_attachments))')
+        .select(
+          'id, name, color, icon, category_skills(skill:skills(id, name, description, instructions, is_active, file_attachments))',
+        )
         .in('id', categoryIds);
 
       // Fetch knowledge docs for these categories
@@ -338,21 +361,29 @@ export class BoardsService {
 
       if (cats) {
         for (const cat of cats) {
-          const slug = cat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+          const slug = cat.name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '');
           categoriesMap[cat.id] = {
             id: cat.id,
             slug,
             name: cat.name,
             color: cat.color,
             icon: cat.icon,
-            skills: (cat.category_skills || []).map((cs: any) => {
-              const skill = cs.skill;
-              if (!skill) return null;
-              return {
-                ...skill,
-                slug: skill.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
-              };
-            }).filter(Boolean),
+            skills: (cat.category_skills || [])
+              .map((cs: any) => {
+                const skill = cs.skill;
+                if (!skill) return null;
+                return {
+                  ...skill,
+                  slug: skill.name
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-|-$/g, ''),
+                };
+              })
+              .filter(Boolean),
             knowledge_docs: (knowledgeDocs || [])
               .filter((d: any) => d.category_id === cat.id)
               .map((d: any) => ({
@@ -375,7 +406,7 @@ export class BoardsService {
 
     // Build category ID → slug map for export
     const categoryIdToSlug: Record<string, string> = {};
-    for (const cat of Object.values(categoriesMap) as any[]) {
+    for (const cat of Object.values(categoriesMap)) {
       categoryIdToSlug[cat.id] = cat.slug;
     }
 
@@ -384,7 +415,7 @@ export class BoardsService {
       id: board.name.toLowerCase().replace(/\s+/g, '-'),
       name: board.name,
       description: board.description,
-      integrations: (board as any).installed_manifest?.integrations || [],
+      integrations: board.installed_manifest?.integrations || [],
       default_category_id: board.default_category_id || null,
       default_category_slug: board.default_category_id
         ? categoryIdToSlug[board.default_category_id] || null
@@ -415,8 +446,12 @@ export class BoardsService {
         system_prompt: step.system_prompt || null,
         input_schema: step.input_schema || [],
         output_schema: step.output_schema || [],
-        on_success: step.on_success_step_id ? stepIdToKey[step.on_success_step_id] || null : null,
-        on_error: step.on_error_step_id ? stepIdToKey[step.on_error_step_id] || null : null,
+        on_success: step.on_success_step_id
+          ? stepIdToKey[step.on_success_step_id] || null
+          : null,
+        on_error: step.on_error_step_id
+          ? stepIdToKey[step.on_error_step_id] || null
+          : null,
         webhook_url: step.webhook_url || null,
         webhook_auth_header: step.webhook_auth_header || null,
         schedule_cron: step.schedule_cron || null,
@@ -572,7 +607,9 @@ export class BoardsService {
     const idx = integrations.findIndex((i: any) => i.slug === slug);
 
     if (idx === -1) {
-      throw new NotFoundException(`Integration "${slug}" not found on this board`);
+      throw new NotFoundException(
+        `Integration "${slug}" not found on this board`,
+      );
     }
 
     integrations.splice(idx, 1);
@@ -630,8 +667,7 @@ export class BoardsService {
     }
 
     // Get existing runtime config for this integration
-    const existingRuntime =
-      board.settings_override?.integrations?.[slug] || {};
+    const existingRuntime = board.settings_override?.integrations?.[slug] || {};
 
     // Encrypt password fields, preserve masked values
     const encryptedConfig: Record<string, string> = {};

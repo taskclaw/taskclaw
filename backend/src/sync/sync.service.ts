@@ -269,9 +269,12 @@ export class SyncService {
       const adapter = this.adapterRegistry.getAdapter(source.provider);
 
       // Fetch tasks from external source, applying any configured pre-filters
-      const syncFilters = source.sync_filters && Array.isArray(source.sync_filters) && source.sync_filters.length > 0
-        ? source.sync_filters
-        : undefined;
+      const syncFilters =
+        source.sync_filters &&
+        Array.isArray(source.sync_filters) &&
+        source.sync_filters.length > 0
+          ? source.sync_filters
+          : undefined;
       this.logger.log(
         `Fetching tasks from ${source.provider} (source ${source.id})${syncFilters ? ` with ${syncFilters.length} filter(s)` : ''}...`,
       );
@@ -279,14 +282,21 @@ export class SyncService {
       let effectiveConfig = source.config;
       if (source.connection_id) {
         try {
-          const connCredentials = await this.getConnectionCredentials(source.connection_id);
+          const connCredentials = await this.getConnectionCredentials(
+            source.connection_id,
+          );
           effectiveConfig = { ...source.config, ...connCredentials };
         } catch (err) {
-          this.logger.warn(`Failed to get connection credentials for source ${source.id}, falling back to source config: ${(err as Error).message}`);
+          this.logger.warn(
+            `Failed to get connection credentials for source ${source.id}, falling back to source config: ${(err as Error).message}`,
+          );
         }
       }
 
-      const externalTasks = await adapter.fetchTasks(effectiveConfig, syncFilters);
+      const externalTasks = await adapter.fetchTasks(
+        effectiveConfig,
+        syncFilters,
+      );
 
       this.logger.log(
         `Fetched ${externalTasks.length} tasks from external source`,
@@ -320,8 +330,9 @@ export class SyncService {
           // Resolve category: match external property → local category, fallback to source default
           let categoryId = source.category_id;
           const categoryPropertyName = source.category_property || 'category';
-          const externalCategory = externalTask.metadata?.[categoryPropertyName]
-            || externalTask.metadata?.category; // fallback to 'category' metadata
+          const externalCategory =
+            externalTask.metadata?.[categoryPropertyName] ||
+            externalTask.metadata?.category; // fallback to 'category' metadata
           if (externalCategory) {
             const matchedCategoryId = categoryMap.get(
               String(externalCategory).toLowerCase(),
@@ -350,10 +361,7 @@ export class SyncService {
 
           if (existing) {
             // Update existing task (conflict resolution: last-write-wins from external)
-            await this.db
-              .from('tasks')
-              .update(taskData)
-              .eq('id', existing.id);
+            await this.db.from('tasks').update(taskData).eq('id', existing.id);
 
             result.tasks_updated++;
           } else {
@@ -416,7 +424,9 @@ export class SyncService {
     return Promise.all(syncStatusPromises);
   }
 
-  private async getConnectionCredentials(connectionId: string): Promise<Record<string, string>> {
+  private async getConnectionCredentials(
+    connectionId: string,
+  ): Promise<Record<string, string>> {
     const { data, error } = await this.db
       .from('integration_connections')
       .select('credentials')

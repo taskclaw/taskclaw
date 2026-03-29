@@ -5,8 +5,8 @@ import { SupabaseModule } from '../supabase/supabase.module';
 import { AiAssistantModule } from '../ai-assistant/ai-assistant.module';
 
 @Module({
-    imports: [SupabaseModule, AiAssistantModule],
-    controllers: [SearchController],
-    providers: [SearchService],
+  imports: [SupabaseModule, AiAssistantModule],
+  controllers: [SearchController],
+  providers: [SearchService],
 })
-export class SearchModule { }
+export class SearchModule {}

@@ -13,14 +13,20 @@ export function registerSkillTools(server: McpServer) {
     },
     async ({ active_only, skill_type, include_system }) => {
       const params = new URLSearchParams();
-      if (active_only !== undefined) params.set('active_only', String(active_only));
+      if (active_only !== undefined)
+        params.set('active_only', String(active_only));
       if (skill_type) params.set('skill_type', skill_type);
-      if (include_system !== undefined) params.set('include_system', String(include_system));
+      if (include_system !== undefined)
+        params.set('include_system', String(include_system));
       const qs = params.toString();
       const result = await get(
         `/accounts/:accountId/skills${qs ? `?${qs}` : ''}`,
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -30,7 +36,11 @@ export function registerSkillTools(server: McpServer) {
     {},
     async () => {
       const result = await get('/accounts/:accountId/categories');
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -47,7 +57,11 @@ export function registerSkillTools(server: McpServer) {
       const result = await get(
         `/accounts/:accountId/knowledge${qs ? `?${qs}` : ''}`,
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 }

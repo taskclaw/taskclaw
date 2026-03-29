@@ -1,4 +1,13 @@
-import { IsOptional, IsString, IsUUID, IsObject, IsBoolean, IsInt, IsArray, Min } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsUUID,
+  IsObject,
+  IsBoolean,
+  IsInt,
+  IsArray,
+  Min,
+} from 'class-validator';
 
 export class UpdateSourceDto {
   @IsOptional()

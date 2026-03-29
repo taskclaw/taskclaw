@@ -18,13 +18,9 @@ export class CategoriesService {
     const client = this.supabaseAdmin.getClient();
 
     // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(
-      client,
-      accountId,
-      userId,
-    );
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
-    const { data, error} = await client
+    const { data, error } = await client
       .from('categories')
       .select('*')
       .eq('account_id', accountId)
@@ -37,15 +33,16 @@ export class CategoriesService {
     return data;
   }
 
-  async findOne(userId: string, accountId: string, id: string, accessToken: string) {
+  async findOne(
+    userId: string,
+    accountId: string,
+    id: string,
+    accessToken: string,
+  ) {
     const client = this.supabaseAdmin.getClient();
 
     // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(
-      client,
-      accountId,
-      userId,
-    );
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
     const { data, error } = await client
       .from('categories')
@@ -70,11 +67,7 @@ export class CategoriesService {
     const client = this.supabaseAdmin.getClient();
 
     // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(
-      client,
-      accountId,
-      userId,
-    );
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
     const { data, error } = await client
       .from('categories')
@@ -100,11 +93,7 @@ export class CategoriesService {
   ) {
     const client = this.supabaseAdmin.getClient();
 
-    await this.accessControl.verifyAccountAccess(
-      client,
-      accountId,
-      userId,
-    );
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
     const rows = categories.map((cat) => ({
       account_id: accountId,
@@ -134,11 +123,7 @@ export class CategoriesService {
     const client = this.supabaseAdmin.getClient();
 
     // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(
-      client,
-      accountId,
-      userId,
-    );
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
     // Verify category exists and belongs to account
     await this.findOne(userId, accountId, id, accessToken);
@@ -158,20 +143,21 @@ export class CategoriesService {
     return data;
   }
 
-  async remove(userId: string, accountId: string, id: string, accessToken: string) {
+  async remove(
+    userId: string,
+    accountId: string,
+    id: string,
+    accessToken: string,
+  ) {
     const client = this.supabaseAdmin.getClient();
 
     // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(
-      client,
-      accountId,
-      userId,
-    );
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
     // Verify category exists and belongs to account
     await this.findOne(userId, accountId, id, accessToken);
 
-    const { error} = await client
+    const { error } = await client
       .from('categories')
       .delete()
       .eq('id', id)

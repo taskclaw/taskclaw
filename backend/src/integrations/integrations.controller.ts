@@ -35,7 +35,11 @@ export class IntegrationsController {
     @Query('category') category?: string,
   ) {
     if (category) {
-      return this.integrationsService.findAllDefinitionsByCategory(req.user.id, accountId, category);
+      return this.integrationsService.findAllDefinitionsByCategory(
+        req.user.id,
+        accountId,
+        category,
+      );
     }
     return this.integrationsService.findAllDefinitions(req.user.id, accountId);
   }
@@ -46,7 +50,11 @@ export class IntegrationsController {
     @Param('accountId') accountId: string,
     @Param('defId') defId: string,
   ) {
-    return this.integrationsService.findOneDefinition(req.user.id, accountId, defId);
+    return this.integrationsService.findOneDefinition(
+      req.user.id,
+      accountId,
+      defId,
+    );
   }
 
   @Post('definitions')
@@ -56,7 +64,11 @@ export class IntegrationsController {
     @Param('accountId') accountId: string,
     @Body() dto: CreateDefinitionDto,
   ) {
-    return this.integrationsService.createDefinition(req.user.id, accountId, dto);
+    return this.integrationsService.createDefinition(
+      req.user.id,
+      accountId,
+      dto,
+    );
   }
 
   @Patch('definitions/:defId')
@@ -66,7 +78,12 @@ export class IntegrationsController {
     @Param('defId') defId: string,
     @Body() dto: UpdateDefinitionDto,
   ) {
-    return this.integrationsService.updateDefinition(req.user.id, accountId, defId, dto);
+    return this.integrationsService.updateDefinition(
+      req.user.id,
+      accountId,
+      defId,
+      dto,
+    );
   }
 
   @Delete('definitions/:defId')
@@ -76,7 +93,11 @@ export class IntegrationsController {
     @Param('accountId') accountId: string,
     @Param('defId') defId: string,
   ) {
-    return this.integrationsService.removeDefinition(req.user.id, accountId, defId);
+    return this.integrationsService.removeDefinition(
+      req.user.id,
+      accountId,
+      defId,
+    );
   }
 
   // ─── Connections ──────────────────────────────────────────
@@ -88,7 +109,11 @@ export class IntegrationsController {
     @Query('category') category?: string,
   ) {
     if (category) {
-      return this.integrationsService.findAllConnectionsByCategory(req.user.id, accountId, category);
+      return this.integrationsService.findAllConnectionsByCategory(
+        req.user.id,
+        accountId,
+        category,
+      );
     }
     return this.integrationsService.findAllConnections(req.user.id, accountId);
   }
@@ -99,7 +124,11 @@ export class IntegrationsController {
     @Param('accountId') accountId: string,
     @Param('connId') connId: string,
   ) {
-    return this.integrationsService.findOneConnection(req.user.id, accountId, connId);
+    return this.integrationsService.findOneConnection(
+      req.user.id,
+      accountId,
+      connId,
+    );
   }
 
   @Post('connections')
@@ -109,7 +138,11 @@ export class IntegrationsController {
     @Param('accountId') accountId: string,
     @Body() dto: CreateConnectionDto,
   ) {
-    return this.integrationsService.createConnection(req.user.id, accountId, dto);
+    return this.integrationsService.createConnection(
+      req.user.id,
+      accountId,
+      dto,
+    );
   }
 
   @Patch('connections/:connId')
@@ -119,7 +152,12 @@ export class IntegrationsController {
     @Param('connId') connId: string,
     @Body() dto: UpdateConnectionDto,
   ) {
-    return this.integrationsService.updateConnection(req.user.id, accountId, connId, dto);
+    return this.integrationsService.updateConnection(
+      req.user.id,
+      accountId,
+      connId,
+      dto,
+    );
   }
 
   @Delete('connections/:connId')
@@ -129,7 +167,11 @@ export class IntegrationsController {
     @Param('accountId') accountId: string,
     @Param('connId') connId: string,
   ) {
-    return this.integrationsService.removeConnection(req.user.id, accountId, connId);
+    return this.integrationsService.removeConnection(
+      req.user.id,
+      accountId,
+      connId,
+    );
   }
 
   @Post('connections/:connId/toggle')
@@ -140,7 +182,10 @@ export class IntegrationsController {
     @Body('enabled') enabled: boolean,
   ) {
     return this.integrationsService.toggleConnection(
-      req.user.id, accountId, connId, enabled,
+      req.user.id,
+      accountId,
+      connId,
+      enabled,
     );
   }
 
@@ -151,7 +196,9 @@ export class IntegrationsController {
     @Param('connId') connId: string,
   ) {
     return this.integrationsService.checkConnectionHealth(
-      req.user.id, accountId, connId,
+      req.user.id,
+      accountId,
+      connId,
     );
   }
 }
@@ -169,7 +216,11 @@ export class BoardIntegrationRefsController {
     @Param('accountId') accountId: string,
     @Param('boardId') boardId: string,
   ) {
-    return this.integrationsService.getRefsForBoard(req.user.id, accountId, boardId);
+    return this.integrationsService.getRefsForBoard(
+      req.user.id,
+      accountId,
+      boardId,
+    );
   }
 
   @Post()
@@ -197,6 +248,11 @@ export class BoardIntegrationRefsController {
     @Param('boardId') boardId: string,
     @Param('refId') refId: string,
   ) {
-    return this.integrationsService.removeRef(req.user.id, accountId, boardId, refId);
+    return this.integrationsService.removeRef(
+      req.user.id,
+      accountId,
+      boardId,
+      refId,
+    );
   }
 }

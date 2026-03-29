@@ -1,13 +1,13 @@
 /**
  * SourceAdapter Interface
- * 
+ *
  * Defines the contract for all external source integrations (Notion, ClickUp, Trello, etc.)
  * Each adapter implements this interface to provide a unified API for syncing tasks.
  */
 
 export interface SyncFilter {
   property: string;
-  type: string;     // 'checkbox' | 'select' | 'multi_select' | 'status' | 'number' | 'date' | 'text' | etc.
+  type: string; // 'checkbox' | 'select' | 'multi_select' | 'status' | 'number' | 'date' | 'text' | etc.
   condition: string; // 'equals' | 'does_not_equal' | 'contains' | 'is_empty' | 'is_not_empty' | etc.
   value: any;
 }
@@ -18,7 +18,14 @@ export interface SourceConfig {
 }
 
 // DB status constraint: 'To-Do' | 'Today' | 'In Progress' | 'AI Running' | 'In Review' | 'Done' | 'Blocked'
-export type TaskStatus = 'To-Do' | 'Today' | 'In Progress' | 'AI Running' | 'In Review' | 'Done' | 'Blocked';
+export type TaskStatus =
+  | 'To-Do'
+  | 'Today'
+  | 'In Progress'
+  | 'AI Running'
+  | 'In Review'
+  | 'Done'
+  | 'Blocked';
 // DB priority constraint: 'High' | 'Medium' | 'Low' | 'Urgent'
 export type TaskPriority = 'High' | 'Medium' | 'Low' | 'Urgent';
 
@@ -55,7 +62,10 @@ export interface SourceAdapter {
   /**
    * Fetch all tasks from the external source, optionally applying pre-filters
    */
-  fetchTasks(config: SourceConfig, filters?: SyncFilter[]): Promise<ExternalTask[]>;
+  fetchTasks(
+    config: SourceConfig,
+    filters?: SyncFilter[],
+  ): Promise<ExternalTask[]>;
 
   /**
    * Push a task update to the external source (outbound sync)

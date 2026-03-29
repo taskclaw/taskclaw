@@ -159,13 +159,19 @@ export class AiProviderService {
       api_key_masked: true,
       openrouter_api_key: dto.openrouter_api_key
         ? maskSensitiveValue(dto.openrouter_api_key)
-        : data.openrouter_api_key ? maskSensitiveValue(decrypt(data.openrouter_api_key)) : null,
+        : data.openrouter_api_key
+          ? maskSensitiveValue(decrypt(data.openrouter_api_key))
+          : null,
       telegram_bot_token: dto.telegram_bot_token
         ? maskSensitiveValue(dto.telegram_bot_token)
-        : data.telegram_bot_token ? maskSensitiveValue(decrypt(data.telegram_bot_token)) : null,
+        : data.telegram_bot_token
+          ? maskSensitiveValue(decrypt(data.telegram_bot_token))
+          : null,
       brave_search_api_key: dto.brave_search_api_key
         ? maskSensitiveValue(dto.brave_search_api_key)
-        : data.brave_search_api_key ? maskSensitiveValue(decrypt(data.brave_search_api_key)) : null,
+        : data.brave_search_api_key
+          ? maskSensitiveValue(decrypt(data.brave_search_api_key))
+          : null,
     };
   }
 
@@ -292,7 +298,8 @@ export class AiProviderService {
       } else {
         return {
           success: false,
-          message: 'No API key provided and no stored key found. Please enter your API key.',
+          message:
+            'No API key provided and no stored key found. Please enter your API key.',
         };
       }
     }
@@ -320,9 +327,7 @@ export class AiProviderService {
       });
 
       if (!wsResult) {
-        throw new Error(
-          'WebSocket authentication failed — check your API key',
-        );
+        throw new Error('WebSocket authentication failed — check your API key');
       }
 
       // Update verified_at if config exists
@@ -336,7 +341,8 @@ export class AiProviderService {
 
       return {
         success: true,
-        message: 'Connection to OpenClaw verified successfully (WebSocket + Auth)',
+        message:
+          'Connection to OpenClaw verified successfully (WebSocket + Auth)',
         verified_at: new Date().toISOString(),
         assistant_name: 'Ottimus Claw',
       };

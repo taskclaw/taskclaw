@@ -46,7 +46,7 @@ export class AdaptersModule implements OnModuleInit {
       );
 
       if (providerName) {
-        this.registry.register(providerName, instance as any);
+        this.registry.register(providerName, instance);
         this.logger.log(`Auto-registered adapter: ${providerName}`);
       }
     }

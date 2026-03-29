@@ -21,12 +21,15 @@ export class OAuthController {
   ) {}
 
   private getCallbackUrl(): string {
-    const backendUrl = this.configService.get<string>('BACKEND_URL') || 'http://localhost:3003';
+    const backendUrl =
+      this.configService.get<string>('BACKEND_URL') || 'http://localhost:3003';
     return `${backendUrl}/integrations/oauth/callback`;
   }
 
   private getFrontendUrl(): string {
-    return this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3002';
+    return (
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3002'
+    );
   }
 
   /**
@@ -61,7 +64,9 @@ export class OAuthController {
   ) {
     if (error) {
       const frontendUrl = this.getFrontendUrl();
-      return res.redirect(`${frontendUrl}/dashboard/settings/integrations?oauth_error=${error}`);
+      return res.redirect(
+        `${frontendUrl}/dashboard/settings/integrations?oauth_error=${error}`,
+      );
     }
 
     if (!code || !state) {

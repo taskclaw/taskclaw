@@ -8,7 +8,13 @@ import { AdaptersModule } from '../adapters/adapters.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule, SyncModule, AdaptersModule, forwardRef(() => ConversationsModule)],
+  imports: [
+    SupabaseModule,
+    CommonModule,
+    SyncModule,
+    AdaptersModule,
+    forwardRef(() => ConversationsModule),
+  ],
   controllers: [TasksController],
   providers: [TasksService],
   exports: [TasksService],

@@ -66,7 +66,9 @@ export class ApiKeysService {
   async findAll(accountId: string) {
     const { data, error } = await this.getClient()
       .from('api_keys')
-      .select('id, account_id, user_id, key_prefix, name, scopes, last_used_at, expires_at, created_at')
+      .select(
+        'id, account_id, user_id, key_prefix, name, scopes, last_used_at, expires_at, created_at',
+      )
       .eq('account_id', accountId)
       .order('created_at', { ascending: false });
 

@@ -5,9 +5,9 @@ import { SupabaseModule } from '../supabase/supabase.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
 
 @Module({
-    imports: [SupabaseModule, ApiKeysModule],
-    controllers: [AuthController],
-    providers: [AuthService],
-    exports: [AuthService],
+  imports: [SupabaseModule, ApiKeysModule],
+  controllers: [AuthController],
+  providers: [AuthService],
+  exports: [AuthService],
 })
-export class AuthModule { }
+export class AuthModule {}

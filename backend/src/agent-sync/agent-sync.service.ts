@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AiProviderService } from '../ai-provider/ai-provider.service';
 import { AgentCompilerService } from './agent-compiler.service';
@@ -28,11 +33,14 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     // Run scheduled sync every 5 minutes (300,000 ms)
-    this.cronInterval = setInterval(() => {
-      this.handleScheduledSync().catch((err) => {
-        this.logger.error(`Scheduled sync failed: ${err.message}`);
-      });
-    }, 5 * 60 * 1000);
+    this.cronInterval = setInterval(
+      () => {
+        this.handleScheduledSync().catch((err) => {
+          this.logger.error(`Scheduled sync failed: ${err.message}`);
+        });
+      },
+      5 * 60 * 1000,
+    );
     this.logger.log('Agent sync cron registered (every 5 minutes)');
   }
 
@@ -46,7 +54,10 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
   // CORE: Sync a single category to the provider
   // ═══════════════════════════════════════════════════════════
 
-  async syncCategory(accountId: string, categoryId: string): Promise<SyncResult> {
+  async syncCategory(
+    accountId: string,
+    categoryId: string,
+  ): Promise<SyncResult> {
     const lockKey = `${accountId}:${categoryId}`;
     if (this.syncLocks.get(lockKey)) {
       this.logger.debug(`Sync already in progress for ${lockKey}, skipping`);
@@ -61,11 +72,19 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
       // 1. Get AI provider config
       const aiConfig = await this.getAiConfig(accountId);
       if (!aiConfig) {
-        return { categoryId, categoryName: '', action: 'skipped', error: 'No AI provider configured' };
+        return {
+          categoryId,
+          categoryName: '',
+          action: 'skipped',
+          error: 'No AI provider configured',
+        };
       }
 
       // 2. Compile SKILL.md content
-      const compiled = await this.compiler.compileForCategory(accountId, categoryId);
+      const compiled = await this.compiler.compileForCategory(
+        accountId,
+        categoryId,
+      );
 
       // 3. Get or create provider_agents row
       let { data: agentRow } = await client
@@ -83,15 +102,33 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
             await this.rpc.deleteSkill(aiConfig, agentRow.remote_skill_path);
           }
           await client.from('provider_agents').delete().eq('id', agentRow.id);
-          await this.logSync(agentRow.id, accountId, 'delete', 'completed', null, null, Date.now() - startTime);
+          await this.logSync(
+            agentRow.id,
+            accountId,
+            'delete',
+            'completed',
+            null,
+            null,
+            Date.now() - startTime,
+          );
         }
         return { categoryId, categoryName: '', action: 'deleted' };
       }
 
       // 4. Check if hash changed
-      if (agentRow && agentRow.instructions_hash === compiled.hash && agentRow.sync_status === 'synced') {
-        this.logger.debug(`Category "${compiled.categoryName}" unchanged — skipping`);
-        return { categoryId, categoryName: compiled.categoryName, action: 'skipped' };
+      if (
+        agentRow &&
+        agentRow.instructions_hash === compiled.hash &&
+        agentRow.sync_status === 'synced'
+      ) {
+        this.logger.debug(
+          `Category "${compiled.categoryName}" unchanged — skipping`,
+        );
+        return {
+          categoryId,
+          categoryName: compiled.categoryName,
+          action: 'skipped',
+        };
       }
 
       // 5. Create row if doesn't exist
@@ -110,7 +147,9 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
           .single();
 
         if (insertErr) {
-          throw new Error(`Failed to create provider_agents row: ${insertErr.message}`);
+          throw new Error(
+            `Failed to create provider_agents row: ${insertErr.message}`,
+          );
         }
         agentRow = newRow;
       } else {
@@ -152,7 +191,15 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
 
       // 8. Log success
       const durationMs = Date.now() - startTime;
-      await this.logSync(agentRow.id, accountId, isNew ? 'create' : 'update', 'completed', compiled.hash, null, durationMs);
+      await this.logSync(
+        agentRow.id,
+        accountId,
+        isNew ? 'create' : 'update',
+        'completed',
+        compiled.hash,
+        null,
+        durationMs,
+      );
 
       this.logger.log(
         `Synced category "${compiled.categoryName}" to provider (${isNew ? 'created' : 'updated'}, ${durationMs}ms)`,
@@ -164,7 +211,9 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
         action: isNew ? 'created' : 'updated',
       };
     } catch (err: any) {
-      this.logger.error(`Sync failed for category ${categoryId}: ${err.message}`);
+      this.logger.error(
+        `Sync failed for category ${categoryId}: ${err.message}`,
+      );
 
       // Update provider_agents with error
       const { data: agentRow } = await client
@@ -189,7 +238,15 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
           })
           .eq('id', agentRow.id);
 
-        await this.logSync(agentRow.id, accountId, 'update', 'failed', null, err.message, Date.now() - startTime);
+        await this.logSync(
+          agentRow.id,
+          accountId,
+          'update',
+          'failed',
+          null,
+          err.message,
+          Date.now() - startTime,
+        );
       }
 
       return {
@@ -217,7 +274,9 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
       .eq('account_id', accountId);
 
     if (error || !categories) {
-      this.logger.error(`Failed to fetch categories for account ${accountId}: ${error?.message}`);
+      this.logger.error(
+        `Failed to fetch categories for account ${accountId}: ${error?.message}`,
+      );
       return [];
     }
 
@@ -250,12 +309,16 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
         .update({ sync_status: 'stale' })
         .eq('id', existing.id);
 
-      this.logger.debug(`Marked provider agent as stale for category ${categoryId}`);
+      this.logger.debug(
+        `Marked provider agent as stale for category ${categoryId}`,
+      );
     }
 
     // Trigger immediate sync (fire-and-forget, cron is fallback)
     this.syncCategory(accountId, categoryId).catch((err) => {
-      this.logger.warn(`Immediate sync failed (cron will retry): ${err.message}`);
+      this.logger.warn(
+        `Immediate sync failed (cron will retry): ${err.message}`,
+      );
     });
   }
 
@@ -295,7 +358,9 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
       .select('*')
       .eq('account_id', accountId);
 
-    const agentMap = new Map((agents || []).map((a: any) => [a.category_id, a]));
+    const agentMap = new Map(
+      (agents || []).map((a: any) => [a.category_id, a]),
+    );
 
     const details = (categories || []).map((cat: any) => {
       const agent = agentMap.get(cat.id);
@@ -316,10 +381,14 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
 
     const counts = {
       total_categories: details.length,
-      agents_synced: details.filter((d: any) => d.sync_status === 'synced').length,
-      agents_pending: details.filter((d: any) => d.sync_status === 'pending').length,
-      agents_stale: details.filter((d: any) => d.sync_status === 'stale').length,
-      agents_error: details.filter((d: any) => d.sync_status === 'error').length,
+      agents_synced: details.filter((d: any) => d.sync_status === 'synced')
+        .length,
+      agents_pending: details.filter((d: any) => d.sync_status === 'pending')
+        .length,
+      agents_stale: details.filter((d: any) => d.sync_status === 'stale')
+        .length,
+      agents_error: details.filter((d: any) => d.sync_status === 'error')
+        .length,
       agents_none: details.filter((d: any) => d.sync_status === 'none').length,
     };
 
@@ -350,9 +419,15 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
   // ═══════════════════════════════════════════════════════════
 
   async previewInstructions(accountId: string, categoryId: string) {
-    const compiled = await this.compiler.compileForCategory(accountId, categoryId);
+    const compiled = await this.compiler.compileForCategory(
+      accountId,
+      categoryId,
+    );
     if (!compiled) {
-      return { content: null, message: 'No skills or knowledge linked to this agent' };
+      return {
+        content: null,
+        message: 'No skills or knowledge linked to this agent',
+      };
     }
     return {
       content: compiled.content,
@@ -402,7 +477,9 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
     // 1. Find provider_agents needing sync
     const { data: pendingAgents } = await client
       .from('provider_agents')
-      .select('account_id, category_id, sync_status, retry_count, next_retry_at')
+      .select(
+        'account_id, category_id, sync_status, retry_count, next_retry_at',
+      )
       .or(
         `sync_status.in.(pending,stale),and(sync_status.eq.error,retry_count.lt.5,next_retry_at.lte.${new Date().toISOString()})`,
       )
@@ -420,7 +497,9 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
     const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const { data: staleVerify } = await client
       .from('provider_agents')
-      .select('id, account_id, category_id, remote_skill_path, instructions_hash')
+      .select(
+        'id, account_id, category_id, remote_skill_path, instructions_hash',
+      )
       .eq('sync_status', 'synced')
       .lt('last_synced_at', thirtyMinAgo)
       .limit(5);
@@ -438,7 +517,10 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
 
   private async getAiConfig(accountId: string): Promise<any | null> {
     try {
-      return await this.aiProviderService.getDecryptedConfig(accountId, 'admin-bypass');
+      return await this.aiProviderService.getDecryptedConfig(
+        accountId,
+        'admin-bypass',
+      );
     } catch {
       return null;
     }
@@ -448,7 +530,10 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
     const aiConfig = await this.getAiConfig(agent.account_id);
     if (!aiConfig || !agent.remote_skill_path) return;
 
-    const result = await this.rpc.verifySkill(aiConfig, agent.remote_skill_path);
+    const result = await this.rpc.verifySkill(
+      aiConfig,
+      agent.remote_skill_path,
+    );
     const client = this.supabaseAdmin.getClient();
 
     if (!result.ok) {
@@ -470,7 +555,15 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
         .eq('id', agent.id);
     }
 
-    await this.logSync(agent.id, agent.account_id, 'verify', 'completed', agent.instructions_hash, null, 0);
+    await this.logSync(
+      agent.id,
+      agent.account_id,
+      'verify',
+      'completed',
+      agent.instructions_hash,
+      null,
+      0,
+    );
   }
 
   private async logSync(

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { CreateBoardStepDto } from './dto/create-board-step.dto';
@@ -20,7 +24,9 @@ export class BoardStepsService {
 
     const { data, error } = await client
       .from('board_steps')
-      .select('*, linked_category:categories!linked_category_id(id, name, color, icon)')
+      .select(
+        '*, linked_category:categories!linked_category_id(id, name, color, icon)',
+      )
       .eq('board_instance_id', boardId)
       .order('position', { ascending: true });
 
@@ -31,7 +37,12 @@ export class BoardStepsService {
     return data;
   }
 
-  async findOne(userId: string, accountId: string, boardId: string, stepId: string) {
+  async findOne(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    stepId: string,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
     await this.verifyBoardAccess(accountId, boardId);
@@ -50,7 +61,12 @@ export class BoardStepsService {
     return data;
   }
 
-  async create(userId: string, accountId: string, boardId: string, dto: CreateBoardStepDto) {
+  async create(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    dto: CreateBoardStepDto,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
     await this.verifyBoardAccess(accountId, boardId);
@@ -65,9 +81,10 @@ export class BoardStepsService {
         .order('position', { ascending: false })
         .limit(1);
 
-      position = existingSteps && existingSteps.length > 0
-        ? existingSteps[0].position + 1
-        : 0;
+      position =
+        existingSteps && existingSteps.length > 0
+          ? existingSteps[0].position + 1
+          : 0;
     }
 
     const { data, error } = await client
@@ -118,7 +135,12 @@ export class BoardStepsService {
     return data;
   }
 
-  async remove(userId: string, accountId: string, boardId: string, stepId: string) {
+  async remove(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    stepId: string,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
     await this.verifyBoardAccess(accountId, boardId);
@@ -135,8 +157,8 @@ export class BoardStepsService {
 
     if (allSteps && allSteps.length > 0) {
       // Move tasks to the nearest step (prefer previous, fallback to next)
-      const targetStep = allSteps.find((s) => s.position < step.position)
-        || allSteps[0];
+      const targetStep =
+        allSteps.find((s) => s.position < step.position) || allSteps[0];
 
       await client
         .from('tasks')
@@ -204,7 +226,9 @@ export class BoardStepsService {
       .single();
 
     if (error || !data) {
-      throw new NotFoundException(`Board with ID ${boardId} not found in this account`);
+      throw new NotFoundException(
+        `Board with ID ${boardId} not found in this account`,
+      );
     }
   }
 }

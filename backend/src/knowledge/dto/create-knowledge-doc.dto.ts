@@ -1,4 +1,11 @@
-import { IsString, IsOptional, IsBoolean, IsUUID, IsArray, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsUUID,
+  IsArray,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateKnowledgeDocDto {
   @IsString()

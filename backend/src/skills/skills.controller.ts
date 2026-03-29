@@ -36,22 +36,22 @@ export class SkillsController {
     @Query('skill_type') skillType?: string,
     @Query('include_system') includeSystem?: string,
   ) {
-    return this.skillsService.findAll(req.accessToken, accountId, activeOnly === 'true', skillType, includeSystem === 'true');
+    return this.skillsService.findAll(
+      req.accessToken,
+      accountId,
+      activeOnly === 'true',
+      skillType,
+      includeSystem === 'true',
+    );
   }
 
   @Get('agents/dashboard')
-  getAgentsDashboard(
-    @Request() req,
-    @Param('accountId') accountId: string,
-  ) {
+  getAgentsDashboard(@Request() req, @Param('accountId') accountId: string) {
     return this.skillsService.getAgentsDashboard(req.accessToken, accountId);
   }
 
   @Get('category-map')
-  getCategorySkillsMap(
-    @Request() req,
-    @Param('accountId') accountId: string,
-  ) {
+  getCategorySkillsMap(@Request() req, @Param('accountId') accountId: string) {
     return this.skillsService.getCategorySkillsMap(req.accessToken, accountId);
   }
 
@@ -61,7 +61,11 @@ export class SkillsController {
     @Param('accountId') accountId: string,
     @Param('categoryId') categoryId: string,
   ) {
-    return this.skillsService.findDefaultForCategory(req.accessToken, accountId, categoryId);
+    return this.skillsService.findDefaultForCategory(
+      req.accessToken,
+      accountId,
+      categoryId,
+    );
   }
 
   @Post(':id/attachments')
@@ -116,7 +120,11 @@ export class SkillsController {
   }
 
   @Get(':id')
-  findOne(@Request() req, @Param('accountId') accountId: string, @Param('id') id: string) {
+  findOne(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') id: string,
+  ) {
     return this.skillsService.findOne(req.accessToken, accountId, id);
   }
 
@@ -128,7 +136,12 @@ export class SkillsController {
     @Body() createSkillDto: CreateSkillDto,
   ) {
     const userId = req.user?.id;
-    return this.skillsService.create(req.accessToken, accountId, userId, createSkillDto);
+    return this.skillsService.create(
+      req.accessToken,
+      accountId,
+      userId,
+      createSkillDto,
+    );
   }
 
   @Patch(':id')
@@ -138,7 +151,12 @@ export class SkillsController {
     @Param('id') id: string,
     @Body() updateSkillDto: UpdateSkillDto,
   ) {
-    return this.skillsService.update(req.accessToken, accountId, id, updateSkillDto);
+    return this.skillsService.update(
+      req.accessToken,
+      accountId,
+      id,
+      updateSkillDto,
+    );
   }
 
   @Post(':skillId/link-category/:categoryId')
@@ -149,7 +167,12 @@ export class SkillsController {
     @Param('skillId') skillId: string,
     @Param('categoryId') categoryId: string,
   ) {
-    return this.skillsService.linkToCategory(req.accessToken, accountId, skillId, categoryId);
+    return this.skillsService.linkToCategory(
+      req.accessToken,
+      accountId,
+      skillId,
+      categoryId,
+    );
   }
 
   @Delete(':skillId/unlink-category/:categoryId')
@@ -160,12 +183,21 @@ export class SkillsController {
     @Param('skillId') skillId: string,
     @Param('categoryId') categoryId: string,
   ) {
-    return this.skillsService.unlinkFromCategory(req.accessToken, accountId, skillId, categoryId);
+    return this.skillsService.unlinkFromCategory(
+      req.accessToken,
+      accountId,
+      skillId,
+      categoryId,
+    );
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  remove(@Request() req, @Param('accountId') accountId: string, @Param('id') id: string) {
+  remove(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') id: string,
+  ) {
     return this.skillsService.remove(req.accessToken, accountId, id);
   }
 }

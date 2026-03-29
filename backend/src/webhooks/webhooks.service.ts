@@ -43,7 +43,12 @@ export class WebhooksService {
   async update(
     accountId: string,
     webhookId: string,
-    body: { url?: string; secret?: string; events?: string[]; active?: boolean },
+    body: {
+      url?: string;
+      secret?: string;
+      events?: string[];
+      active?: boolean;
+    },
   ) {
     const { data, error } = await this.getClient()
       .from('webhooks')

@@ -6,13 +6,13 @@ import { SearchService } from './search.service';
 @Controller('admin/search')
 @UseGuards(AuthGuard, AdminGuard)
 export class SearchController {
-    constructor(private readonly searchService: SearchService) { }
+  constructor(private readonly searchService: SearchService) {}
 
-    @Get()
-    async search(@Query('q') query: string) {
-        if (!query || query.length < 2) {
-            return { users: [], accounts: [], projects: [] };
-        }
-        return this.searchService.searchGlobal(query);
+  @Get()
+  async search(@Query('q') query: string) {
+    if (!query || query.length < 2) {
+      return { users: [], accounts: [], projects: [] };
     }
+    return this.searchService.searchGlobal(query);
+  }
 }

@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Param,
-  UseGuards,
-  Req,
-} from '@nestjs/common';
+import { Controller, Post, Get, Param, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { SyncService } from './sync.service';
 import { AuthGuard } from '../common/guards/auth.guard';

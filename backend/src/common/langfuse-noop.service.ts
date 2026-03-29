@@ -24,7 +24,12 @@ export class LangfuseNoopService {
     totalMessages: number;
     totalTokens: number;
     estimatedCost: number;
-    byDay: Array<{ date: string; messages: number; tokens: number; cost: number }>;
+    byDay: Array<{
+      date: string;
+      messages: number;
+      tokens: number;
+      cost: number;
+    }>;
   }> {
     return { totalMessages: 0, totalTokens: 0, estimatedCost: 0, byDay: [] };
   }
@@ -36,7 +41,11 @@ export class LangfuseNoopService {
     return { byTask: [], byCategory: [] };
   }
 
-  async getTaskUsage(): Promise<{ messages: number; tokens: number; cost: number }> {
+  async getTaskUsage(): Promise<{
+    messages: number;
+    tokens: number;
+    cost: number;
+  }> {
     return { messages: 0, tokens: 0, cost: 0 };
   }
 

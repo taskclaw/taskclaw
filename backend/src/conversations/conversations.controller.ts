@@ -23,9 +23,7 @@ import { AuthGuard } from '../common/guards/auth.guard';
 @Controller('accounts/:accountId/conversations')
 @UseGuards(AuthGuard)
 export class ConversationsController {
-  constructor(
-    private readonly conversationsService: ConversationsService,
-  ) {}
+  constructor(private readonly conversationsService: ConversationsService) {}
 
   /**
    * GET /accounts/:accountId/conversations

@@ -12,7 +12,11 @@ import { forwardRef } from '@nestjs/common';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { AiProviderService } from '../ai-provider/ai-provider.service';
-import { encrypt, decrypt, maskSensitiveValue } from '../common/utils/encryption.util';
+import {
+  encrypt,
+  decrypt,
+  maskSensitiveValue,
+} from '../common/utils/encryption.util';
 import { CreateDefinitionDto } from './dto/create-definition.dto';
 import { UpdateDefinitionDto } from './dto/update-definition.dto';
 import { CreateConnectionDto } from './dto/create-connection.dto';
@@ -35,7 +39,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   onModuleInit() {
     this.cronInterval = setInterval(() => {
       this.handleScheduledHealthChecks().catch((err) => {
-        this.logger.error(`Integration health check sweep failed: ${err.message}`);
+        this.logger.error(
+          `Integration health check sweep failed: ${err.message}`,
+        );
       });
     }, 60_000);
     this.logger.log('Integration health check cron registered (every 60s)');
@@ -87,7 +93,11 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     return data;
   }
 
-  async createDefinition(userId: string, accountId: string, dto: CreateDefinitionDto) {
+  async createDefinition(
+    userId: string,
+    accountId: string,
+    dto: CreateDefinitionDto,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -112,7 +122,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
 
     if (error) {
       if (error.code === '23505') {
-        throw new BadRequestException(`Integration with slug "${dto.slug}" already exists`);
+        throw new BadRequestException(
+          `Integration with slug "${dto.slug}" already exists`,
+        );
       }
       this.logger.error(`Failed to create definition: ${error.message}`);
       throw new Error(error.message);
@@ -121,14 +133,21 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     return data;
   }
 
-  async updateDefinition(userId: string, accountId: string, defId: string, dto: UpdateDefinitionDto) {
+  async updateDefinition(
+    userId: string,
+    accountId: string,
+    defId: string,
+    dto: UpdateDefinitionDto,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
     // Verify exists and is not system
     const existing = await this.findOneDefinition(userId, accountId, defId);
     if (existing.is_system) {
-      throw new ForbiddenException('Cannot modify system integration definitions');
+      throw new ForbiddenException(
+        'Cannot modify system integration definitions',
+      );
     }
 
     const updateData: Record<string, any> = {};
@@ -139,10 +158,12 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     if (dto.categories !== undefined) updateData.categories = dto.categories;
     if (dto.auth_type !== undefined) updateData.auth_type = dto.auth_type;
     if (dto.auth_config !== undefined) updateData.auth_config = dto.auth_config;
-    if (dto.config_fields !== undefined) updateData.config_fields = dto.config_fields;
+    if (dto.config_fields !== undefined)
+      updateData.config_fields = dto.config_fields;
     if (dto.skill_id !== undefined) updateData.skill_id = dto.skill_id;
     if (dto.setup_guide !== undefined) updateData.setup_guide = dto.setup_guide;
-    if (dto.proxy_base_url !== undefined) updateData.proxy_base_url = dto.proxy_base_url;
+    if (dto.proxy_base_url !== undefined)
+      updateData.proxy_base_url = dto.proxy_base_url;
 
     const { data, error } = await client
       .from('integration_definitions')
@@ -166,7 +187,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
 
     const existing = await this.findOneDefinition(userId, accountId, defId);
     if (existing.is_system) {
-      throw new ForbiddenException('Cannot delete system integration definitions');
+      throw new ForbiddenException(
+        'Cannot delete system integration definitions',
+      );
     }
 
     const { error } = await client
@@ -224,7 +247,11 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     return this.maskConnectionCredentials(data);
   }
 
-  async createConnection(userId: string, accountId: string, dto: CreateConnectionDto) {
+  async createConnection(
+    userId: string,
+    accountId: string,
+    dto: CreateConnectionDto,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -261,7 +288,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
 
     if (error) {
       if (error.code === '23505') {
-        throw new BadRequestException('Connection for this integration already exists');
+        throw new BadRequestException(
+          'Connection for this integration already exists',
+        );
       }
       this.logger.error(`Failed to create connection: ${error.message}`);
       throw new Error(error.message);
@@ -270,7 +299,12 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     return this.maskConnectionCredentials(data);
   }
 
-  async updateConnection(userId: string, accountId: string, connId: string, dto: UpdateConnectionDto) {
+  async updateConnection(
+    userId: string,
+    accountId: string,
+    connId: string,
+    dto: UpdateConnectionDto,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -338,7 +372,11 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   // CATEGORY-BASED QUERIES
   // ═══════════════════════════════════════════════════════════
 
-  async findAllDefinitionsByCategory(userId: string, accountId: string, category?: string) {
+  async findAllDefinitionsByCategory(
+    userId: string,
+    accountId: string,
+    category?: string,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -354,19 +392,27 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
 
     const { data, error } = await query;
     if (error) {
-      this.logger.error(`Failed to fetch definitions by category: ${error.message}`);
+      this.logger.error(
+        `Failed to fetch definitions by category: ${error.message}`,
+      );
       throw new Error(error.message);
     }
     return data || [];
   }
 
-  async findAllConnectionsByCategory(userId: string, accountId: string, category?: string) {
+  async findAllConnectionsByCategory(
+    userId: string,
+    accountId: string,
+    category?: string,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
     const { data, error } = await client
       .from('integration_connections')
-      .select('*, definition:integration_definitions(*, skill:skills(instructions))')
+      .select(
+        '*, definition:integration_definitions(*, skill:skills(instructions))',
+      )
       .eq('account_id', accountId)
       .order('created_at', { ascending: false });
 
@@ -378,7 +424,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     let filtered = data || [];
     if (category) {
       filtered = filtered.filter((conn: any) =>
-        conn.definition?.categories?.includes(category)
+        conn.definition?.categories?.includes(category),
       );
     }
 
@@ -389,7 +435,12 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   // COMMUNICATION TOOL TOGGLE & HEALTH CHECK
   // ═══════════════════════════════════════════════════════════
 
-  async toggleConnection(userId: string, accountId: string, connId: string, enabled: boolean) {
+  async toggleConnection(
+    userId: string,
+    accountId: string,
+    connId: string,
+    enabled: boolean,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -436,7 +487,8 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
         .select('*, definition:integration_definitions(*)')
         .single();
 
-      if (error) throw new Error(`Failed to toggle connection: ${error.message}`);
+      if (error)
+        throw new Error(`Failed to toggle connection: ${error.message}`);
       return this.maskConnectionCredentials(data);
     } else {
       const { data, error } = await client
@@ -450,12 +502,17 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
         .select('*, definition:integration_definitions(*)')
         .single();
 
-      if (error) throw new Error(`Failed to toggle connection: ${error.message}`);
+      if (error)
+        throw new Error(`Failed to toggle connection: ${error.message}`);
       return this.maskConnectionCredentials(data);
     }
   }
 
-  async checkConnectionHealth(userId: string, accountId: string, connId: string) {
+  async checkConnectionHealth(
+    userId: string,
+    accountId: string,
+    connId: string,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -505,7 +562,8 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       .select('*, definition:integration_definitions(*)')
       .single();
 
-    if (error) throw new Error(`Failed to update health status: ${error.message}`);
+    if (error)
+      throw new Error(`Failed to update health status: ${error.message}`);
     return this.maskConnectionCredentials(data);
   }
 
@@ -520,7 +578,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       .eq('health_status', 'healthy');
 
     if (error) {
-      this.logger.warn(`Failed to fetch available comm tools: ${error.message}`);
+      this.logger.warn(
+        `Failed to fetch available comm tools: ${error.message}`,
+      );
       return [];
     }
 
@@ -533,7 +593,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       });
   }
 
-  async getConnectionCredentialsDecrypted(connectionId: string): Promise<Record<string, string>> {
+  async getConnectionCredentialsDecrypted(
+    connectionId: string,
+  ): Promise<Record<string, string>> {
     const client = this.supabaseAdmin.getClient();
 
     const { data, error } = await client
@@ -562,7 +624,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
           .eq('id', connectionId);
         return parsed;
       } catch {
-        this.logger.warn(`Failed to decrypt credentials for connection ${connectionId}`);
+        this.logger.warn(
+          `Failed to decrypt credentials for connection ${connectionId}`,
+        );
         return {};
       }
     }
@@ -647,7 +711,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
             .eq('id', conn.id);
         }
       } catch (err: any) {
-        this.logger.error(`Health check failed for connection ${conn.id}: ${err.message}`);
+        this.logger.error(
+          `Health check failed for connection ${conn.id}: ${err.message}`,
+        );
       } finally {
         this.healthCheckLocks.delete(lockKey);
       }
@@ -692,11 +758,15 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
 
     const { data, error } = await client
       .from('board_integration_refs')
-      .select('*, connection:integration_connections(*, definition:integration_definitions(*))')
+      .select(
+        '*, connection:integration_connections(*, definition:integration_definitions(*))',
+      )
       .eq('board_id', boardId);
 
     if (error) {
-      this.logger.error(`Failed to fetch board integration refs: ${error.message}`);
+      this.logger.error(
+        `Failed to fetch board integration refs: ${error.message}`,
+      );
       throw new Error(error.message);
     }
 
@@ -709,7 +779,13 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  async addRef(userId: string, accountId: string, boardId: string, connectionId: string, isRequired = false) {
+  async addRef(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    connectionId: string,
+    isRequired = false,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -744,14 +820,20 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
         connection_id: connectionId,
         is_required: isRequired,
       })
-      .select('*, connection:integration_connections(*, definition:integration_definitions(*))')
+      .select(
+        '*, connection:integration_connections(*, definition:integration_definitions(*))',
+      )
       .single();
 
     if (error) {
       if (error.code === '23505') {
-        throw new BadRequestException('This integration is already linked to the board');
+        throw new BadRequestException(
+          'This integration is already linked to the board',
+        );
       }
-      this.logger.error(`Failed to add board integration ref: ${error.message}`);
+      this.logger.error(
+        `Failed to add board integration ref: ${error.message}`,
+      );
       throw new Error(error.message);
     }
 
@@ -762,7 +844,12 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     return data;
   }
 
-  async removeRef(userId: string, accountId: string, boardId: string, refId: string) {
+  async removeRef(
+    userId: string,
+    accountId: string,
+    boardId: string,
+    refId: string,
+  ) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -773,7 +860,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       .eq('board_id', boardId);
 
     if (error) {
-      this.logger.error(`Failed to remove board integration ref: ${error.message}`);
+      this.logger.error(
+        `Failed to remove board integration ref: ${error.message}`,
+      );
       throw new Error(error.message);
     }
 
@@ -827,13 +916,16 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   // EXECUTION BRIDGE — Integration context for board prompts
   // ═══════════════════════════════════════════════════════════
 
-  async getIntegrationContextForBoard(boardId: string): Promise<IntegrationContext[]> {
+  async getIntegrationContextForBoard(
+    boardId: string,
+  ): Promise<IntegrationContext[]> {
     const client = this.supabaseAdmin.getClient();
 
     // Fetch board refs with connection + definition + linked skill
     const { data: refs, error } = await client
       .from('board_integration_refs')
-      .select(`
+      .select(
+        `
         connection:integration_connections(
           id,
           credentials,
@@ -848,11 +940,14 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
             )
           )
         )
-      `)
+      `,
+      )
       .eq('board_id', boardId);
 
     if (error) {
-      this.logger.error(`Failed to fetch integration context for board ${boardId}: ${error.message}`);
+      this.logger.error(
+        `Failed to fetch integration context for board ${boardId}: ${error.message}`,
+      );
       return [];
     }
 
@@ -867,7 +962,9 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
         try {
           credentials = this.decryptCredentials(conn.credentials);
         } catch (err) {
-          this.logger.warn(`Failed to decrypt credentials for connection ${conn.id}`);
+          this.logger.warn(
+            `Failed to decrypt credentials for connection ${conn.id}`,
+          );
         }
       }
 

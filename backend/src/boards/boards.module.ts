@@ -11,7 +11,17 @@ import { CommonModule } from '../common/common.module';
 @Module({
   imports: [SupabaseModule, CommonModule],
   controllers: [BoardsController, BoardTemplatesController],
-  providers: [BoardsService, BoardStepsService, BoardTemplatesService, BundleImportService],
-  exports: [BoardsService, BoardStepsService, BoardTemplatesService, BundleImportService],
+  providers: [
+    BoardsService,
+    BoardStepsService,
+    BoardTemplatesService,
+    BundleImportService,
+  ],
+  exports: [
+    BoardsService,
+    BoardStepsService,
+    BoardTemplatesService,
+    BundleImportService,
+  ],
 })
 export class BoardsModule {}

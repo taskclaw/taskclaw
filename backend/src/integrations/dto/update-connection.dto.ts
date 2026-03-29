@@ -1,10 +1,4 @@
-import {
-  IsString,
-  IsOptional,
-  IsObject,
-  IsArray,
-  IsIn,
-} from 'class-validator';
+import { IsString, IsOptional, IsObject, IsArray, IsIn } from 'class-validator';
 
 export class UpdateConnectionDto {
   @IsOptional()

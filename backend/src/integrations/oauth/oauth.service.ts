@@ -92,7 +92,7 @@ export class OAuthService {
       throw new BadRequestException('This integration does not use OAuth2');
     }
 
-    const authConfig = def.auth_config as any;
+    const authConfig = def.auth_config;
     if (!authConfig?.authorization_url) {
       throw new BadRequestException('OAuth2 authorization_url not configured');
     }
@@ -158,7 +158,7 @@ export class OAuthService {
       throw new BadRequestException('Integration definition not found');
     }
 
-    const authConfig = def.auth_config as any;
+    const authConfig = def.auth_config;
 
     // Exchange code for tokens
     const tokenResponse = await this.exchangeCode(
@@ -169,7 +169,9 @@ export class OAuthService {
     );
 
     // Encrypt the entire token response as credentials blob
-    const encryptedCredentials = this.integrationsService.encryptCredentials(tokenResponse.credentials);
+    const encryptedCredentials = this.integrationsService.encryptCredentials(
+      tokenResponse.credentials,
+    );
 
     // Calculate token expiry
     const tokenExpiresAt = tokenResponse.expires_in
@@ -191,23 +193,23 @@ export class OAuthService {
           credentials: encryptedCredentials,
           status: 'active',
           token_expires_at: tokenExpiresAt,
-          scopes: tokenResponse.scope ? tokenResponse.scope.split(/[, ]+/) : null,
+          scopes: tokenResponse.scope
+            ? tokenResponse.scope.split(/[, ]+/)
+            : null,
           verified_at: new Date().toISOString(),
           error_message: null,
         })
         .eq('id', existingConn.id);
     } else {
-      await client
-        .from('integration_connections')
-        .insert({
-          account_id: stateData.accountId,
-          definition_id: stateData.definitionId,
-          credentials: encryptedCredentials,
-          status: 'active',
-          token_expires_at: tokenExpiresAt,
-          scopes: tokenResponse.scope ? tokenResponse.scope.split(/[, ]+/) : null,
-          verified_at: new Date().toISOString(),
-        });
+      await client.from('integration_connections').insert({
+        account_id: stateData.accountId,
+        definition_id: stateData.definitionId,
+        credentials: encryptedCredentials,
+        status: 'active',
+        token_expires_at: tokenExpiresAt,
+        scopes: tokenResponse.scope ? tokenResponse.scope.split(/[, ]+/) : null,
+        verified_at: new Date().toISOString(),
+      });
     }
 
     return {
@@ -221,7 +223,11 @@ export class OAuthService {
     authConfig: any,
     codeVerifier: string,
     callbackUrl: string,
-  ): Promise<{ credentials: Record<string, string>; expires_in?: number; scope?: string }> {
+  ): Promise<{
+    credentials: Record<string, string>;
+    expires_in?: number;
+    scope?: string;
+  }> {
     if (!authConfig.token_url) {
       throw new BadRequestException('token_url not configured');
     }
@@ -249,8 +255,12 @@ export class OAuthService {
 
     if (!response.ok) {
       const errorText = await response.text();
-      this.logger.error(`OAuth token exchange failed: ${response.status} - ${errorText}`);
-      throw new BadRequestException('Failed to exchange authorization code for tokens');
+      this.logger.error(
+        `OAuth token exchange failed: ${response.status} - ${errorText}`,
+      );
+      throw new BadRequestException(
+        'Failed to exchange authorization code for tokens',
+      );
     }
 
     const tokenData = await response.json();
@@ -279,7 +289,9 @@ export class OAuthService {
 
     const { data: connections, error } = await client
       .from('integration_connections')
-      .select('id, credentials, definition:integration_definitions(auth_config)')
+      .select(
+        'id, credentials, definition:integration_definitions(auth_config)',
+      )
       .eq('status', 'active')
       .not('token_expires_at', 'is', null)
       .lt('token_expires_at', tenMinFromNow);
@@ -294,7 +306,9 @@ export class OAuthService {
       try {
         await this.refreshToken(conn);
       } catch (err) {
-        this.logger.error(`Failed to refresh token for connection ${conn.id}: ${err.message}`);
+        this.logger.error(
+          `Failed to refresh token for connection ${conn.id}: ${err.message}`,
+        );
       } finally {
         this.refreshLocks.delete(conn.id);
       }
@@ -302,7 +316,7 @@ export class OAuthService {
   }
 
   private async refreshToken(conn: any) {
-    const authConfig = (conn.definition as any)?.auth_config;
+    const authConfig = conn.definition?.auth_config;
     const refreshUrl = authConfig?.refresh_url || authConfig?.token_url;
 
     if (!refreshUrl || !conn.credentials) {
@@ -326,7 +340,8 @@ export class OAuthService {
     body.set('refresh_token', decrypted.refresh_token);
 
     if (authConfig.client_id) body.set('client_id', authConfig.client_id);
-    if (authConfig.client_secret) body.set('client_secret', authConfig.client_secret);
+    if (authConfig.client_secret)
+      body.set('client_secret', authConfig.client_secret);
 
     try {
       const response = await fetch(refreshUrl, {
@@ -347,7 +362,8 @@ export class OAuthService {
         token_type: tokenData.token_type || 'Bearer',
       };
 
-      const encryptedCredentials = this.integrationsService.encryptCredentials(newCredentials);
+      const encryptedCredentials =
+        this.integrationsService.encryptCredentials(newCredentials);
       const tokenExpiresAt = tokenData.expires_in
         ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
         : null;
@@ -365,7 +381,9 @@ export class OAuthService {
 
       this.logger.log(`Refreshed token for connection ${conn.id}`);
     } catch (err) {
-      this.logger.error(`Token refresh failed for connection ${conn.id}: ${err.message}`);
+      this.logger.error(
+        `Token refresh failed for connection ${conn.id}: ${err.message}`,
+      );
 
       const client = this.supabaseAdmin.getClient();
       await client

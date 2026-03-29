@@ -13,7 +13,16 @@ import { AgentSyncModule } from '../agent-sync/agent-sync.module';
 import { IntegrationsModule } from '../integrations/integrations.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule, forwardRef(() => AiProviderModule), forwardRef(() => KnowledgeModule), forwardRef(() => SkillsModule), AdaptersModule, forwardRef(() => AgentSyncModule), IntegrationsModule],
+  imports: [
+    SupabaseModule,
+    CommonModule,
+    forwardRef(() => AiProviderModule),
+    forwardRef(() => KnowledgeModule),
+    forwardRef(() => SkillsModule),
+    AdaptersModule,
+    forwardRef(() => AgentSyncModule),
+    IntegrationsModule,
+  ],
   controllers: [ConversationsController],
   providers: [ConversationsService, OpenClawService],
   exports: [ConversationsService, OpenClawService],

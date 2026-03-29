@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsBoolean, MaxLength, IsIn } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  MaxLength,
+  IsIn,
+} from 'class-validator';
 
 export class CreateSkillDto {
   @IsString()

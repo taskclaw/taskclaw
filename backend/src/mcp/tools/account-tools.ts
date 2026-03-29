@@ -13,7 +13,11 @@ export function registerAccountTools(server: McpServer) {
       // The /accounts endpoint returns all user accounts; find the active one
       const accounts = result as Array<{ id: string }>;
       const account = accounts.find((a) => a.id === accountId) || accounts[0];
-      return { content: [{ type: 'text' as const, text: JSON.stringify(account, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(account, null, 2) },
+        ],
+      };
     },
   );
 
@@ -25,7 +29,11 @@ export function registerAccountTools(server: McpServer) {
       // Members are typically part of account data or a sub-resource.
       // The accounts endpoint returns members, so we fetch the account.
       const result = await get('/accounts');
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 }

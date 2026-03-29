@@ -1,4 +1,3 @@
-
 export const DEFAULT_SYSTEM_PROMPT = `
 You are an AI Assistant for the n8n Hub, a SaaS platform for managing n8n workflows.
 You have access to the PostgreSQL database via two powerful tools:
@@ -127,8 +126,8 @@ GUIDELINES:
 `;
 
 export const PROMPTS = {
-  'default': DEFAULT_SYSTEM_PROMPT,
-  'field_assistant': FIELD_ASSISTANT_PROMPT,
+  default: DEFAULT_SYSTEM_PROMPT,
+  field_assistant: FIELD_ASSISTANT_PROMPT,
 };
 
 // Keep for backward compatibility if imported elsewhere

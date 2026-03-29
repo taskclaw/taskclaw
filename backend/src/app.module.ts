@@ -43,7 +43,13 @@ const isCloudEdition = process.env.EDITION === 'cloud';
 // Cloud edition: full Langfuse + billing modules
 // Community edition: noop Langfuse stub, no billing
 const editionModules = isCloudEdition
-  ? [LangfuseModule, StripeModule, PlansModule, SubscriptionsModule, WaitlistModule]
+  ? [
+      LangfuseModule,
+      StripeModule,
+      PlansModule,
+      SubscriptionsModule,
+      WaitlistModule,
+    ]
   : [LangfuseNoopModule];
 
 @Module({

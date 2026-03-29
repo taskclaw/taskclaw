@@ -38,7 +38,9 @@ export class BoardTemplatesService {
       .single();
 
     if (error || !data) {
-      throw new NotFoundException(`Board template with ID ${templateId} not found`);
+      throw new NotFoundException(
+        `Board template with ID ${templateId} not found`,
+      );
     }
 
     return data;
@@ -69,7 +71,9 @@ export class BoardTemplatesService {
 
       if (existing) {
         categoryId = existing.id;
-        this.logger.log(`Category "${cat.name}" already exists, reusing ${categoryId}`);
+        this.logger.log(
+          `Category "${cat.name}" already exists, reusing ${categoryId}`,
+        );
       } else {
         const { data: newCat, error: catError } = await client
           .from('categories')
@@ -83,7 +87,9 @@ export class BoardTemplatesService {
           .single();
 
         if (catError) {
-          this.logger.error(`Failed to create category "${cat.name}": ${catError.message}`);
+          this.logger.error(
+            `Failed to create category "${cat.name}": ${catError.message}`,
+          );
           continue;
         }
         categoryId = newCat.id;
@@ -121,7 +127,9 @@ export class BoardTemplatesService {
               .single();
 
             if (skillError) {
-              this.logger.error(`Failed to create skill "${skill.name}": ${skillError.message}`);
+              this.logger.error(
+                `Failed to create skill "${skill.name}": ${skillError.message}`,
+              );
               continue;
             }
             skillId = newSkill.id;
@@ -151,7 +159,9 @@ export class BoardTemplatesService {
             });
 
           if (docError) {
-            this.logger.error(`Failed to create knowledge doc "${doc.title}": ${docError.message}`);
+            this.logger.error(
+              `Failed to create knowledge doc "${doc.title}": ${docError.message}`,
+            );
           }
         }
       }
@@ -205,7 +215,9 @@ export class BoardTemplatesService {
       .single();
 
     if (boardError) {
-      throw new Error(`Failed to install board template: ${boardError.message}`);
+      throw new Error(
+        `Failed to install board template: ${boardError.message}`,
+      );
     }
 
     // Create steps from manifest
@@ -254,7 +266,9 @@ export class BoardTemplatesService {
         .select('id, step_key');
 
       if (stepsError) {
-        this.logger.error(`Failed to create template steps: ${stepsError.message}`);
+        this.logger.error(
+          `Failed to create template steps: ${stepsError.message}`,
+        );
       }
 
       // Resolve on_success_step_id / on_error_step_id from step_key references
@@ -277,10 +291,7 @@ export class BoardTemplatesService {
           }
 
           if (Object.keys(updates).length > 0) {
-            await client
-              .from('board_steps')
-              .update(updates)
-              .eq('id', stepId);
+            await client.from('board_steps').update(updates).eq('id', stepId);
           }
         }
       }
@@ -374,7 +385,8 @@ export class BoardTemplatesService {
           linked_category_id: linkedCategoryId,
           ai_enabled: step.ai_config?.enabled || false,
           ai_first: step.ai_config?.ai_first || step.ai_first || false,
-          system_prompt: step.ai_config?.system_prompt || step.system_prompt || null,
+          system_prompt:
+            step.ai_config?.system_prompt || step.system_prompt || null,
           model_override: step.ai_config?.model_override || null,
           temperature: step.ai_config?.temperature || null,
           trigger_type: step.trigger_type || 'on_entry',
@@ -397,7 +409,9 @@ export class BoardTemplatesService {
         .select('id, step_key');
 
       if (stepsError) {
-        this.logger.error(`Failed to create imported steps: ${stepsError.message}`);
+        this.logger.error(
+          `Failed to create imported steps: ${stepsError.message}`,
+        );
       }
 
       // Resolve step routing references
@@ -421,10 +435,7 @@ export class BoardTemplatesService {
           }
 
           if (Object.keys(updates).length > 0) {
-            await client
-              .from('board_steps')
-              .update(updates)
-              .eq('id', stepId);
+            await client.from('board_steps').update(updates).eq('id', stepId);
           }
         }
       }

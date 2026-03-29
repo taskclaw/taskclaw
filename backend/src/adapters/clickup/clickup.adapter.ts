@@ -71,7 +71,10 @@ export class ClickUpAdapter implements SourceAdapter {
     return 'clickup';
   }
 
-  async fetchTasks(config: SourceConfig, filters?: SyncFilter[]): Promise<ExternalTask[]> {
+  async fetchTasks(
+    config: SourceConfig,
+    filters?: SyncFilter[],
+  ): Promise<ExternalTask[]> {
     const clickupConfig = config as ClickUpConfig;
     const tasks: ClickUpTask[] = [];
     let page = 0;
@@ -126,7 +129,9 @@ export class ClickUpAdapter implements SourceAdapter {
       switch (f.property.toLowerCase()) {
         case 'status':
           if (Array.isArray(f.value)) {
-            f.value.forEach((v: string) => params.push(`statuses[]=${encodeURIComponent(v)}`));
+            f.value.forEach((v: string) =>
+              params.push(`statuses[]=${encodeURIComponent(v)}`),
+            );
           } else if (f.value) {
             params.push(`statuses[]=${encodeURIComponent(f.value)}`);
           }
@@ -141,7 +146,9 @@ export class ClickUpAdapter implements SourceAdapter {
           break;
         case 'tags':
           if (Array.isArray(f.value)) {
-            f.value.forEach((v: string) => params.push(`tags[]=${encodeURIComponent(v)}`));
+            f.value.forEach((v: string) =>
+              params.push(`tags[]=${encodeURIComponent(v)}`),
+            );
           } else if (f.value) {
             params.push(`tags[]=${encodeURIComponent(f.value)}`);
           }
@@ -149,7 +156,9 @@ export class ClickUpAdapter implements SourceAdapter {
         default:
           // For custom fields, ClickUp uses custom_fields parameter (JSON)
           // We'll apply these as post-fetch client-side filters for now
-          this.logger.warn(`ClickUp filter for '${f.property}' will be applied post-fetch`);
+          this.logger.warn(
+            `ClickUp filter for '${f.property}' will be applied post-fetch`,
+          );
           break;
       }
     }
@@ -181,9 +190,7 @@ export class ClickUpAdapter implements SourceAdapter {
         payload.description = update.notes;
       }
       if (update.due_date !== undefined) {
-        payload.due_date = update.due_date
-          ? update.due_date.getTime()
-          : null;
+        payload.due_date = update.due_date ? update.due_date.getTime() : null;
       }
 
       await this.makeRequest(
@@ -449,9 +456,7 @@ export class ClickUpAdapter implements SourceAdapter {
       notes: task.text_content || task.description,
       external_url: task.url,
       due_date: task.due_date ? new Date(task.due_date) : undefined,
-      completed_at: task.date_closed
-        ? new Date(task.date_closed)
-        : undefined,
+      completed_at: task.date_closed ? new Date(task.date_closed) : undefined,
       metadata: {
         list_name: task.list.name,
         folder_name: task.folder?.name,
@@ -487,19 +492,21 @@ export class ClickUpAdapter implements SourceAdapter {
     // The actual status name may need to be fetched from the list's statuses
     const statusMap: Record<TaskStatus, string> = {
       'To-Do': 'to do',
-      'Today': 'to do', // ClickUp doesn't have "Today", map to "to do"
+      Today: 'to do', // ClickUp doesn't have "Today", map to "to do"
       'In Progress': 'in progress',
       'AI Running': 'in progress', // Internal status -- map to "in progress" in ClickUp
       'In Review': 'in progress', // Internal status -- map to "in progress" in ClickUp
-      'Done': 'complete',
-      'Blocked': 'blocked',
+      Done: 'complete',
+      Blocked: 'blocked',
     };
     return statusMap[ottStatus] || 'to do';
   }
 
   // Priority mapping: ClickUp uses 1-4, where 1 is urgent
   // DB constraint: priority IN ('High', 'Medium', 'Low', 'Urgent')
-  private mapPriorityFromClickUp(clickupPriority: number | null): TaskPriority | undefined {
+  private mapPriorityFromClickUp(
+    clickupPriority: number | null,
+  ): TaskPriority | undefined {
     if (clickupPriority === null || clickupPriority === undefined) {
       return undefined;
     }

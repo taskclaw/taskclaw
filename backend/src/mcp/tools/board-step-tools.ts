@@ -11,7 +11,11 @@ export function registerBoardStepTools(server: McpServer) {
     },
     async ({ board_id }) => {
       const result = await get(`/accounts/:accountId/boards/${board_id}/steps`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -25,8 +29,15 @@ export function registerBoardStepTools(server: McpServer) {
       color: z.string().optional().describe('Step color hex code'),
     },
     async ({ board_id, ...stepData }) => {
-      const result = await post(`/accounts/:accountId/boards/${board_id}/steps`, stepData);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const result = await post(
+        `/accounts/:accountId/boards/${board_id}/steps`,
+        stepData,
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -44,7 +55,11 @@ export function registerBoardStepTools(server: McpServer) {
         `/accounts/:accountId/boards/${board_id}/steps/${step_id}`,
         updates,
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -60,7 +75,11 @@ export function registerBoardStepTools(server: McpServer) {
         `/accounts/:accountId/boards/${board_id}/steps/reorder`,
         { step_ids },
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 }

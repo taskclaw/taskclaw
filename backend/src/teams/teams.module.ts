@@ -3,7 +3,7 @@ import { TeamsService } from './teams.service';
 import { TeamsController } from './teams.controller';
 
 @Module({
-    controllers: [TeamsController],
-    providers: [TeamsService],
+  controllers: [TeamsController],
+  providers: [TeamsService],
 })
-export class TeamsModule { }
+export class TeamsModule {}

@@ -15,8 +15,14 @@ export function registerBoardTools(server: McpServer) {
       if (archived !== undefined) params.set('archived', String(archived));
       if (favorite !== undefined) params.set('favorite', String(favorite));
       const qs = params.toString();
-      const result = await get(`/accounts/:accountId/boards${qs ? `?${qs}` : ''}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const result = await get(
+        `/accounts/:accountId/boards${qs ? `?${qs}` : ''}`,
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -28,7 +34,11 @@ export function registerBoardTools(server: McpServer) {
     },
     async ({ board_id }) => {
       const result = await get(`/accounts/:accountId/boards/${board_id}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -41,7 +51,11 @@ export function registerBoardTools(server: McpServer) {
     },
     async (args) => {
       const result = await post('/accounts/:accountId/boards', args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -52,12 +66,22 @@ export function registerBoardTools(server: McpServer) {
       board_id: z.string().describe('The UUID of the board to update'),
       name: z.string().optional().describe('New board name'),
       description: z.string().optional().describe('New board description'),
-      archived: z.boolean().optional().describe('Archive or unarchive the board'),
+      archived: z
+        .boolean()
+        .optional()
+        .describe('Archive or unarchive the board'),
       favorite: z.boolean().optional().describe('Mark or unmark as favorite'),
     },
     async ({ board_id, ...updates }) => {
-      const result = await patch(`/accounts/:accountId/boards/${board_id}`, updates);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const result = await patch(
+        `/accounts/:accountId/boards/${board_id}`,
+        updates,
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -69,7 +93,11 @@ export function registerBoardTools(server: McpServer) {
     },
     async ({ board_id }) => {
       const result = await del(`/accounts/:accountId/boards/${board_id}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -77,11 +105,17 @@ export function registerBoardTools(server: McpServer) {
     'import_board',
     'Import a board from a manifest JSON object.',
     {
-      manifest: z.record(z.string(), z.unknown()).describe('The board manifest JSON to import'),
+      manifest: z
+        .record(z.string(), z.unknown())
+        .describe('The board manifest JSON to import'),
     },
     async ({ manifest }) => {
       const result = await post('/accounts/:accountId/boards/import', manifest);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -92,8 +126,14 @@ export function registerBoardTools(server: McpServer) {
       board_id: z.string().describe('The UUID of the board to export'),
     },
     async ({ board_id }) => {
-      const result = await get(`/accounts/:accountId/boards/${board_id}/export`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const result = await get(
+        `/accounts/:accountId/boards/${board_id}/export`,
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 }

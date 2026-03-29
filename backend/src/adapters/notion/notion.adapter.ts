@@ -37,7 +37,10 @@ export class NotionAdapter implements SourceAdapter {
     return 'notion';
   }
 
-  async fetchTasks(config: SourceConfig, filters?: SyncFilter[]): Promise<ExternalTask[]> {
+  async fetchTasks(
+    config: SourceConfig,
+    filters?: SyncFilter[],
+  ): Promise<ExternalTask[]> {
     const notionConfig = config as NotionConfig;
     const client = this.createClient(notionConfig);
 
@@ -52,7 +55,9 @@ export class NotionAdapter implements SourceAdapter {
       // Build Notion filter from our SyncFilter array
       const notionFilter = this.buildNotionFilter(filters);
       if (notionFilter) {
-        this.logger.log(`Applying Notion filter: ${JSON.stringify(notionFilter)}`);
+        this.logger.log(
+          `Applying Notion filter: ${JSON.stringify(notionFilter)}`,
+        );
       }
 
       // Pagination: fetch all pages using dataSources API (Notion client v5+)
@@ -67,11 +72,13 @@ export class NotionAdapter implements SourceAdapter {
           queryParams.filter = notionFilter;
         }
 
-        const response = await client.dataSources.query(queryParams as QueryDataSourceParameters);
+        const response = await client.dataSources.query(
+          queryParams as QueryDataSourceParameters,
+        );
 
         for (const result of response.results) {
           if (result.object === 'page' && 'properties' in result) {
-            pages.push(result as PageObjectResponse);
+            pages.push(result);
           }
         }
 
@@ -153,7 +160,9 @@ export class NotionAdapter implements SourceAdapter {
         properties['Task'] = { title: [{ text: { content: update.title } }] };
       }
       if (update.status !== undefined) {
-        properties['Status'] = { select: { name: this.mapStatusToNotion(update.status) } };
+        properties['Status'] = {
+          select: { name: this.mapStatusToNotion(update.status) },
+        };
       }
       if (update.priority !== undefined) {
         properties['Priority'] = { select: { name: update.priority } };
@@ -254,34 +263,32 @@ export class NotionAdapter implements SourceAdapter {
       rawProperties = (db as any).properties || {};
     }
 
-    return Object.entries(rawProperties).map(
-      ([name, prop]: [string, any]) => {
-        const result: any = { name, type: prop.type, id: prop.id };
-        if (prop.type === 'select' && prop.select?.options) {
-          result.options = prop.select.options.map((o: any) => ({
-            name: o.name,
-            color: o.color,
-          }));
-        }
-        if (prop.type === 'multi_select' && prop.multi_select?.options) {
-          result.options = prop.multi_select.options.map((o: any) => ({
-            name: o.name,
-            color: o.color,
-          }));
-        }
-        if (prop.type === 'status' && prop.status?.options) {
-          result.options = prop.status.options.map((o: any) => ({
-            name: o.name,
-            color: o.color,
-          }));
-          result.groups = prop.status.groups?.map((g: any) => ({
-            name: g.name,
-            option_ids: g.option_ids,
-          }));
-        }
-        return result;
-      },
-    );
+    return Object.entries(rawProperties).map(([name, prop]: [string, any]) => {
+      const result: any = { name, type: prop.type, id: prop.id };
+      if (prop.type === 'select' && prop.select?.options) {
+        result.options = prop.select.options.map((o: any) => ({
+          name: o.name,
+          color: o.color,
+        }));
+      }
+      if (prop.type === 'multi_select' && prop.multi_select?.options) {
+        result.options = prop.multi_select.options.map((o: any) => ({
+          name: o.name,
+          color: o.color,
+        }));
+      }
+      if (prop.type === 'status' && prop.status?.options) {
+        result.options = prop.status.options.map((o: any) => ({
+          name: o.name,
+          color: o.color,
+        }));
+        result.groups = prop.status.groups?.map((g: any) => ({
+          name: g.name,
+          option_ids: g.option_ids,
+        }));
+      }
+      return result;
+    });
   }
 
   /**
@@ -327,7 +334,10 @@ export class NotionAdapter implements SourceAdapter {
     }
   }
 
-  private async fetchBlockContent(client: Client, blockId: string): Promise<string> {
+  private async fetchBlockContent(
+    client: Client,
+    blockId: string,
+  ): Promise<string> {
     const blocks = await client.blocks.children.list({
       block_id: blockId,
       page_size: 100,
@@ -341,7 +351,9 @@ export class NotionAdapter implements SourceAdapter {
       const data = b[type] as Record<string, unknown> | undefined;
       if (!data) continue;
 
-      const richText = data['rich_text'] as Array<{ plain_text: string }> | undefined;
+      const richText = data['rich_text'] as
+        | Array<{ plain_text: string }>
+        | undefined;
       const text = richText?.map((t) => t.plain_text).join('') || '';
 
       let line = '';
@@ -386,7 +398,9 @@ export class NotionAdapter implements SourceAdapter {
           break;
         case 'bookmark': {
           const url = (data['url'] as string) || '';
-          const caption = (data['caption'] as Array<{ plain_text: string }> | undefined)
+          const caption = (
+            data['caption'] as Array<{ plain_text: string }> | undefined
+          )
             ?.map((t) => t.plain_text)
             .join('');
           line = caption ? `${caption}: ${url}` : url;
@@ -411,7 +425,10 @@ export class NotionAdapter implements SourceAdapter {
 
       // Recursively fetch children for blocks that have them
       if (b['has_children'] === true) {
-        const childContent = await this.fetchBlockContent(client, b['id'] as string);
+        const childContent = await this.fetchBlockContent(
+          client,
+          b['id'] as string,
+        );
         if (childContent) {
           const indented = childContent
             .split('\n')
@@ -436,12 +453,19 @@ export class NotionAdapter implements SourceAdapter {
   async getComments(
     config: SourceConfig,
     pageId: string,
-  ): Promise<Array<{ id: string; text: string; created_at: string; author: string }>> {
+  ): Promise<
+    Array<{ id: string; text: string; created_at: string; author: string }>
+  > {
     const notionConfig = config as NotionConfig;
     const client = this.createClient(notionConfig);
 
     try {
-      const comments: Array<{ id: string; text: string; created_at: string; author: string }> = [];
+      const comments: Array<{
+        id: string;
+        text: string;
+        created_at: string;
+        author: string;
+      }> = [];
       let cursor: string | undefined;
 
       do {
@@ -452,9 +476,8 @@ export class NotionAdapter implements SourceAdapter {
         });
 
         for (const comment of response.results) {
-          const text = comment.rich_text
-            ?.map((t: any) => t.plain_text)
-            .join('') || '';
+          const text =
+            comment.rich_text?.map((t: any) => t.plain_text).join('') || '';
 
           const author =
             comment.created_by?.name ||
@@ -472,7 +495,9 @@ export class NotionAdapter implements SourceAdapter {
         cursor = response.has_more ? response.next_cursor : undefined;
       } while (cursor);
 
-      this.logger.log(`Fetched ${comments.length} comments for Notion page ${pageId}`);
+      this.logger.log(
+        `Fetched ${comments.length} comments for Notion page ${pageId}`,
+      );
       return comments;
     } catch (error) {
       this.logger.error(
@@ -540,14 +565,21 @@ export class NotionAdapter implements SourceAdapter {
     }
 
     // Keep legacy lowercase aliases for backward compatibility
-    if (metadata['Horizon'] !== undefined) metadata['horizon'] = metadata['Horizon'];
-    if (metadata['Category'] !== undefined) metadata['category'] = metadata['Category'];
-    if (metadata['Time Spent'] !== undefined) metadata['timeSpent'] = metadata['Time Spent'];
-    if (metadata['Signal-Noise'] !== undefined) metadata['signalNoise'] = metadata['Signal-Noise'];
+    if (metadata['Horizon'] !== undefined)
+      metadata['horizon'] = metadata['Horizon'];
+    if (metadata['Category'] !== undefined)
+      metadata['category'] = metadata['Category'];
+    if (metadata['Time Spent'] !== undefined)
+      metadata['timeSpent'] = metadata['Time Spent'];
+    if (metadata['Signal-Noise'] !== undefined)
+      metadata['signalNoise'] = metadata['Signal-Noise'];
 
     return {
       external_id: page.id,
-      title: this.getTitle(props['Task']) || this.getTitle(props['Name']) || 'Untitled',
+      title:
+        this.getTitle(props['Task']) ||
+        this.getTitle(props['Name']) ||
+        'Untitled',
       status: this.mapStatusFromNotion(this.getSelect(props['Status'])),
       priority: this.getPriority(this.getSelect(props['Priority'])),
       completed: this.getCheckbox(props['Completed']),
@@ -603,7 +635,9 @@ export class NotionAdapter implements SourceAdapter {
     return null;
   }
 
-  private getDate(prop: any): { start: string | null; end: string | null } | null {
+  private getDate(
+    prop: any,
+  ): { start: string | null; end: string | null } | null {
     if (prop?.type === 'date' && prop.date) {
       return { start: prop.date.start, end: prop.date.end };
     }
@@ -617,8 +651,10 @@ export class NotionAdapter implements SourceAdapter {
 
     const normalized = notionStatus.toLowerCase();
     if (normalized === 'today') return 'Today';
-    if (normalized.includes('progress') || normalized.includes('doing')) return 'In Progress';
-    if (normalized.includes('done') || normalized.includes('complete')) return 'Done';
+    if (normalized.includes('progress') || normalized.includes('doing'))
+      return 'In Progress';
+    if (normalized.includes('done') || normalized.includes('complete'))
+      return 'Done';
     if (normalized.includes('block')) return 'Blocked';
     // 'To Do', 'To-Do', or anything else -> 'To-Do'
     return 'To-Do';
@@ -627,12 +663,12 @@ export class NotionAdapter implements SourceAdapter {
   private mapStatusToNotion(ottStatus: TaskStatus): string {
     const statusMap: Record<TaskStatus, string> = {
       'To-Do': 'To Do',
-      'Today': 'Today',
+      Today: 'Today',
       'In Progress': 'In Progress',
       'AI Running': 'In Progress', // Internal status -- map to "In Progress" in Notion
       'In Review': 'In Progress', // Internal status -- map to "In Progress" in Notion
-      'Done': 'Done',
-      'Blocked': 'Blocked',
+      Done: 'Done',
+      Blocked: 'Blocked',
     };
     return statusMap[ottStatus] || 'To Do';
   }

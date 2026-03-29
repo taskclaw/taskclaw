@@ -54,9 +54,7 @@ export class SyncModule implements OnModuleInit {
       );
       if (queue) {
         this.syncService.setBullQueue(queue);
-        this.logger.log(
-          'BullMQ sync queue wired to SyncService successfully.',
-        );
+        this.logger.log('BullMQ sync queue wired to SyncService successfully.');
       }
     } catch {
       this.logger.log(

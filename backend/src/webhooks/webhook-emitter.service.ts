@@ -19,7 +19,11 @@ export class WebhookEmitterService {
    * Emit a webhook event. Finds all matching webhooks for the account/event
    * and delivers the payload asynchronously.
    */
-  async emit(accountId: string, event: string, payload: Record<string, unknown>) {
+  async emit(
+    accountId: string,
+    event: string,
+    payload: Record<string, unknown>,
+  ) {
     try {
       const { data: webhooks, error } = await this.getClient()
         .from('webhooks')
@@ -42,7 +46,9 @@ export class WebhookEmitterService {
         });
       }
     } catch (err) {
-      this.logger.error(`Webhook emit error for event ${event}: ${(err as Error).message}`);
+      this.logger.error(
+        `Webhook emit error for event ${event}: ${(err as Error).message}`,
+      );
     }
   }
 
@@ -52,8 +58,14 @@ export class WebhookEmitterService {
     payload: Record<string, unknown>,
     attempt = 1,
   ) {
-    const body = JSON.stringify({ event, payload, timestamp: new Date().toISOString() });
-    const signature = createHmac('sha256', webhook.secret).update(body).digest('hex');
+    const body = JSON.stringify({
+      event,
+      payload,
+      timestamp: new Date().toISOString(),
+    });
+    const signature = createHmac('sha256', webhook.secret)
+      .update(body)
+      .digest('hex');
 
     // Create delivery record
     const { data: delivery } = await this.getClient()
@@ -97,7 +109,9 @@ export class WebhookEmitterService {
             .eq('id', deliveryId);
         }
       } else {
-        throw new Error(`HTTP ${res.status}: ${responseBody.substring(0, 200)}`);
+        throw new Error(
+          `HTTP ${res.status}: ${responseBody.substring(0, 200)}`,
+        );
       }
     } catch (err) {
       const errMsg = (err as Error).message;
@@ -108,7 +122,9 @@ export class WebhookEmitterService {
       if (deliveryId) {
         const nextRetry =
           attempt < MAX_ATTEMPTS
-            ? new Date(Date.now() + BACKOFF_BASE_MS * Math.pow(5, attempt - 1)).toISOString()
+            ? new Date(
+                Date.now() + BACKOFF_BASE_MS * Math.pow(5, attempt - 1),
+              ).toISOString()
             : null;
 
         await this.getClient()

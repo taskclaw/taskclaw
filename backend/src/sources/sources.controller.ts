@@ -15,7 +15,10 @@ import { SourcesService } from './sources.service';
 import { CreateSourceDto } from './dto/create-source.dto';
 import { UpdateSourceDto } from './dto/update-source.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
-import { PlanLimitGuard, PlanResource } from '../common/guards/plan-limit.guard';
+import {
+  PlanLimitGuard,
+  PlanResource,
+} from '../common/guards/plan-limit.guard';
 import { AdapterRegistry } from '../adapters/adapter.registry';
 
 @ApiTags('Sources')
@@ -97,13 +100,17 @@ export class SourcesController {
     const adapter = this.adapterRegistry.getAdapter(source.provider);
 
     if (!adapter.getProperties) {
-      return { error: `Adapter '${source.provider}' does not support getProperties` };
+      return {
+        error: `Adapter '${source.provider}' does not support getProperties`,
+      };
     }
 
     try {
       return await adapter.getProperties(source.config);
     } catch (error: any) {
-      return { error: error.message || `Failed to fetch ${source.provider} properties` };
+      return {
+        error: error.message || `Failed to fetch ${source.provider} properties`,
+      };
     }
   }
 
@@ -147,10 +154,15 @@ export class SourcesController {
     try {
       return await adapter.listWorkspaces(body);
     } catch (error: any) {
-      if (error.message?.includes('unauthorized') || error.message?.includes('Invalid')) {
+      if (
+        error.message?.includes('unauthorized') ||
+        error.message?.includes('Invalid')
+      ) {
         return { error: 'Invalid credentials' };
       }
-      return { error: error.message || `Failed to list workspaces for ${provider}` };
+      return {
+        error: error.message || `Failed to list workspaces for ${provider}`,
+      };
     }
   }
 
@@ -180,7 +192,9 @@ export class SourcesController {
     try {
       return await adapter.getProperties(body);
     } catch (error: any) {
-      return { error: error.message || `Failed to fetch ${provider} properties` };
+      return {
+        error: error.message || `Failed to fetch ${provider} properties`,
+      };
     }
   }
 }

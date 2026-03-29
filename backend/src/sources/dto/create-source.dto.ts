@@ -1,4 +1,13 @@
-import { IsNotEmpty, IsString, IsUUID, IsObject, IsOptional, IsBoolean, IsInt, Min } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsUUID,
+  IsObject,
+  IsOptional,
+  IsBoolean,
+  IsInt,
+  Min,
+} from 'class-validator';
 
 export class CreateSourceDto {
   @IsNotEmpty()

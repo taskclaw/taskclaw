@@ -1,4 +1,12 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException, Logger, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+  Logger,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { CreateSkillDto } from './dto/create-skill.dto';
@@ -6,9 +14,34 @@ import { UpdateSkillDto } from './dto/update-skill.dto';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
 
 const ALLOWED_EXTENSIONS = [
-  'pdf', 'txt', 'md', 'doc', 'docx', 'csv', 'json', 'png', 'jpg', 'jpeg',
-  'yaml', 'yml', 'xml', 'html', 'css', 'js', 'ts', 'py', 'sh', 'sql',
-  'toml', 'ini', 'cfg', 'conf', 'env', 'log', 'rst', 'tex',
+  'pdf',
+  'txt',
+  'md',
+  'doc',
+  'docx',
+  'csv',
+  'json',
+  'png',
+  'jpg',
+  'jpeg',
+  'yaml',
+  'yml',
+  'xml',
+  'html',
+  'css',
+  'js',
+  'ts',
+  'py',
+  'sh',
+  'sql',
+  'toml',
+  'ini',
+  'cfg',
+  'conf',
+  'env',
+  'log',
+  'rst',
+  'tex',
 ];
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -29,7 +62,13 @@ export class SkillsService {
    * List all skills for an account (optionally filter by active status).
    * When include_system is true, also returns system-wide skills (account_id IS NULL).
    */
-  async findAll(accessToken: string, accountId: string, activeOnly?: boolean, skillType?: string, includeSystem?: boolean) {
+  async findAll(
+    accessToken: string,
+    accountId: string,
+    activeOnly?: boolean,
+    skillType?: string,
+    includeSystem?: boolean,
+  ) {
     try {
       const client = this.supabaseAdmin.getClient();
       let query = client
@@ -127,10 +166,8 @@ export class SkillsService {
     try {
       const client = this.supabaseAdmin.getClient();
 
-      const { data, error } = await client
-        .from('category_skills')
-        .select(
-          `
+      const { data, error } = await client.from('category_skills').select(
+        `
           category_id,
           skills (
             id,
@@ -140,17 +177,20 @@ export class SkillsService {
             is_active
           )
         `,
-        );
+      );
 
       if (error) {
-        this.logger.error(`Failed to fetch category skills map: ${error.message}`);
+        this.logger.error(
+          `Failed to fetch category skills map: ${error.message}`,
+        );
         throw new Error(error.message);
       }
 
       const map: Record<string, any[]> = {};
       for (const row of data || []) {
         const skill = (row as any).skills;
-        if (!skill || !skill.is_active || skill.account_id !== accountId) continue;
+        if (!skill || !skill.is_active || skill.account_id !== accountId)
+          continue;
         if (!map[row.category_id]) map[row.category_id] = [];
         map[row.category_id].push({
           id: skill.id,
@@ -169,7 +209,11 @@ export class SkillsService {
   /**
    * Get default skills for a category
    */
-  async findDefaultForCategory(accessToken: string, accountId: string, categoryId: string) {
+  async findDefaultForCategory(
+    accessToken: string,
+    accountId: string,
+    categoryId: string,
+  ) {
     try {
       const client = this.supabaseAdmin.getClient();
 
@@ -200,7 +244,10 @@ export class SkillsService {
       // Filter and flatten
       const skills = (data || [])
         .map((cs: any) => cs.skills)
-        .filter((skill: any) => skill && skill.is_active && skill.account_id === accountId);
+        .filter(
+          (skill: any) =>
+            skill && skill.is_active && skill.account_id === accountId,
+        );
 
       return skills;
     } catch (error) {
@@ -212,7 +259,12 @@ export class SkillsService {
   /**
    * Create a new skill
    */
-  async create(accessToken: string, accountId: string, userId: string, createDto: CreateSkillDto) {
+  async create(
+    accessToken: string,
+    accountId: string,
+    userId: string,
+    createDto: CreateSkillDto,
+  ) {
     try {
       const client = this.supabaseAdmin.getClient();
 
@@ -225,7 +277,9 @@ export class SkillsService {
         .single();
 
       if (existing) {
-        throw new ConflictException(`Skill with name "${createDto.name}" already exists`);
+        throw new ConflictException(
+          `Skill with name "${createDto.name}" already exists`,
+        );
       }
 
       const { data, error } = await client
@@ -237,7 +291,8 @@ export class SkillsService {
             name: createDto.name,
             description: createDto.description || '',
             instructions: createDto.instructions,
-            is_active: createDto.is_active !== undefined ? createDto.is_active : true,
+            is_active:
+              createDto.is_active !== undefined ? createDto.is_active : true,
             skill_type: createDto.skill_type || 'general',
           },
         ])
@@ -259,7 +314,12 @@ export class SkillsService {
   /**
    * Update a skill
    */
-  async update(accessToken: string, accountId: string, id: string, updateDto: UpdateSkillDto) {
+  async update(
+    accessToken: string,
+    accountId: string,
+    id: string,
+    updateDto: UpdateSkillDto,
+  ) {
     try {
       // Check skill exists
       await this.findOne(accessToken, accountId, id);
@@ -276,7 +336,9 @@ export class SkillsService {
           .single();
 
         if (existing) {
-          throw new ConflictException(`Skill with name "${updateDto.name}" already exists`);
+          throw new ConflictException(
+            `Skill with name "${updateDto.name}" already exists`,
+          );
         }
       }
 
@@ -285,10 +347,18 @@ export class SkillsService {
         .from('skills')
         .update({
           ...(updateDto.name !== undefined && { name: updateDto.name }),
-          ...(updateDto.description !== undefined && { description: updateDto.description }),
-          ...(updateDto.instructions !== undefined && { instructions: updateDto.instructions }),
-          ...(updateDto.is_active !== undefined && { is_active: updateDto.is_active }),
-          ...(updateDto.skill_type !== undefined && { skill_type: updateDto.skill_type }),
+          ...(updateDto.description !== undefined && {
+            description: updateDto.description,
+          }),
+          ...(updateDto.instructions !== undefined && {
+            instructions: updateDto.instructions,
+          }),
+          ...(updateDto.is_active !== undefined && {
+            is_active: updateDto.is_active,
+          }),
+          ...(updateDto.skill_type !== undefined && {
+            skill_type: updateDto.skill_type,
+          }),
         })
         .eq('id', id)
         .eq('account_id', accountId)
@@ -313,7 +383,12 @@ export class SkillsService {
   /**
    * Link a skill to a category (default skill)
    */
-  async linkToCategory(accessToken: string, accountId: string, skillId: string, categoryId: string) {
+  async linkToCategory(
+    accessToken: string,
+    accountId: string,
+    skillId: string,
+    categoryId: string,
+  ) {
     try {
       // Verify skill and category belong to account
       await this.findOne(accessToken, accountId, skillId);
@@ -350,7 +425,9 @@ export class SkillsService {
 
       // Trigger sync for the linked category
       this.agentSyncService.markStale(accountId, categoryId).catch((err) => {
-        this.logger.warn(`Failed to trigger sync after linking skill: ${err.message}`);
+        this.logger.warn(
+          `Failed to trigger sync after linking skill: ${err.message}`,
+        );
       });
 
       return data;
@@ -363,7 +440,12 @@ export class SkillsService {
   /**
    * Unlink a skill from a category
    */
-  async unlinkFromCategory(accessToken: string, accountId: string, skillId: string, categoryId: string) {
+  async unlinkFromCategory(
+    accessToken: string,
+    accountId: string,
+    skillId: string,
+    categoryId: string,
+  ) {
     try {
       // Verify ownership
       await this.findOne(accessToken, accountId, skillId);
@@ -376,13 +458,17 @@ export class SkillsService {
         .eq('skill_id', skillId);
 
       if (error) {
-        this.logger.error(`Failed to unlink skill from category: ${error.message}`);
+        this.logger.error(
+          `Failed to unlink skill from category: ${error.message}`,
+        );
         throw new Error(error.message);
       }
 
       // Trigger sync for the unlinked category
       this.agentSyncService.markStale(accountId, categoryId).catch((err) => {
-        this.logger.warn(`Failed to trigger sync after unlinking skill: ${err.message}`);
+        this.logger.warn(
+          `Failed to trigger sync after unlinking skill: ${err.message}`,
+        );
       });
 
       return { message: 'Skill unlinked from agent successfully' };
@@ -407,7 +493,11 @@ export class SkillsService {
         .select('category_id')
         .eq('skill_id', id);
 
-      const { error } = await client.from('skills').delete().eq('id', id).eq('account_id', accountId);
+      const { error } = await client
+        .from('skills')
+        .delete()
+        .eq('id', id)
+        .eq('account_id', accountId);
 
       if (error) {
         this.logger.error(`Failed to delete skill: ${error.message}`);
@@ -416,9 +506,13 @@ export class SkillsService {
 
       // Trigger sync for all previously linked categories
       for (const link of linkedCategories || []) {
-        this.agentSyncService.markStale(accountId, link.category_id).catch((err) => {
-          this.logger.warn(`Failed to trigger sync after deleting skill: ${err.message}`);
-        });
+        this.agentSyncService
+          .markStale(accountId, link.category_id)
+          .catch((err) => {
+            this.logger.warn(
+              `Failed to trigger sync after deleting skill: ${err.message}`,
+            );
+          });
       }
 
       return { message: 'Skill deleted successfully' };
@@ -500,7 +594,9 @@ export class SkillsService {
         .single();
 
       if (error) {
-        this.logger.error(`Failed to update skill attachments: ${error.message}`);
+        this.logger.error(
+          `Failed to update skill attachments: ${error.message}`,
+        );
         throw new Error(error.message);
       }
 
@@ -526,7 +622,9 @@ export class SkillsService {
     const skill = await this.findOne(accessToken, accountId, skillId);
 
     const existingAttachments = skill.file_attachments || [];
-    const attachment = existingAttachments.find((a: any) => a.name === filename);
+    const attachment = existingAttachments.find(
+      (a: any) => a.name === filename,
+    );
     if (!attachment) {
       throw new NotFoundException(`Attachment "${filename}" not found`);
     }
@@ -538,7 +636,9 @@ export class SkillsService {
       .download(storagePath);
 
     if (error || !data) {
-      this.logger.error(`Failed to download attachment ${storagePath}: ${error?.message}`);
+      this.logger.error(
+        `Failed to download attachment ${storagePath}: ${error?.message}`,
+      );
       throw new Error(`Failed to read file content: ${error?.message}`);
     }
 
@@ -559,7 +659,9 @@ export class SkillsService {
       const skill = await this.findOne(accessToken, accountId, skillId);
 
       const existingAttachments = skill.file_attachments || [];
-      const attachment = existingAttachments.find((a: any) => a.name === filename);
+      const attachment = existingAttachments.find(
+        (a: any) => a.name === filename,
+      );
 
       if (!attachment) {
         throw new NotFoundException(`Attachment "${filename}" not found`);
@@ -574,7 +676,9 @@ export class SkillsService {
         .remove([storagePath]);
 
       if (deleteError) {
-        this.logger.error(`Failed to delete file from storage: ${deleteError.message}`);
+        this.logger.error(
+          `Failed to delete file from storage: ${deleteError.message}`,
+        );
         throw new Error(`Storage delete failed: ${deleteError.message}`);
       }
 
@@ -592,7 +696,9 @@ export class SkillsService {
         .single();
 
       if (error) {
-        this.logger.error(`Failed to update skill attachments: ${error.message}`);
+        this.logger.error(
+          `Failed to update skill attachments: ${error.message}`,
+        );
         throw new Error(error.message);
       }
 
@@ -609,7 +715,10 @@ export class SkillsService {
   /**
    * Find all categories linked to a skill and trigger sync for each.
    */
-  private async syncLinkedCategories(accountId: string, skillId: string): Promise<void> {
+  private async syncLinkedCategories(
+    accountId: string,
+    skillId: string,
+  ): Promise<void> {
     try {
       const client = this.supabaseAdmin.getClient();
       const { data: linkedCategories } = await client
@@ -618,9 +727,13 @@ export class SkillsService {
         .eq('skill_id', skillId);
 
       for (const link of linkedCategories || []) {
-        this.agentSyncService.markStale(accountId, link.category_id).catch((err) => {
-          this.logger.warn(`Failed to trigger sync for category ${link.category_id}: ${err.message}`);
-        });
+        this.agentSyncService
+          .markStale(accountId, link.category_id)
+          .catch((err) => {
+            this.logger.warn(
+              `Failed to trigger sync for category ${link.category_id}: ${err.message}`,
+            );
+          });
       }
     } catch (err: any) {
       this.logger.warn(`Failed to sync linked categories: ${err.message}`);
@@ -645,10 +758,14 @@ export class SkillsService {
     }
 
     // Group skills by category (filter by account_id in JS — PostgREST can't filter nested relations)
-    const categorySkillMap: Record<string, { skillCount: number; skillNames: string[] }> = {};
+    const categorySkillMap: Record<
+      string,
+      { skillCount: number; skillNames: string[] }
+    > = {};
     for (const cs of categorySkills || []) {
       const skill = (cs as any).skill;
-      if (!skill || !skill.is_active || skill.account_id !== accountId) continue;
+      if (!skill || !skill.is_active || skill.account_id !== accountId)
+        continue;
       if (!categorySkillMap[cs.category_id]) {
         categorySkillMap[cs.category_id] = { skillCount: 0, skillNames: [] };
       }
@@ -667,7 +784,9 @@ export class SkillsService {
       .in('id', categoryIds);
 
     if (catError) {
-      this.logger.error(`[AgentsDashboard] categories query failed: ${catError.message}`);
+      this.logger.error(
+        `[AgentsDashboard] categories query failed: ${catError.message}`,
+      );
     }
 
     // 3. Get provider_agents sync status
@@ -677,7 +796,10 @@ export class SkillsService {
       .eq('account_id', accountId)
       .in('category_id', categoryIds);
 
-    const syncMap: Record<string, { sync_status: string; last_synced_at: string | null }> = {};
+    const syncMap: Record<
+      string,
+      { sync_status: string; last_synced_at: string | null }
+    > = {};
     for (const pa of providerAgents || []) {
       syncMap[pa.category_id] = {
         sync_status: pa.sync_status,
@@ -705,7 +827,8 @@ export class SkillsService {
     const taskCountMap: Record<string, number> = {};
     for (const t of overrideTasks || []) {
       if (t.override_category_id) {
-        taskCountMap[t.override_category_id] = (taskCountMap[t.override_category_id] || 0) + 1;
+        taskCountMap[t.override_category_id] =
+          (taskCountMap[t.override_category_id] || 0) + 1;
       }
     }
     for (const t of directTasks || []) {
@@ -726,13 +849,16 @@ export class SkillsService {
     // Step-level links
     const { data: stepLinks } = await client
       .from('board_steps')
-      .select('linked_category_id, board_instance_id, board:board_instances!board_instance_id(id, name)')
+      .select(
+        'linked_category_id, board_instance_id, board:board_instances!board_instance_id(id, name)',
+      )
       .in('linked_category_id', categoryIds);
 
     const boardAssignmentMap: Record<string, string[]> = {};
     for (const b of boardDefaults || []) {
       if (b.default_category_id) {
-        if (!boardAssignmentMap[b.default_category_id]) boardAssignmentMap[b.default_category_id] = [];
+        if (!boardAssignmentMap[b.default_category_id])
+          boardAssignmentMap[b.default_category_id] = [];
         if (!boardAssignmentMap[b.default_category_id].includes(b.name)) {
           boardAssignmentMap[b.default_category_id].push(b.name);
         }
@@ -741,7 +867,8 @@ export class SkillsService {
     for (const s of stepLinks || []) {
       const board = (s as any).board;
       if (s.linked_category_id && board?.name) {
-        if (!boardAssignmentMap[s.linked_category_id]) boardAssignmentMap[s.linked_category_id] = [];
+        if (!boardAssignmentMap[s.linked_category_id])
+          boardAssignmentMap[s.linked_category_id] = [];
         if (!boardAssignmentMap[s.linked_category_id].includes(board.name)) {
           boardAssignmentMap[s.linked_category_id].push(board.name);
         }
@@ -767,8 +894,14 @@ export class SkillsService {
 
     // 7. Build response
     return (categories || []).map((cat: any) => {
-      const skills = categorySkillMap[cat.id] || { skillCount: 0, skillNames: [] };
-      const sync = syncMap[cat.id] || { sync_status: 'none', last_synced_at: null };
+      const skills = categorySkillMap[cat.id] || {
+        skillCount: 0,
+        skillNames: [],
+      };
+      const sync = syncMap[cat.id] || {
+        sync_status: 'none',
+        last_synced_at: null,
+      };
       const activeConversations = activeConvoMap[cat.id] || 0;
 
       let status: string;

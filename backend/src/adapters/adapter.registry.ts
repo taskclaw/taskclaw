@@ -3,7 +3,7 @@ import { SourceAdapter } from './interfaces/source-adapter.interface';
 
 /**
  * AdapterRegistry
- * 
+ *
  * Central registry for all source adapters. Provides a factory pattern
  * to get the appropriate adapter based on the provider name.
  */

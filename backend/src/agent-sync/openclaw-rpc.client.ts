@@ -118,9 +118,7 @@ export class OpenClawRpcClient {
   /**
    * List all taskclaw-managed skill directories.
    */
-  async listSkills(
-    config: OpenClawConfig,
-  ): Promise<
+  async listSkills(config: OpenClawConfig): Promise<
     RpcResponse<{
       count: number;
       skills: Array<{ categorySlug: string; hash: string | null }>;
@@ -132,9 +130,7 @@ export class OpenClawRpcClient {
   /**
    * Plugin health check.
    */
-  async health(
-    config: OpenClawConfig,
-  ): Promise<
+  async health(config: OpenClawConfig): Promise<
     RpcResponse<{
       ok: boolean;
       pluginVersion: string;

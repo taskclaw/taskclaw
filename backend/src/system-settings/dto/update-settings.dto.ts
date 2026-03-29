@@ -1,12 +1,24 @@
-import { IsBoolean, IsOptional, IsString, IsIn, IsObject } from 'class-validator';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  IsIn,
+  IsObject,
+} from 'class-validator';
 
 // Allowed values for theme_set
 export const VALID_THEME_SETS = [
-  'corporate', 'funky', 'blue', 'red',
-  'ocean-blue', 'ruby-red', 'emerald-green', 'amber-gold'
+  'corporate',
+  'funky',
+  'blue',
+  'red',
+  'ocean-blue',
+  'ruby-red',
+  'emerald-green',
+  'amber-gold',
 ] as const;
 
-export type ThemeSetValue = typeof VALID_THEME_SETS[number];
+export type ThemeSetValue = (typeof VALID_THEME_SETS)[number];
 
 /**
  * DTO for updating system settings

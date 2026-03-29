@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { WaitlistService } from './waitlist.service';
-import { WaitlistController, AdminWaitlistController } from './waitlist.controller';
+import {
+  WaitlistController,
+  AdminWaitlistController,
+} from './waitlist.controller';
 import { SupabaseModule } from '../../supabase/supabase.module';
 import { CommonModule } from '../../common/common.module';
 

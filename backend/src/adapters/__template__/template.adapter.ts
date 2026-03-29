@@ -42,8 +42,8 @@ import {
 // Configuration interface — define the fields your adapter needs
 // ---------------------------------------------------------------------------
 export interface TemplateConfig extends SourceConfig {
-  api_key: string;        // e.g. API token or OAuth access token
-  project_id: string;     // e.g. board ID, project key, list ID, etc.
+  api_key: string; // e.g. API token or OAuth access token
+  project_id: string; // e.g. board ID, project key, list ID, etc.
   // Add more fields as needed for your provider
 }
 
@@ -51,7 +51,7 @@ export interface TemplateConfig extends SourceConfig {
 // Adapter class
 // ---------------------------------------------------------------------------
 
-@Adapter('template')   // <-- Change to your provider name (lowercase)
+@Adapter('template') // <-- Change to your provider name (lowercase)
 @Injectable()
 export class TemplateAdapter implements SourceAdapter {
   private readonly logger = new Logger(TemplateAdapter.name);
@@ -152,7 +152,8 @@ export class TemplateAdapter implements SourceAdapter {
   private mapStatusFromProvider(providerStatus: string): TaskStatus {
     // TODO: Implement mapping for your provider
     const normalized = providerStatus.toLowerCase();
-    if (normalized.includes('done') || normalized.includes('complete')) return 'Done';
+    if (normalized.includes('done') || normalized.includes('complete'))
+      return 'Done';
     if (normalized.includes('progress')) return 'In Progress';
     if (normalized.includes('block')) return 'Blocked';
     return 'To-Do';
@@ -165,12 +166,12 @@ export class TemplateAdapter implements SourceAdapter {
     // TODO: Implement reverse mapping for your provider
     const statusMap: Record<TaskStatus, string> = {
       'To-Do': 'todo',
-      'Today': 'todo',
+      Today: 'todo',
       'In Progress': 'in_progress',
       'AI Running': 'in_progress',
       'In Review': 'in_progress',
-      'Done': 'done',
-      'Blocked': 'blocked',
+      Done: 'done',
+      Blocked: 'blocked',
     };
     return statusMap[ottStatus] || 'todo';
   }
@@ -179,7 +180,9 @@ export class TemplateAdapter implements SourceAdapter {
    * Map your provider's priority to the OTT canonical priority.
    * DB constraint: 'High' | 'Medium' | 'Low' | 'Urgent'
    */
-  private mapPriorityFromProvider(providerPriority: string | null): TaskPriority | undefined {
+  private mapPriorityFromProvider(
+    providerPriority: string | null,
+  ): TaskPriority | undefined {
     if (!providerPriority) return undefined;
     // TODO: Implement mapping for your provider
     return 'Medium';

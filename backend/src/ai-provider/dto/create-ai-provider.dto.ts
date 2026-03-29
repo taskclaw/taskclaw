@@ -1,4 +1,10 @@
-import { IsString, IsNotEmpty, IsUrl, IsOptional, IsBoolean } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsUrl,
+  IsOptional,
+  IsBoolean,
+} from 'class-validator';
 
 export class CreateAiProviderDto {
   @IsUrl()

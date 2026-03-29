@@ -45,13 +45,12 @@ export class BundleImportService {
     if (bundle.categories && bundle.categories.length > 0) {
       try {
         const countsBefore = await this.countEntities(client, accountId);
-        categorySlugToId =
-          await this.boardTemplatesService.provisionCategories(
-            client,
-            accountId,
-            userId,
-            bundle.categories,
-          );
+        categorySlugToId = await this.boardTemplatesService.provisionCategories(
+          client,
+          accountId,
+          userId,
+          bundle.categories,
+        );
         const countsAfter = await this.countEntities(client, accountId);
 
         result.categories_created =
@@ -62,9 +61,7 @@ export class BundleImportService {
         result.knowledge_docs_created =
           countsAfter.knowledge_docs - countsBefore.knowledge_docs;
       } catch (error: any) {
-        this.logger.error(
-          `Failed to provision categories: ${error.message}`,
-        );
+        this.logger.error(`Failed to provision categories: ${error.message}`);
         result.errors.push(`Categories: ${error.message}`);
       }
     }

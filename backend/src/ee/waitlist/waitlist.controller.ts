@@ -35,10 +35,7 @@ export class AdminWaitlistController {
   constructor(private readonly waitlistService: WaitlistService) {}
 
   @Get()
-  findAll(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
+  findAll(@Query('page') page?: string, @Query('limit') limit?: string) {
     return this.waitlistService.findAll(
       page ? parseInt(page, 10) : 1,
       limit ? parseInt(limit, 10) : 50,

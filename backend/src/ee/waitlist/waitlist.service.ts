@@ -2,18 +2,45 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../../supabase/supabase.service';
 
 const DISPOSABLE_DOMAINS = new Set([
-  'mailinator.com', 'guerrillamail.com', 'tempmail.com', 'yopmail.com',
-  'throwaway.email', 'sharklasers.com', 'guerrillamail.info', 'guerrillamail.net',
-  'grr.la', 'guerrillamail.de', 'tmail.ws', 'trashmail.com', 'dispostable.com',
-  'maildrop.cc', 'fakeinbox.com', 'temp-mail.org', '10minutemail.com',
-  'mailnesia.com', 'getnada.com', 'tempail.com', 'mohmal.com', 'burnermail.io',
-  'guerrillamailblock.com', 'mintemail.com', 'trashmail.net', 'mailcatch.com',
-  'tempr.email', 'discard.email', 'mailsac.com', 'harakirimail.com',
+  'mailinator.com',
+  'guerrillamail.com',
+  'tempmail.com',
+  'yopmail.com',
+  'throwaway.email',
+  'sharklasers.com',
+  'guerrillamail.info',
+  'guerrillamail.net',
+  'grr.la',
+  'guerrillamail.de',
+  'tmail.ws',
+  'trashmail.com',
+  'dispostable.com',
+  'maildrop.cc',
+  'fakeinbox.com',
+  'temp-mail.org',
+  '10minutemail.com',
+  'mailnesia.com',
+  'getnada.com',
+  'tempail.com',
+  'mohmal.com',
+  'burnermail.io',
+  'guerrillamailblock.com',
+  'mintemail.com',
+  'trashmail.net',
+  'mailcatch.com',
+  'tempr.email',
+  'discard.email',
+  'mailsac.com',
+  'harakirimail.com',
 ]);
 
 const TEST_EMAILS = new Set([
-  'test@test.com', 'test@example.com', 'example@example.com',
-  'foo@bar.com', 'admin@admin.com', 'user@user.com',
+  'test@test.com',
+  'test@example.com',
+  'example@example.com',
+  'foo@bar.com',
+  'admin@admin.com',
+  'user@user.com',
 ]);
 
 @Injectable()
@@ -26,7 +53,9 @@ export class WaitlistService {
     const localPart = normalized.split('@')[0];
 
     if (DISPOSABLE_DOMAINS.has(domain)) {
-      throw new BadRequestException('Please use a valid, non-disposable email address');
+      throw new BadRequestException(
+        'Please use a valid, non-disposable email address',
+      );
     }
 
     if (TEST_EMAILS.has(normalized)) {
@@ -53,10 +82,15 @@ export class WaitlistService {
       );
 
     if (error) {
-      throw new BadRequestException('Unable to join waitlist. Please try again.');
+      throw new BadRequestException(
+        'Unable to join waitlist. Please try again.',
+      );
     }
 
-    return { success: true, message: "You're on the list! We'll reach out soon." };
+    return {
+      success: true,
+      message: "You're on the list! We'll reach out soon.",
+    };
   }
 
   async getCount(): Promise<{ count: number }> {

@@ -33,7 +33,8 @@ export class WebhooksController {
   create(
     @Req() req,
     @Param('accountId') accountId: string,
-    @Body() body: { url: string; secret: string; events: string[]; active?: boolean },
+    @Body()
+    body: { url: string; secret: string; events: string[]; active?: boolean },
   ) {
     return this.webhooksService.create(accountId, body);
   }
@@ -44,7 +45,13 @@ export class WebhooksController {
     @Req() req,
     @Param('accountId') accountId: string,
     @Param('webhookId') webhookId: string,
-    @Body() body: { url?: string; secret?: string; events?: string[]; active?: boolean },
+    @Body()
+    body: {
+      url?: string;
+      secret?: string;
+      events?: string[];
+      active?: boolean;
+    },
   ) {
     return this.webhooksService.update(accountId, webhookId, body);
   }

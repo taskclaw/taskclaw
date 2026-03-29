@@ -6,7 +6,11 @@ import { CommonModule } from '../common/common.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule, forwardRef(() => ConversationsModule)],
+  imports: [
+    SupabaseModule,
+    CommonModule,
+    forwardRef(() => ConversationsModule),
+  ],
   controllers: [AiProviderController],
   providers: [AiProviderService],
   exports: [AiProviderService], // Export for use in ConversationsModule

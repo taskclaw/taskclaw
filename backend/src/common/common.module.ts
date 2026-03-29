@@ -3,7 +3,7 @@ import { AccessControlHelper } from './helpers/access-control.helper';
 
 @Global()
 @Module({
-    providers: [AccessControlHelper],
-    exports: [AccessControlHelper],
+  providers: [AccessControlHelper],
+  exports: [AccessControlHelper],
 })
-export class CommonModule { }
+export class CommonModule {}

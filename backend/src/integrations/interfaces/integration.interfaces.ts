@@ -1,5 +1,10 @@
 export type AuthType = 'api_key' | 'oauth2' | 'webhook' | 'basic' | 'none';
-export type ConnectionStatus = 'pending' | 'active' | 'expired' | 'error' | 'revoked';
+export type ConnectionStatus =
+  | 'pending'
+  | 'active'
+  | 'expired'
+  | 'error'
+  | 'revoked';
 
 export interface ConfigField {
   key: string;

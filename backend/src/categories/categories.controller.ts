@@ -14,7 +14,10 @@ import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
-import { PlanLimitGuard, PlanResource } from '../common/guards/plan-limit.guard';
+import {
+  PlanLimitGuard,
+  PlanResource,
+} from '../common/guards/plan-limit.guard';
 
 @ApiTags('Categories')
 @Controller('accounts/:accountId/categories')
@@ -24,7 +27,11 @@ export class CategoriesController {
 
   @Get()
   findAll(@Req() req, @Param('accountId') accountId: string) {
-    return this.categoriesService.findAll(req.user.id, accountId, req.accessToken);
+    return this.categoriesService.findAll(
+      req.user.id,
+      accountId,
+      req.accessToken,
+    );
   }
 
   @Get(':id')
@@ -33,7 +40,12 @@ export class CategoriesController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.categoriesService.findOne(req.user.id, accountId, id, req.accessToken);
+    return this.categoriesService.findOne(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
   }
 
   @Post()
@@ -90,6 +102,11 @@ export class CategoriesController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.categoriesService.remove(req.user.id, accountId, id, req.accessToken);
+    return this.categoriesService.remove(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
   }
 }

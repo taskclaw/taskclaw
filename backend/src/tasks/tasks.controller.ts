@@ -43,7 +43,12 @@ export class TasksController {
     if (completed !== undefined) filters.completed = completed === 'true';
     if (boardId) filters.board_id = boardId;
 
-    return this.tasksService.findAll(req.user.id, accountId, filters, req.accessToken);
+    return this.tasksService.findAll(
+      req.user.id,
+      accountId,
+      filters,
+      req.accessToken,
+    );
   }
 
   @Get(':id')
@@ -53,7 +58,12 @@ export class TasksController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.tasksService.findOne(req.user.id, accountId, id, req.accessToken);
+    return this.tasksService.findOne(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
   }
 
   @Get(':id/content')
@@ -63,7 +73,12 @@ export class TasksController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.tasksService.getTaskContent(req.user.id, accountId, id, req.accessToken);
+    return this.tasksService.getTaskContent(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
   }
 
   @Get(':id/comments')
@@ -73,7 +88,12 @@ export class TasksController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.tasksService.getTaskComments(req.user.id, accountId, id, req.accessToken);
+    return this.tasksService.getTaskComments(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
   }
 
   @Get(':id/sync-status')
@@ -83,7 +103,12 @@ export class TasksController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.tasksService.getSyncStatus(req.user.id, accountId, id, req.accessToken);
+    return this.tasksService.getSyncStatus(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
   }
 
   @Get('search')
@@ -93,7 +118,12 @@ export class TasksController {
     @Param('accountId') accountId: string,
     @Query('q') query: string,
   ) {
-    return this.tasksService.search(req.user.id, accountId, query, req.accessToken);
+    return this.tasksService.search(
+      req.user.id,
+      accountId,
+      query,
+      req.accessToken,
+    );
   }
 
   @Patch('bulk')
@@ -101,9 +131,23 @@ export class TasksController {
   bulkUpdate(
     @Req() req,
     @Param('accountId') accountId: string,
-    @Body() body: { updates: Array<{ id: string; status?: string; priority?: string; current_step_id?: string; completed?: boolean }> },
+    @Body()
+    body: {
+      updates: Array<{
+        id: string;
+        status?: string;
+        priority?: string;
+        current_step_id?: string;
+        completed?: boolean;
+      }>;
+    },
   ) {
-    return this.tasksService.bulkUpdate(req.user.id, accountId, body.updates, req.accessToken);
+    return this.tasksService.bulkUpdate(
+      req.user.id,
+      accountId,
+      body.updates,
+      req.accessToken,
+    );
   }
 
   @Post()
@@ -113,7 +157,12 @@ export class TasksController {
     @Param('accountId') accountId: string,
     @Body() createTaskDto: CreateTaskDto,
   ) {
-    return this.tasksService.create(req.user.id, accountId, createTaskDto, req.accessToken);
+    return this.tasksService.create(
+      req.user.id,
+      accountId,
+      createTaskDto,
+      req.accessToken,
+    );
   }
 
   @Post('bulk/:boardId')
@@ -141,7 +190,13 @@ export class TasksController {
     @Param('id') id: string,
     @Body() updateTaskDto: UpdateTaskDto,
   ) {
-    return this.tasksService.update(req.user.id, accountId, id, updateTaskDto, req.accessToken);
+    return this.tasksService.update(
+      req.user.id,
+      accountId,
+      id,
+      updateTaskDto,
+      req.accessToken,
+    );
   }
 
   @Delete(':id')
@@ -151,7 +206,12 @@ export class TasksController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.tasksService.remove(req.user.id, accountId, id, req.accessToken);
+    return this.tasksService.remove(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
   }
 
   @Post(':id/ai-update')
@@ -162,7 +222,13 @@ export class TasksController {
     @Param('id') id: string,
     @Body() body: { notes_append: string; conversation_id?: string },
   ) {
-    return this.tasksService.aiUpdate(req.user.id, accountId, id, body, req.accessToken);
+    return this.tasksService.aiUpdate(
+      req.user.id,
+      accountId,
+      id,
+      body,
+      req.accessToken,
+    );
   }
 
   @Post(':id/sync')
@@ -172,6 +238,11 @@ export class TasksController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.tasksService.syncToSource(req.user.id, accountId, id, req.accessToken);
+    return this.tasksService.syncToSource(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
   }
 }

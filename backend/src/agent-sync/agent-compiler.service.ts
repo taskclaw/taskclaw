@@ -49,7 +49,9 @@ export class AgentCompilerService {
       .single();
 
     if (catError || !category) {
-      this.logger.warn(`Category ${categoryId} not found for account ${accountId}`);
+      this.logger.warn(
+        `Category ${categoryId} not found for account ${accountId}`,
+      );
       return null;
     }
 
@@ -83,7 +85,13 @@ export class AgentCompilerService {
 
     // 5. Build the SKILL.md content
     const categorySlug = this.slugify(category.name);
-    const content = await this.buildSkillMd(accountId, category.name, categorySlug, skills, masterDoc);
+    const content = await this.buildSkillMd(
+      accountId,
+      category.name,
+      categorySlug,
+      skills,
+      masterDoc,
+    );
     const hash = this.computeHash(content);
     const skillIds = skills.map((s: any) => s.id);
 
@@ -140,7 +148,11 @@ export class AgentCompilerService {
         );
 
         for (const att of textAttachments) {
-          const content = await this.fetchAttachmentContent(accountId, skill.id, att.name);
+          const content = await this.fetchAttachmentContent(
+            accountId,
+            skill.id,
+            att.name,
+          );
           if (content) {
             const refName = att.name.replace(/\.[^.]+$/, '');
             lines.push(`#### Reference: ${refName}`);
@@ -181,7 +193,9 @@ export class AgentCompilerService {
         .download(storagePath);
 
       if (error || !data) {
-        this.logger.warn(`Failed to download attachment ${storagePath}: ${error?.message}`);
+        this.logger.warn(
+          `Failed to download attachment ${storagePath}: ${error?.message}`,
+        );
         return null;
       }
 

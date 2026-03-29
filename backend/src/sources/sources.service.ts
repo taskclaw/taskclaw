@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { AdapterRegistry } from '../adapters/adapter.registry';
@@ -258,18 +262,27 @@ export class SourcesService {
   // Private Helper Methods
   // ============================================================================
 
-  private maskSensitiveConfig(config: Record<string, any>): Record<string, any> {
+  private maskSensitiveConfig(
+    config: Record<string, any>,
+  ): Record<string, any> {
     const masked = { ...config };
 
     // Mask API keys, tokens, passwords
-    const sensitiveKeys = ['api_key', 'token', 'password', 'secret', 'api_token'];
-    
+    const sensitiveKeys = [
+      'api_key',
+      'token',
+      'password',
+      'secret',
+      'api_token',
+    ];
+
     for (const key of Object.keys(masked)) {
       if (sensitiveKeys.some((s) => key.toLowerCase().includes(s))) {
         const value = String(masked[key] || '');
-        masked[key] = value.length > 8
-          ? `${value.slice(0, 4)}****${value.slice(-4)}`
-          : '****';
+        masked[key] =
+          value.length > 8
+            ? `${value.slice(0, 4)}****${value.slice(-4)}`
+            : '****';
       }
     }
 

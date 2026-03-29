@@ -11,7 +11,10 @@ export function registerTaskTools(server: McpServer) {
       category_id: z.string().optional().describe('Filter by category UUID'),
       source_id: z.string().optional().describe('Filter by source UUID'),
       status: z.string().optional().describe('Filter by status'),
-      priority: z.string().optional().describe('Filter by priority (low, medium, high, urgent)'),
+      priority: z
+        .string()
+        .optional()
+        .describe('Filter by priority (low, medium, high, urgent)'),
       completed: z.boolean().optional().describe('Filter by completion status'),
     },
     async (filters) => {
@@ -21,10 +24,17 @@ export function registerTaskTools(server: McpServer) {
       if (filters.source_id) params.set('source_id', filters.source_id);
       if (filters.status) params.set('status', filters.status);
       if (filters.priority) params.set('priority', filters.priority);
-      if (filters.completed !== undefined) params.set('completed', String(filters.completed));
+      if (filters.completed !== undefined)
+        params.set('completed', String(filters.completed));
       const qs = params.toString();
-      const result = await get(`/accounts/:accountId/tasks${qs ? `?${qs}` : ''}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const result = await get(
+        `/accounts/:accountId/tasks${qs ? `?${qs}` : ''}`,
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -36,7 +46,11 @@ export function registerTaskTools(server: McpServer) {
     },
     async ({ task_id }) => {
       const result = await get(`/accounts/:accountId/tasks/${task_id}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -50,14 +64,21 @@ export function registerTaskTools(server: McpServer) {
         .enum(['low', 'medium', 'high', 'urgent'])
         .optional()
         .describe('Task priority'),
-      board_id: z.string().optional().describe('Board UUID to place the task on'),
+      board_id: z
+        .string()
+        .optional()
+        .describe('Board UUID to place the task on'),
       board_step_id: z.string().optional().describe('Board step UUID'),
       category_id: z.string().optional().describe('Category UUID'),
       due_date: z.string().optional().describe('Due date (ISO 8601)'),
     },
     async (args) => {
       const result = await post('/accounts/:accountId/tasks', args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -76,8 +97,15 @@ export function registerTaskTools(server: McpServer) {
       category_id: z.string().optional().describe('New category UUID'),
     },
     async ({ task_id, ...updates }) => {
-      const result = await patch(`/accounts/:accountId/tasks/${task_id}`, updates);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      const result = await patch(
+        `/accounts/:accountId/tasks/${task_id}`,
+        updates,
+      );
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -92,7 +120,11 @@ export function registerTaskTools(server: McpServer) {
       const result = await patch(`/accounts/:accountId/tasks/${task_id}`, {
         board_step_id,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -106,7 +138,11 @@ export function registerTaskTools(server: McpServer) {
       const result = await patch(`/accounts/:accountId/tasks/${task_id}`, {
         completed: true,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -118,7 +154,11 @@ export function registerTaskTools(server: McpServer) {
     },
     async ({ task_id }) => {
       const result = await del(`/accounts/:accountId/tasks/${task_id}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -145,7 +185,11 @@ export function registerTaskTools(server: McpServer) {
       const result = await post(`/accounts/:accountId/tasks/bulk/${board_id}`, {
         tasks,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 }

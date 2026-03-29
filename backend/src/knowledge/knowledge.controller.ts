@@ -34,7 +34,11 @@ export class KnowledgeController {
     @Param('accountId') accountId: string,
     @Query('category_id') categoryId?: string,
   ) {
-    return this.knowledgeService.findAll(req.accessToken, accountId, categoryId);
+    return this.knowledgeService.findAll(
+      req.accessToken,
+      accountId,
+      categoryId,
+    );
   }
 
   @Get('master')
@@ -46,7 +50,11 @@ export class KnowledgeController {
     if (!categoryId) {
       throw new Error('category_id query param is required');
     }
-    return this.knowledgeService.findMasterForCategory(req.accessToken, accountId, categoryId);
+    return this.knowledgeService.findMasterForCategory(
+      req.accessToken,
+      accountId,
+      categoryId,
+    );
   }
 
   @Get(':id/attachments/:filename/content')
@@ -65,7 +73,11 @@ export class KnowledgeController {
   }
 
   @Get(':id')
-  findOne(@Request() req, @Param('accountId') accountId: string, @Param('id') id: string) {
+  findOne(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') id: string,
+  ) {
     return this.knowledgeService.findOne(req.accessToken, accountId, id);
   }
 
@@ -77,7 +89,12 @@ export class KnowledgeController {
     @Body() createKnowledgeDocDto: CreateKnowledgeDocDto,
   ) {
     const userId = req.user?.id;
-    return this.knowledgeService.create(req.accessToken, accountId, userId, createKnowledgeDocDto);
+    return this.knowledgeService.create(
+      req.accessToken,
+      accountId,
+      userId,
+      createKnowledgeDocDto,
+    );
   }
 
   @Patch(':id')
@@ -87,18 +104,31 @@ export class KnowledgeController {
     @Param('id') id: string,
     @Body() updateKnowledgeDocDto: UpdateKnowledgeDocDto,
   ) {
-    return this.knowledgeService.update(req.accessToken, accountId, id, updateKnowledgeDocDto);
+    return this.knowledgeService.update(
+      req.accessToken,
+      accountId,
+      id,
+      updateKnowledgeDocDto,
+    );
   }
 
   @Post(':id/set-master')
   @HttpCode(HttpStatus.OK)
-  setAsMaster(@Request() req, @Param('accountId') accountId: string, @Param('id') id: string) {
+  setAsMaster(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') id: string,
+  ) {
     return this.knowledgeService.setAsMaster(req.accessToken, accountId, id);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  remove(@Request() req, @Param('accountId') accountId: string, @Param('id') id: string) {
+  remove(
+    @Request() req,
+    @Param('accountId') accountId: string,
+    @Param('id') id: string,
+  ) {
     return this.knowledgeService.remove(req.accessToken, accountId, id);
   }
 

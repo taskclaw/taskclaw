@@ -23,13 +23,22 @@ export class EmbeddingService {
 
   constructor(private configService: ConfigService) {
     this.apiKey = this.configService.get<string>('OPENROUTER_API_KEY') || '';
-    this.modelName = this.configService.get<string>('EMBEDDING_MODEL') || 'openai/text-embedding-3-small';
-    this.dimensions = parseInt(this.configService.get<string>('VECTOR_DIMENSIONS') || '1536', 10);
+    this.modelName =
+      this.configService.get<string>('EMBEDDING_MODEL') ||
+      'openai/text-embedding-3-small';
+    this.dimensions = parseInt(
+      this.configService.get<string>('VECTOR_DIMENSIONS') || '1536',
+      10,
+    );
 
     if (!this.apiKey) {
-      this.logger.warn('OPENROUTER_API_KEY is not set. Embedding generation will be disabled.');
+      this.logger.warn(
+        'OPENROUTER_API_KEY is not set. Embedding generation will be disabled.',
+      );
     } else {
-      this.logger.log(`Embedding Service initialized with model: ${this.modelName} (${this.dimensions} dimensions)`);
+      this.logger.log(
+        `Embedding Service initialized with model: ${this.modelName} (${this.dimensions} dimensions)`,
+      );
     }
   }
 
@@ -41,7 +50,9 @@ export class EmbeddingService {
    */
   async generateEmbedding(text: string, retries = 3): Promise<number[]> {
     if (!this.apiKey) {
-      throw new Error('OPENROUTER_API_KEY is not configured. Cannot generate embeddings.');
+      throw new Error(
+        'OPENROUTER_API_KEY is not configured. Cannot generate embeddings.',
+      );
     }
 
     if (!text || text.trim().length === 0) {
@@ -56,13 +67,15 @@ export class EmbeddingService {
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        this.logger.debug(`Generating embedding for text (length: ${truncatedText.length}, attempt: ${attempt}/${retries})`);
+        this.logger.debug(
+          `Generating embedding for text (length: ${truncatedText.length}, attempt: ${attempt}/${retries})`,
+        );
 
         const response = await fetch(`${this.baseURL}/embeddings`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`,
+            Authorization: `Bearer ${this.apiKey}`,
             'HTTP-Referer': 'https://microlaunch.net',
             'X-Title': 'Microfactory Scaffold',
           },
@@ -74,7 +87,9 @@ export class EmbeddingService {
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+          throw new Error(
+            `OpenRouter API error (${response.status}): ${errorText}`,
+          );
         }
 
         const data: EmbeddingResponse = await response.json();
@@ -87,16 +102,21 @@ export class EmbeddingService {
 
         // Validate embedding dimensions
         if (embedding.length !== this.dimensions) {
-          this.logger.warn(`Expected ${this.dimensions} dimensions, got ${embedding.length}. This may cause issues.`);
+          this.logger.warn(
+            `Expected ${this.dimensions} dimensions, got ${embedding.length}. This may cause issues.`,
+          );
         }
 
-        this.logger.debug(`Successfully generated embedding (${embedding.length} dimensions, ${data.usage.total_tokens} tokens used)`);
+        this.logger.debug(
+          `Successfully generated embedding (${embedding.length} dimensions, ${data.usage.total_tokens} tokens used)`,
+        );
 
         return embedding;
-
       } catch (error: any) {
         lastError = error;
-        this.logger.warn(`Embedding generation attempt ${attempt}/${retries} failed: ${error.message}`);
+        this.logger.warn(
+          `Embedding generation attempt ${attempt}/${retries} failed: ${error.message}`,
+        );
 
         if (attempt < retries) {
           // Exponential backoff: 1s, 2s, 4s
@@ -108,7 +128,9 @@ export class EmbeddingService {
     }
 
     // All retries exhausted
-    this.logger.error(`Failed to generate embedding after ${retries} attempts: ${lastError?.message}`);
+    this.logger.error(
+      `Failed to generate embedding after ${retries} attempts: ${lastError?.message}`,
+    );
     throw new Error(`Embedding generation failed: ${lastError?.message}`);
   }
 
@@ -118,9 +140,14 @@ export class EmbeddingService {
    * @param batchSize Number of texts to process per API call (default: 10)
    * @returns Promise<number[][]> Array of embedding vectors
    */
-  async generateEmbeddingsBatch(texts: string[], batchSize = 10): Promise<number[][]> {
+  async generateEmbeddingsBatch(
+    texts: string[],
+    batchSize = 10,
+  ): Promise<number[][]> {
     if (!this.apiKey) {
-      throw new Error('OPENROUTER_API_KEY is not configured. Cannot generate embeddings.');
+      throw new Error(
+        'OPENROUTER_API_KEY is not configured. Cannot generate embeddings.',
+      );
     }
 
     const results: number[][] = [];
@@ -128,9 +155,11 @@ export class EmbeddingService {
     // Process in batches to avoid rate limits
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
-      this.logger.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(texts.length / batchSize)} (${batch.length} items)`);
+      this.logger.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(texts.length / batchSize)} (${batch.length} items)`,
+      );
 
-      const batchPromises = batch.map(text => this.generateEmbedding(text));
+      const batchPromises = batch.map((text) => this.generateEmbedding(text));
       const batchResults = await Promise.all(batchPromises);
 
       results.push(...batchResults);
@@ -166,6 +195,6 @@ export class EmbeddingService {
    * Helper function for sleep/delay
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

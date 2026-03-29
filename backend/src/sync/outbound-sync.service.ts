@@ -47,7 +47,9 @@ export class OutboundSyncService {
 
       // If the task has no source, it's a local-only task
       if (!task.source_id || !task.sources || !task.external_id) {
-        this.logger.log(`Task ${taskId} is local-only, no outbound sync needed`);
+        this.logger.log(
+          `Task ${taskId} is local-only, no outbound sync needed`,
+        );
         return { success: true, provider: 'local' };
       }
 

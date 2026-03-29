@@ -5,8 +5,8 @@ import { SupabaseModule } from '../../supabase/supabase.module';
 import { StripeModule } from '../stripe/stripe.module';
 
 @Module({
-    imports: [SupabaseModule, StripeModule],
-    controllers: [PlansController],
-    providers: [PlansService],
+  imports: [SupabaseModule, StripeModule],
+  controllers: [PlansController],
+  providers: [PlansService],
 })
-export class PlansModule { }
+export class PlansModule {}

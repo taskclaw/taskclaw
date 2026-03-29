@@ -1,9 +1,4 @@
-import {
-  IsString,
-  IsOptional,
-  IsObject,
-  IsArray,
-} from 'class-validator';
+import { IsString, IsOptional, IsObject, IsArray } from 'class-validator';
 
 export class CreateConnectionDto {
   @IsString()

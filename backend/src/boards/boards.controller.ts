@@ -56,7 +56,11 @@ export class BoardsController {
     @Param('accountId') accountId: string,
     @Body() manifest: any,
   ) {
-    return this.boardTemplatesService.importManifest(req.user.id, accountId, manifest);
+    return this.boardTemplatesService.importManifest(
+      req.user.id,
+      accountId,
+      manifest,
+    );
   }
 
   @Post('bundle-import')
@@ -66,7 +70,11 @@ export class BoardsController {
     @Param('accountId') accountId: string,
     @Body() bundle: any,
   ) {
-    return this.bundleImportService.importBundle(req.user.id, accountId, bundle);
+    return this.bundleImportService.importBundle(
+      req.user.id,
+      accountId,
+      bundle,
+    );
   }
 
   @Get(':boardId')
@@ -228,7 +236,13 @@ export class BoardsController {
     @Param('stepId') stepId: string,
     @Body() dto: UpdateBoardStepDto,
   ) {
-    return this.boardStepsService.update(req.user.id, accountId, boardId, stepId, dto);
+    return this.boardStepsService.update(
+      req.user.id,
+      accountId,
+      boardId,
+      stepId,
+      dto,
+    );
   }
 
   @Delete(':boardId/steps/:stepId')
@@ -239,7 +253,12 @@ export class BoardsController {
     @Param('boardId') boardId: string,
     @Param('stepId') stepId: string,
   ) {
-    return this.boardStepsService.remove(req.user.id, accountId, boardId, stepId);
+    return this.boardStepsService.remove(
+      req.user.id,
+      accountId,
+      boardId,
+      stepId,
+    );
   }
 
   @Post(':boardId/steps/reorder')
@@ -250,6 +269,11 @@ export class BoardsController {
     @Param('boardId') boardId: string,
     @Body() body: { step_ids: string[] },
   ) {
-    return this.boardStepsService.reorder(req.user.id, accountId, boardId, body.step_ids);
+    return this.boardStepsService.reorder(
+      req.user.id,
+      accountId,
+      boardId,
+      body.step_ids,
+    );
   }
 }

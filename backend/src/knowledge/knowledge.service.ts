@@ -26,7 +26,16 @@ const ALLOWED_FILE_TYPES = [
 ];
 
 const ALLOWED_EXTENSIONS = [
-  'pdf', 'txt', 'md', 'doc', 'docx', 'csv', 'json', 'png', 'jpg', 'jpeg',
+  'pdf',
+  'txt',
+  'md',
+  'doc',
+  'docx',
+  'csv',
+  'json',
+  'png',
+  'jpg',
+  'jpeg',
 ];
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -100,7 +109,11 @@ export class KnowledgeService {
   /**
    * Get the master doc for a category
    */
-  async findMasterForCategory(accessToken: string, accountId: string, categoryId: string) {
+  async findMasterForCategory(
+    accessToken: string,
+    accountId: string,
+    categoryId: string,
+  ) {
     try {
       const client = this.supabaseAdmin.getClient();
       const { data, error } = await client
@@ -218,9 +231,15 @@ export class KnowledgeService {
         .from('knowledge_docs')
         .update({
           ...(updateDto.title !== undefined && { title: updateDto.title }),
-          ...(updateDto.content !== undefined && { content: updateDto.content }),
-          ...(updateDto.category_id !== undefined && { category_id: updateDto.category_id }),
-          ...(updateDto.is_master !== undefined && { is_master: updateDto.is_master }),
+          ...(updateDto.content !== undefined && {
+            content: updateDto.content,
+          }),
+          ...(updateDto.category_id !== undefined && {
+            category_id: updateDto.category_id,
+          }),
+          ...(updateDto.is_master !== undefined && {
+            is_master: updateDto.is_master,
+          }),
           ...(updateDto.file_attachments !== undefined && {
             file_attachments: updateDto.file_attachments,
           }),
@@ -410,7 +429,9 @@ export class KnowledgeService {
       const doc = await this.findOne(accessToken, accountId, docId);
 
       const existingAttachments = doc.file_attachments || [];
-      const attachment = existingAttachments.find((a: any) => a.name === filename);
+      const attachment = existingAttachments.find(
+        (a: any) => a.name === filename,
+      );
 
       if (!attachment) {
         throw new NotFoundException(`Attachment "${filename}" not found`);
@@ -425,7 +446,9 @@ export class KnowledgeService {
         .remove([storagePath]);
 
       if (deleteError) {
-        this.logger.error(`Failed to delete file from storage: ${deleteError.message}`);
+        this.logger.error(
+          `Failed to delete file from storage: ${deleteError.message}`,
+        );
         throw new Error(`Storage delete failed: ${deleteError.message}`);
       }
 
@@ -485,9 +508,7 @@ export class KnowledgeService {
         .download(storagePath);
 
       if (error || !data) {
-        this.logger.error(
-          `Failed to read file content: ${error?.message}`,
-        );
+        this.logger.error(`Failed to read file content: ${error?.message}`);
         throw new Error(`Failed to read file content: ${error?.message}`);
       }
 
@@ -504,7 +525,9 @@ export class KnowledgeService {
    */
   private triggerCategorySync(accountId: string, categoryId: string): void {
     this.agentSyncService.markStale(accountId, categoryId).catch((err) => {
-      this.logger.warn(`Failed to trigger agent sync for category ${categoryId}: ${err.message}`);
+      this.logger.warn(
+        `Failed to trigger agent sync for category ${categoryId}: ${err.message}`,
+      );
     });
   }
 }

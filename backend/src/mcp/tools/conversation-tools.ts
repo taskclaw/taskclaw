@@ -22,7 +22,11 @@ export function registerConversationTools(server: McpServer) {
       const result = await get(
         `/accounts/:accountId/conversations${qs ? `?${qs}` : ''}`,
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -37,7 +41,11 @@ export function registerConversationTools(server: McpServer) {
     },
     async (args) => {
       const result = await post('/accounts/:accountId/conversations', args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 
@@ -53,7 +61,11 @@ export function registerConversationTools(server: McpServer) {
         `/accounts/:accountId/conversations/${conversation_id}/messages`,
         { message },
       );
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
     },
   );
 }

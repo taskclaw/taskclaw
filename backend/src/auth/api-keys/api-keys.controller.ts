@@ -22,10 +22,7 @@ export class ApiKeysController {
 
   @Get()
   @ApiOperation({ summary: 'List API keys (masked)' })
-  findAll(
-    @Req() req,
-    @Param('accountId') accountId: string,
-  ) {
+  findAll(@Req() req, @Param('accountId') accountId: string) {
     return this.apiKeysService.findAll(accountId);
   }
 

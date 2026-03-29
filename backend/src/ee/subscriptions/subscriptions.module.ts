@@ -4,8 +4,8 @@ import { SubscriptionsService } from './subscriptions.service';
 import { SupabaseModule } from '../../supabase/supabase.module';
 
 @Module({
-    imports: [SupabaseModule],
-    controllers: [SubscriptionsController],
-    providers: [SubscriptionsService],
+  imports: [SupabaseModule],
+  controllers: [SubscriptionsController],
+  providers: [SubscriptionsService],
 })
-export class SubscriptionsModule { }
+export class SubscriptionsModule {}

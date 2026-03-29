@@ -9,7 +9,6 @@ import {
   ValidateIf,
 } from 'class-validator';
 
-
 export class UpdateTaskDto {
   @IsOptional()
   @IsString()
