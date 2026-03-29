@@ -33,11 +33,17 @@ TaskClaw is a self-hostable task management platform that combines a visual Kanb
 
 ## Quick Start
 
-Run TaskClaw with a single command — no configuration needed:
+Try TaskClaw instantly with [npx](https://docs.npmjs.com/cli/v10/commands/npx) (requires [Node.js](https://nodejs.org) + [Docker](https://docs.docker.com/get-docker/)):
 
 ```bash
-git clone https://github.com/DevOtts/taskclaw.git && cd taskclaw
-docker compose -f docker-compose.quickstart.yml up -d
+npx taskclaw
+```
+
+Or deploy with [Docker](https://docs.docker.com/get-docker/) directly:
+
+```bash
+docker volume create taskclaw_data
+curl -fsSL https://raw.githubusercontent.com/DevOtts/taskclaw/main/scripts/install.sh | sh
 ```
 
 Open **[http://localhost:3000](http://localhost:3000)** and log in:
@@ -49,13 +55,18 @@ Open **[http://localhost:3000](http://localhost:3000)** and log in:
 
 That's it! Everything starts automatically: database, auth, API, and frontend — all behind a single port.
 
-To stop: `docker compose -f docker-compose.quickstart.yml down`
-To reset: `docker compose -f docker-compose.quickstart.yml down -v`
+```bash
+npx taskclaw stop       # Stop TaskClaw
+npx taskclaw logs       # View logs
+npx taskclaw upgrade    # Pull latest & restart
+npx taskclaw reset      # Stop + delete all data
+```
 
-### One-Line Install (without cloning)
+### Alternative: Docker Compose (manual)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DevOtts/taskclaw/main/scripts/install.sh | sh
+git clone https://github.com/DevOtts/taskclaw.git && cd taskclaw
+docker compose -f docker-compose.quickstart.yml up -d
 ```
 
 ### For AI Agents (MCP Server)

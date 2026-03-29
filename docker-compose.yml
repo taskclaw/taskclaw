@@ -32,6 +32,8 @@ services:
     environment:
       EDITION: community
       REDIS_URL: redis://redis:6379
+      # Override .env's localhost URL so the container reaches Kong via Docker network
+      SUPABASE_URL: http://kong:8000
     depends_on:
       redis:
         condition: service_healthy
