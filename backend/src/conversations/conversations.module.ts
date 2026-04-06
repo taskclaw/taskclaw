@@ -9,6 +9,7 @@ import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { SkillsModule } from '../skills/skills.module';
 import { AdaptersModule } from '../adapters/adapters.module';
 import { AgentSyncModule } from '../agent-sync/agent-sync.module';
+import { BackboneModule } from '../backbone/backbone.module';
 
 import { IntegrationsModule } from '../integrations/integrations.module';
 
@@ -21,6 +22,7 @@ import { IntegrationsModule } from '../integrations/integrations.module';
     forwardRef(() => SkillsModule),
     AdaptersModule,
     forwardRef(() => AgentSyncModule),
+    forwardRef(() => BackboneModule),
     IntegrationsModule,
   ],
   controllers: [ConversationsController],

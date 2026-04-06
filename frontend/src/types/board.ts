@@ -20,6 +20,7 @@ export interface Board {
     color: string | null
     icon: string | null
   } | null
+  default_backbone_connection_id: string | null
   orchestrator_category_id: string | null
   orchestrator_category?: {
     id: string
@@ -68,6 +69,7 @@ export interface BoardStep {
   webhook_auth_header: string | null
   schedule_cron: string | null
   system_prompt: string | null
+  backbone_connection_id: string | null
   task_count?: number
   created_at: string
   updated_at: string

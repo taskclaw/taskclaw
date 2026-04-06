@@ -39,6 +39,7 @@ import {
     getCategories, createCategory, updateCategory, deleteCategory,
     getSources, updateSource, getSourceProperties,
 } from './actions'
+import { BackbonePicker } from '@/components/backbones/backbone-picker'
 import { toast } from 'sonner'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
 import { cn } from '@/lib/utils'
@@ -758,6 +759,7 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
     const [name, setName] = useState('')
     const [color, setColor] = useState('#22c55e')
     const [icon, setIcon] = useState('')
+    const [preferredBackboneId, setPreferredBackboneId] = useState<string | null>(null)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
@@ -796,6 +798,7 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
             setName(category?.name || '')
             setColor(category?.color || '#22c55e')
             setIcon(category?.icon || '')
+            setPreferredBackboneId((category as any)?.preferred_backbone_connection_id ?? null)
             setError(null)
             setProperties([])
             setActiveSourceId(null)
@@ -880,7 +883,8 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
         setError(null)
 
         // 1) Save category
-        const data = { name: name.trim(), color, icon: icon || undefined }
+        const data: any = { name: name.trim(), color, icon: icon || undefined }
+        if (isEdit) data.preferred_backbone_connection_id = preferredBackboneId ?? undefined
         const result = isEdit
             ? await updateCategory(category!.id, data)
             : await createCategory(data)
@@ -1021,6 +1025,18 @@ function CategoryDialog({ open, onOpenChange, category, onSaved, editLoading, li
                             <div className="space-y-2">
                                 <Label>Icon (optional emoji)</Label>
                                 <Input placeholder="📁" value={icon} onChange={(e) => setIcon(e.target.value)} className="w-20" />
+                            </div>
+                            <div className="space-y-2">
+                                <Label className="text-sm font-medium">AI Backbone</Label>
+                                <p className="text-xs text-muted-foreground">
+                                    Choose a preferred backbone for this agent. Overrides the board default when routing AI tasks.
+                                </p>
+                                <BackbonePicker
+                                    value={preferredBackboneId}
+                                    onChange={setPreferredBackboneId}
+                                    showInheritOption
+                                    inheritLabel="Inherit from board / account default"
+                                />
                             </div>
                         </TabsContent>
 

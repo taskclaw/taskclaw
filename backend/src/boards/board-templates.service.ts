@@ -194,6 +194,9 @@ export class BoardTemplatesService {
       ? categorySlugToId[defaultCategorySlug] || null
       : null;
 
+    // F024: Resolve backbone slugs from manifest
+    const backboneSlugMap = await this.resolveBackboneSlugs(client, accountId, manifest);
+
     // Create board instance from template
     const { data: board, error: boardError } = await client
       .from('board_instances')
@@ -210,6 +213,7 @@ export class BoardTemplatesService {
         latest_available_version: template.version,
         settings_override: manifest.settings || {},
         default_category_id: defaultCategoryId,
+        default_backbone_connection_id: backboneSlugMap.boardDefault || null,
       })
       .select()
       .single();
@@ -229,6 +233,13 @@ export class BoardTemplatesService {
           ? categorySlugToId[linkedCategorySlug] || null
           : null;
 
+        // F024: Resolve step-level backbone override slug
+        const stepBackboneSlug =
+          step.ai_config?.backbone_override || step.backbone_override || null;
+        const stepBackboneId = stepBackboneSlug
+          ? backboneSlugMap.bySlug[stepBackboneSlug] || null
+          : null;
+
         return {
           board_instance_id: board.id,
           step_key: step.id,
@@ -237,6 +248,7 @@ export class BoardTemplatesService {
           position: step.position,
           color: step.color || null,
           linked_category_id: linkedCategoryId,
+          backbone_connection_id: stepBackboneId,
           // AI config (legacy format support)
           ai_enabled: step.ai_config?.enabled || false,
           ai_first: step.ai_config?.ai_first || false,
@@ -346,6 +358,9 @@ export class BoardTemplatesService {
       ? categorySlugToId[defaultCategorySlug] || null
       : null;
 
+    // F024: Resolve board-level default backbone slug to connection ID
+    const backboneSlugMap = await this.resolveBackboneSlugs(client, accountId, manifest);
+
     // Create board instance
     const { data: board, error: boardError } = await client
       .from('board_instances')
@@ -359,6 +374,7 @@ export class BoardTemplatesService {
         installed_manifest: manifest,
         settings_override: manifest.settings || {},
         default_category_id: defaultCategoryId,
+        default_backbone_connection_id: backboneSlugMap.boardDefault || null,
       })
       .select()
       .single();
@@ -375,6 +391,13 @@ export class BoardTemplatesService {
           ? categorySlugToId[linkedCategorySlug] || null
           : null;
 
+        // F024: Resolve step-level backbone override slug
+        const stepBackboneSlug =
+          step.ai_config?.backbone_override || step.backbone_override || null;
+        const stepBackboneId = stepBackboneSlug
+          ? backboneSlugMap.bySlug[stepBackboneSlug] || null
+          : null;
+
         return {
           board_instance_id: board.id,
           step_key: step.id,
@@ -383,6 +406,7 @@ export class BoardTemplatesService {
           position: step.position,
           color: step.color || null,
           linked_category_id: linkedCategoryId,
+          backbone_connection_id: stepBackboneId,
           ai_enabled: step.ai_config?.enabled || false,
           ai_first: step.ai_config?.ai_first || step.ai_first || false,
           system_prompt:
@@ -457,5 +481,70 @@ export class BoardTemplatesService {
     }
 
     return fullBoard;
+  }
+
+  /**
+   * F024: Resolve backbone slugs from a manifest to backbone_connection IDs.
+   * Looks up connections by name (slug-matched) for the given account.
+   * Returns { boardDefault, bySlug } where bySlug maps slug -> connection ID.
+   */
+  private async resolveBackboneSlugs(
+    client: any,
+    accountId: string,
+    manifest: any,
+  ): Promise<{ boardDefault: string | null; bySlug: Record<string, string> }> {
+    const result = { boardDefault: null as string | null, bySlug: {} as Record<string, string> };
+
+    // Collect all backbone slugs referenced in the manifest
+    const slugs = new Set<string>();
+    const boardDefaultSlug =
+      manifest.settings?.default_backbone || manifest.default_backbone || null;
+    if (boardDefaultSlug) slugs.add(boardDefaultSlug);
+
+    if (manifest.steps) {
+      for (const step of manifest.steps) {
+        const stepSlug =
+          step.ai_config?.backbone_override || step.backbone_override || null;
+        if (stepSlug) slugs.add(stepSlug);
+      }
+    }
+
+    if (slugs.size === 0) return result;
+
+    // Fetch all active backbone connections for this account
+    const { data: connections } = await client
+      .from('backbone_connections')
+      .select('id, name, backbone_type')
+      .eq('account_id', accountId)
+      .eq('is_active', true);
+
+    if (!connections || connections.length === 0) {
+      this.logger.warn(
+        `No backbone connections found for account ${accountId} — manifest backbone slugs will be ignored`,
+      );
+      return result;
+    }
+
+    // Build slug -> connection ID map by matching backbone_type or name
+    for (const slug of slugs) {
+      const match =
+        connections.find((c: any) => c.backbone_type === slug) ||
+        connections.find(
+          (c: any) => c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') === slug,
+        );
+      if (match) {
+        result.bySlug[slug] = match.id;
+      } else {
+        this.logger.warn(
+          `Backbone slug "${slug}" not found in account ${accountId} connections`,
+        );
+      }
+    }
+
+    if (boardDefaultSlug) {
+      result.boardDefault = result.bySlug[boardDefaultSlug] || null;
+    }
+
+    return result;
   }
 }

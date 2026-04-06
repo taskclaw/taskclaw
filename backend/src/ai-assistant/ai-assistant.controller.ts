@@ -33,16 +33,21 @@ export class AiAssistantController {
       history: any[];
       conversationId?: string;
       systemPromptKey?: string;
+      accountId?: string;
     },
     @Req() req,
   ) {
-    // Current user context is available in req.user if needed
     const user = req.user;
+    // Merge accountId from request body into user context so avatar tools are loaded
+    const userWithAccount = {
+      ...user,
+      accountId: body.accountId || req['apiKeyAccountId'] || undefined,
+    };
 
     return this.aiAssistantService.chat(
       body.message,
       body.history,
-      user,
+      userWithAccount,
       body.conversationId,
       body.systemPromptKey,
     );

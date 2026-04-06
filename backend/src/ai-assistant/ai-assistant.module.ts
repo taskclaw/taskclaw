@@ -9,6 +9,6 @@ import { ConfigModule } from '@nestjs/config';
   imports: [ConfigModule, SupabaseModule],
   controllers: [AiAssistantController],
   providers: [AiAssistantService, EmbeddingService],
-  exports: [EmbeddingService], // Export so other modules can use embeddings
+  exports: [AiAssistantService, EmbeddingService],
 })
 export class AiAssistantModule {}

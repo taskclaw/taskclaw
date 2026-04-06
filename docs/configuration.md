@@ -6,7 +6,7 @@ All TaskClaw configuration is done through environment variables. This document 
 
 | Variable | Required | Default | Description | Edition |
 |---|---|---|---|---|
-| `PORT` | No | `3001` | Port the NestJS server listens on | All |
+| `PORT` | No | `3003` | Port the NestJS server listens on | All |
 | `EDITION` | No | `community` | `community` for self-hosted, `cloud` for managed TaskClaw Cloud | All |
 | `SUPABASE_URL` | Yes | -- | URL of your Supabase instance. Use `http://kong:8000` for the local Docker profile, or your Supabase Cloud project URL (e.g. `https://abc123.supabase.co`) | All |
 | `SUPABASE_ANON_KEY` | Yes | -- | Supabase anonymous/public API key | All |
@@ -15,8 +15,9 @@ All TaskClaw configuration is done through environment variables. This document 
 | `ENCRYPTION_KEY` | Yes | -- | 64-character hex string used to encrypt sensitive data at rest (e.g. integration API keys). Generate with `openssl rand -hex 32` | All |
 | `CORS_ORIGIN` | No | `http://localhost:3002` | Comma-separated list of allowed CORS origins. Set to your frontend domain in production | All |
 | `REDIS_URL` | No | `redis://redis:6379` | Redis connection URL for BullMQ job queues. Auto-configured in Docker | All |
-| `OPENROUTER_API_KEY` | No | -- | API key from [OpenRouter](https://openrouter.ai/keys). Required only if you want AI chat features | All |
+| `OPENROUTER_API_KEY` | No | -- | API key from [OpenRouter](https://openrouter.ai/keys). Required only if you want AI chat features and no backbone connection is configured | All |
 | `OPENROUTER_MODEL` | No | `openai/gpt-4o-mini` | Model identifier to use via OpenRouter (see [available models](https://openrouter.ai/models)) | All |
+| `OPENCLAW_GATEWAY_URL` | No | -- | Base URL of the OpenClaw RPC gateway. Used by BackboneModule (OpenClawAdapter) and AgentSyncModule. Example: `https://gateway.openclaw.io` | All |
 | `STRIPE_SECRET_KEY` | No | -- | Stripe secret key for billing | Cloud only |
 | `STRIPE_WEBHOOK_SECRET` | No | -- | Stripe webhook signing secret | Cloud only |
 | `LANGFUSE_PUBLIC_KEY` | No | -- | Langfuse public key for AI observability | Cloud only |
@@ -30,7 +31,7 @@ All TaskClaw configuration is done through environment variables. This document 
 | `NEXT_PUBLIC_EDITION` | No | `community` | `community` for self-hosted, `cloud` for managed TaskClaw Cloud | All |
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | -- | Public Supabase URL, accessible from the browser. Use `http://localhost:7431` for the local Docker profile, or your Supabase Cloud project URL | All |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | -- | Supabase anonymous/public API key (safe to expose to browsers) | All |
-| `NEXT_PUBLIC_API_URL` | No | `http://localhost:3003` | URL of the TaskClaw backend API, as reachable from the browser. In Docker, the container-to-container URL (`http://backend:3001`) is set automatically | All |
+| `NEXT_PUBLIC_API_URL` | No | `http://localhost:3003` | URL of the TaskClaw backend API, as reachable from the browser. In Docker, the container-to-container URL (`http://backend:3003`) is set automatically | All |
 | `NEXT_PUBLIC_APP_URL` | No | `http://localhost:3002` | The public URL of the frontend app. Used for redirects and link generation | All |
 | `NEXT_PUBLIC_SITE_URL` | No | `http://localhost:3002` | Site URL, used for SEO and Open Graph metadata | All |
 | `NEXT_PUBLIC_BRAND_NAME` | No | `TaskClaw` | Display name shown in the UI header and page titles | All |
@@ -48,8 +49,8 @@ These variables configure the Docker Compose services themselves. They are only 
 | `ANON_KEY` | Yes (supabase profile) | -- | Supabase anon key, signed with the JWT_SECRET above |
 | `SERVICE_ROLE_KEY` | Yes (supabase profile) | -- | Supabase service role key, signed with the JWT_SECRET above |
 | `DOMAIN` | No | `localhost` | Domain used by Supabase services |
-| `BACKEND_PORT` | No | `3001` | Host port mapped to the backend container |
-| `FRONTEND_PORT` | No | `3000` | Host port mapped to the frontend container |
+| `BACKEND_PORT` | No | `3003` | Host port mapped to the backend container |
+| `FRONTEND_PORT` | No | `3002` | Host port mapped to the frontend container |
 | `SUPABASE_API_PORT` | No | `7431` | Host port mapped to the Supabase Kong API gateway |
 | `SUPABASE_STUDIO_PORT` | No | `7430` | Host port mapped to Supabase Studio |
 | `POSTGRES_PORT` | No | `5432` | Host port mapped to PostgreSQL |

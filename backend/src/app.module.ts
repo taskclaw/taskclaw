@@ -26,6 +26,7 @@ import { KnowledgeModule } from './knowledge/knowledge.module';
 import { SkillsModule } from './skills/skills.module';
 import { AgentSyncModule } from './agent-sync/agent-sync.module';
 import { BoardsModule } from './boards/boards.module';
+import { BackboneModule } from './backbone/backbone.module';
 
 import { IntegrationsModule } from './integrations/integrations.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
@@ -80,6 +81,7 @@ const editionModules = isCloudEdition
     SyncModule,
     AgentSyncModule,
     BoardsModule,
+    BackboneModule,
     IntegrationsModule,
     WebhooksModule,
   ],

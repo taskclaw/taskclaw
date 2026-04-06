@@ -4,17 +4,17 @@ This document describes the high-level architecture of TaskClaw, including how t
 
 ## Monorepo Layout
 
-TaskClaw is a monorepo managed by **Turborepo** with **pnpm** workspaces:
+TaskClaw is a monorepo managed with **npm**. Each package has its own `package.json` and is installed independently:
 
 ```
 taskclaw/
-├── backend/    → NestJS 11 API server (port 3001)
-├── frontend/   → Next.js 15 web application (port 3000)
+├── backend/    → NestJS 11 API server (port 3003)
+├── frontend/   → Next.js 15 web application (port 3002)
 ├── docker/     → Docker support files (Kong config, DB init)
 └── docs/       → Documentation
 ```
 
-Turborepo orchestrates builds, linting, and dev servers across both packages. The root `pnpm run dev` starts both the backend and frontend in parallel.
+The root `package.json` provides workspace-level scripts. Each package is managed independently with `npm install`, `npm run dev`, `npm run build`, etc.
 
 ## System Diagram
 
@@ -39,13 +39,17 @@ Turborepo orchestrates builds, linting, and dev servers across both packages. Th
 │  │  Integrations    │ │  Skills  │ │     Boards       │    │
 │  │     Module       │ │  Module  │ │     Module       │    │
 │  └──────────────────┘ └──────────┘ └──────────────────┘    │
+│  ┌──────────────────┐ ┌──────────────────────────────────┐  │
+│  │ BackboneModule   │ │       AgentSyncModule            │  │
+│  │ (Multi-AI Route) │ │  (Skills+Knowledge → OpenClaw)   │  │
+│  └──────────────────┘ └──────────────────────────────────┘  │
 └──────┬─────────────┬────────────┬───────────────┬───────────┘
        │             │            │               │
        ▼             ▼            ▼               ▼
 ┌────────────┐ ┌──────────┐ ┌──────────┐  ┌─────────────┐
 │  Supabase  │ │  Redis   │ │ External │  │  OpenRouter  │
-│ (Postgres  │ │ (BullMQ) │ │   APIs   │  │     API      │
-│  + Auth    │ │          │ │ (Notion, │  │              │
+│ (Postgres  │ │ (BullMQ) │ │   APIs   │  │  / OpenClaw  │
+│  + Auth    │ │          │ │ (Notion, │  │   Gateway    │
 │  + Storage)│ │          │ │ ClickUp) │  │              │
 └────────────┘ └──────────┘ └──────────┘  └─────────────┘
 ```
@@ -78,16 +82,25 @@ The backend follows NestJS module-based architecture. Each module is a self-cont
 | **AdaptersModule** | `src/adapters/` | Registry of source adapters (Notion, ClickUp, etc.). Auto-discovers adapters via the `@Adapter()` decorator |
 | **SourcesModule** | `src/sources/` | CRUD for external source configurations. Sources link to `integration_connections` via `connection_id` FK for centralized credential management |
 | **SyncModule** | `src/sync/` | Background sync engine using BullMQ. Processes inbound (fetch from external) and outbound (push to external) sync jobs. Reads credentials from linked `integration_connections` when available |
+| **WebhooksModule** | `src/webhooks/` | Webhook event system. Allows external applications to subscribe to TaskClaw events and receive HTTP POST callbacks |
 
 ### AI Modules
 
 | Module | Path | Purpose |
 |---|---|---|
 | **ConversationsModule** | `src/conversations/` | Chat conversation management. Stores message history and orchestrates AI responses |
-| **AiProviderModule** | `src/ai-provider/` | Abstraction layer over AI providers. Currently wraps the OpenRouter API |
-| **AiAssistantModule** | `src/ai-assistant/` | AI assistant orchestration layer. Connects conversations with AI providers and tools |
+| **AiProviderModule** | `src/ai-provider/` | Abstraction layer over AI providers. Reads provider config from DB or environment |
+| **AiAssistantModule** | `src/ai-assistant/` | AI assistant orchestration layer using **LangGraph** with a **ReAct (Reasoning + Acting)** pattern. Tools available: `query_tasks`, `create_task`, `update_category`, `invoke_skill`. Uses **EmbeddingService** (pgvector cosine similarity) for knowledge base retrieval. AI model selection goes through **BackboneRouterService** cascade |
 | **KnowledgeModule** | `src/knowledge/` | Knowledge base management. Allows uploading documents that provide context to the AI assistant |
 | **SkillsModule** | `src/skills/` | AI skill definitions. Configurable capabilities the AI assistant can use |
+| **BackboneModule** | `src/backbone/` | Multi-AI-provider support with cascade routing. Users can configure different AI providers (OpenRouter, OpenClaw) at the step, board, category, or account level. Maintains `backbone_definitions` (provider catalog) and `backbone_connections` (user-configured instances with encrypted credentials). `BackboneRouterService` resolves the correct provider via cascade: step → board → category → account → env var fallback |
+| **AgentSyncModule** | `src/agent-sync/` | Cron-based sync (every 5 minutes) that pushes each category's skills and knowledge documents to the OpenClaw RPC gateway (`POST /rpc/update-agent`). Keeps OpenClaw agents updated with the latest configuration |
+
+### Board Modules
+
+| Module | Path | Purpose |
+|---|---|---|
+| **BoardsModule** | `src/boards/` | Multi-board workflow engine. Manages `board_templates` (shareable JSON manifests), `board_instances` (user's active boards), and `board_steps` (pipeline stages/columns with AI config). Templates can be installed (creating a snapshot), exported, and imported as bundles |
 
 ### Cloud-Only Modules (`ee/`)
 
@@ -115,6 +128,10 @@ The frontend is built with **Next.js 15** using the **App Router**.
 | `/dashboard/chat` | AI chat interface for conversations with the assistant |
 | `/dashboard/knowledge` | Knowledge base management (upload and manage documents) |
 | `/dashboard/projects` | Project list and project-specific views |
+| `/dashboard/boards` | Multi-board list view |
+| `/dashboard/boards/:boardId` | Specific board view |
+| `/dashboard/agents` | Agent management (category-based) |
+| `/dashboard/import` | Import board bundles |
 | `/dashboard/settings/general` | General account settings |
 | `/dashboard/settings/integrations` | Unified integrations page: Integration Marketplace, Task Sources, and Communication Tools. All use the same IntegrationSetupDialog with test chat |
 | `/dashboard/settings/ai-provider` | Configure AI provider (OpenRouter model selection) |
@@ -218,17 +235,83 @@ The frontend uses the **BFF (Backend For Frontend) pattern** -- it communicates 
 User sends message in /dashboard/chat
   → Frontend POST /conversations/:id/messages
     → ConversationsModule stores user message
-      → AiProviderModule builds prompt with:
-        - Conversation history
-        - Knowledge base context (RAG)
-        - Available skills
-        - Task context (if relevant)
-      → OpenRouter API (or OpenClaw gateway)
-        ← AI model response
+      → AiAssistantModule (LangGraph ReAct agent):
+        - BackboneRouterService resolves provider (step → board → category → account → env var)
+        - EmbeddingService retrieves knowledge base context (pgvector RAG)
+        - Available tools: query_tasks, create_task, update_category, invoke_skill
+        - AI model call via resolved provider adapter
+        ← AI model response (streamed or full)
       → Store assistant message
     ← Stream or return response
   ← Display in chat UI
 ```
+
+## Backbone System
+
+The Backbone system enables routing AI requests to different providers depending on the context. Rather than a single global AI provider, each step, board, category, or account can be configured to use a different AI backend.
+
+### Purpose
+
+- Different workflow stages can use the most cost-effective or capable model
+- Teams can mix OpenRouter and OpenClaw within the same account
+- Fallback to a global env var when no explicit configuration is set
+
+### Database Tables
+
+| Table | Purpose |
+|---|---|
+| `backbone_definitions` | Catalog of available AI providers. Each entry has a `slug`, `name`, `adapter_class`, and a JSON schema describing the required credential fields |
+| `backbone_connections` | User-configured instances of a backbone definition. Stores encrypted credentials, linked to an account. Users can have multiple connections to the same provider |
+
+### Cascade Resolver
+
+`BackboneRouterService.resolve()` walks the following chain and returns the first configured connection:
+
+```
+board_step.backbone_connection_id
+  → board_instance.backbone_connection_id
+    → category.backbone_connection_id
+      → account.default_backbone_connection_id
+        → OPENROUTER_API_KEY env var (legacy fallback)
+```
+
+Code path: `ConversationsService` → `BackboneRouterService.resolve()` → returns `{ adapter, config }` → adapter called by `AiAssistantModule`.
+
+### Provider Adapters (`backbone/adapters/`)
+
+| Adapter | Description |
+|---|---|
+| `OpenRouterAdapter` | Calls the OpenRouter API using an OpenAI-compatible client |
+| `OpenClawAdapter` | Calls the OpenClaw RPC gateway |
+
+## Agent Sync
+
+The AgentSyncModule keeps OpenClaw gateway agents up to date with the latest skills and knowledge configured in TaskClaw.
+
+### Schedule
+
+A NestJS `@Cron` job runs every 5 minutes.
+
+### Process Flow
+
+```
+AgentSyncService (every 5 min)
+  → Iterate through account's categories
+    → Fetch skills linked to each category
+    → Fetch knowledge documents linked to each category
+    → Compile AgentConfig JSON
+    → OpenClawRpcClient.updateAgent(agentConfig)
+      → POST <gateway_url>/rpc/update-agent
+         (authenticated with account API key)
+```
+
+### Error Handling
+
+Errors are logged per category. A failure in one category does not stop the sync for subsequent categories.
+
+### Gateway URL Resolution
+
+The gateway URL is resolved from `AiProviderService`, which reads it from the account's backbone connection config or falls back to the `OPENCLAW_GATEWAY_URL` environment variable.
 
 ## Edition Gating
 
@@ -278,6 +361,7 @@ TaskClaw provides a **Model Context Protocol (MCP) server** that allows AI agent
                 ▼
 ┌────────────────────────────────────────┐
 │        TaskClaw Backend (NestJS)       │
+│          http://localhost:3003         │
 └────────────────────────────────────────┘
 ```
 
@@ -371,6 +455,22 @@ All external integrations — marketplace integrations (Discord, GitHub, etc.), 
 | `sources` | Task sync-specific configuration (category, sync interval, filters). Links to `integration_connections` via `connection_id` FK for credential management |
 | `skills` | Integration-linked skills (`skill_type = 'integration'`) provide AI instructions for each integration |
 
+### Board System Database Tables
+
+| Table | Purpose |
+|---|---|
+| `board_templates` | Shareable JSON manifests describing a board layout (steps, AI config, integrations). Can be exported and imported as bundles |
+| `board_instances` | A user's active board, created by installing a template or directly. Stores `backbone_connection_id` for board-level AI provider override |
+| `board_steps` | Pipeline stages/columns within a board instance. Each step has `position`, AI config, and optional `backbone_connection_id` for step-level override |
+| `board_step_integrations` | Links integration connections to specific board steps |
+
+### Backbone System Database Tables
+
+| Table | Purpose |
+|---|---|
+| `backbone_definitions` | Catalog of AI provider definitions. Each has a `slug`, `name`, `adapter_class`, and credential JSON schema |
+| `backbone_connections` | User-configured provider instances with encrypted credentials, linked to an account |
+
 ### Category-Based Routing
 
 The `categories` text array on `integration_definitions` determines where each integration appears in the UI:
@@ -430,6 +530,7 @@ To add a new integration, see [Adding an Integration](./integrations/adding-an-i
 | `@supabase/supabase-js` | Supabase client for Postgres, Auth, and Storage |
 | `bullmq` + `ioredis` | Job queue for background sync processing |
 | `openai` | OpenAI-compatible client (used for OpenRouter API) |
+| `@langchain/langgraph` | LangGraph for ReAct AI agent orchestration |
 | `@notionhq/client` | Official Notion API client |
 | `passport` + `passport-jwt` | JWT authentication strategy |
 | `stripe` | Stripe billing integration (cloud edition) |

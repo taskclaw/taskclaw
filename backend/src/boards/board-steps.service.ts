@@ -97,6 +97,7 @@ export class BoardStepsService {
         position,
         color: dto.color || null,
         linked_category_id: dto.linked_category_id || null,
+        backbone_connection_id: dto.backbone_connection_id || null,
       })
       .select()
       .single();

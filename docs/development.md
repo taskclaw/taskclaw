@@ -5,24 +5,21 @@ This guide covers how to set up a local development environment for TaskClaw.
 ## Prerequisites
 
 - **Node.js 20+** (LTS recommended)
-- **pnpm 10+** (the repo uses pnpm as its package manager)
+- **npm** (bundled with Node.js — the repo uses npm as its package manager)
 - **A Supabase instance** -- either a free [Supabase Cloud](https://supabase.com) project or a local instance via Docker
 - **Docker and Docker Compose v2+** (optional, only needed if running Supabase locally or Redis)
 
 ## Clone and Install
 
 ```bash
-git clone https://github.com/your-org/taskclaw.git
+git clone https://github.com/taskclaw/taskclaw.git
 cd taskclaw
 
-# Install dependencies for the entire monorepo
-pnpm install
-```
+# Install backend dependencies
+cd backend && npm install
 
-If you don't have pnpm installed:
-
-```bash
-npm install -g pnpm
+# Install frontend dependencies
+cd ../frontend && npm install
 ```
 
 ## Set Up Environment Variables
@@ -81,19 +78,13 @@ Set `REDIS_URL=redis://localhost:6379` in `backend/.env`.
 Open two terminal windows (or use a terminal multiplexer):
 
 ```bash
-# Terminal 1: Backend (NestJS, port 3001)
+# Terminal 1: Backend (NestJS, port 3003)
 cd backend
-pnpm run start:dev
+npm run start:dev
 
-# Terminal 2: Frontend (Next.js, port 3000)
+# Terminal 2: Frontend (Next.js, port 3002)
 cd frontend
-pnpm run dev
-```
-
-Or use Turborepo from the project root to start both at once:
-
-```bash
-pnpm run dev
+npm run dev
 ```
 
 Once running:
@@ -115,14 +106,18 @@ taskclaw/
 │   │   │   ├── clickup/        # ClickUp adapter
 │   │   │   ├── interfaces/     # SourceAdapter interface definition
 │   │   │   └── notion/         # Notion adapter
-│   │   ├── ai-assistant/       # AI assistant orchestration
-│   │   ├── ai-provider/        # AI provider abstraction (OpenRouter)
+│   │   ├── agent-sync/         # OpenClaw agent sync (skills+knowledge, every 5 min)
+│   │   ├── ai-assistant/       # AI assistant orchestration (LangGraph ReAct)
+│   │   ├── ai-provider/        # AI provider abstraction
 │   │   ├── auth/               # Authentication (Supabase JWT guards)
+│   │   ├── backbone/           # Multi-AI-provider routing (cascade resolver)
+│   │   ├── boards/             # Multi-board workflow engine (templates/instances/steps)
 │   │   ├── categories/         # Task categories / labels
 │   │   ├── common/             # Shared utilities, middleware, guards
 │   │   ├── conversations/      # AI chat conversations
 │   │   ├── ee/                 # Cloud-edition modules (Stripe, Langfuse, etc.)
 │   │   ├── knowledge/          # Knowledge base (file uploads, context for AI)
+│   │   ├── mcp/                # MCP server tools and handlers
 │   │   ├── projects/           # Project management
 │   │   ├── search/             # Full-text search
 │   │   ├── skills/             # AI skills / capabilities
@@ -133,6 +128,7 @@ taskclaw/
 │   │   ├── tasks/              # Task CRUD and business logic
 │   │   ├── teams/              # Team management
 │   │   ├── users/              # User profiles
+│   │   ├── webhooks/           # Webhook event system
 │   │   ├── app.module.ts       # Root module (imports everything)
 │   │   └── main.ts             # Application entry point
 │   ├── test/                   # E2E tests
@@ -149,6 +145,9 @@ taskclaw/
 │   │   │   │   ├── chat/       # AI chat interface
 │   │   │   │   ├── knowledge/  # Knowledge base UI
 │   │   │   │   ├── projects/   # Project views
+│   │   │   │   ├── boards/     # Multi-board views
+│   │   │   │   ├── agents/     # Agent management (category-based)
+│   │   │   │   ├── import/     # Import board bundles
 │   │   │   │   └── settings/   # Settings pages
 │   │   │   │       ├── general/
 │   │   │   │       ├── integrations/
@@ -181,16 +180,16 @@ taskclaw/
 
 ```bash
 cd backend
-pnpm test              # Run all tests once
-pnpm test:watch        # Run in watch mode
-pnpm test:cov          # Run with coverage report
+npm test              # Run all tests once
+npm run test:watch    # Run in watch mode
+npm run test:cov      # Run with coverage report
 ```
 
 ### Backend E2E Tests
 
 ```bash
 cd backend
-pnpm test:e2e
+npm run test:e2e
 ```
 
 ## Code Quality
@@ -198,23 +197,20 @@ pnpm test:e2e
 ### Linting
 
 ```bash
-# Lint the entire monorepo
-pnpm run lint
-
-# Lint backend only
+# Lint backend
 cd backend
-pnpm run lint
+npm run lint
 
-# Lint frontend only
+# Lint frontend
 cd frontend
-pnpm run lint
+npm run lint
 ```
 
 ### Formatting
 
 ```bash
 cd backend
-pnpm run format        # Prettier formatting for backend code
+npm run format        # Prettier formatting for backend code
 ```
 
 ## Common Development Tasks
@@ -236,7 +232,7 @@ See [MCP Server Documentation](./mcp-server.md) for configuration and usage.
 
 TaskClaw exposes a full OpenAPI specification at `/api/docs`:
 
-1. Start the backend: `cd backend && pnpm run start:dev`
+1. Start the backend: `cd backend && npm run start:dev`
 2. Open [http://localhost:3003/api/docs](http://localhost:3003/api/docs) in your browser
 3. Browse all API endpoints with schemas, parameters, and responses
 4. Click "Try it out" to test endpoints directly from the UI
@@ -249,15 +245,22 @@ TaskClaw exposes a full OpenAPI specification at `/api/docs`:
 If the backend port is occupied by a stale process:
 
 ```bash
-lsof -ti:3001 | xargs kill -9
+lsof -ti:3003 | xargs kill -9
+```
+
+If the frontend port is occupied:
+
+```bash
+lsof -ti:3002 | xargs kill -9
 ```
 
 ### Rebuilding from Scratch
 
 ```bash
 # Remove node_modules and reinstall
-rm -rf node_modules backend/node_modules frontend/node_modules
-pnpm install
+rm -rf backend/node_modules frontend/node_modules
+cd backend && npm install
+cd ../frontend && npm install
 ```
 
 ### Working with the Database

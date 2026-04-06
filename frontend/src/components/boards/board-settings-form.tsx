@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { BoardIcon } from '@/lib/board-icon'
+import { BackbonePicker } from '@/components/backbones/backbone-picker'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -35,6 +36,9 @@ export function BoardSettingsForm({ board }: BoardSettingsFormProps) {
     const [color, setColor] = useState(board.color || PRESET_COLORS[0])
     const [icon, setIcon] = useState(board.icon || 'layout-grid')
     const [tags, setTags] = useState(board.tags?.join(', ') || '')
+    const [backboneConnectionId, setBackboneConnectionId] = useState<string | null>(
+        board.default_backbone_connection_id ?? null,
+    )
 
     const handleSave = async () => {
         if (!name.trim()) return
@@ -50,6 +54,7 @@ export function BoardSettingsForm({ board }: BoardSettingsFormProps) {
                     .split(',')
                     .map((t) => t.trim())
                     .filter(Boolean),
+                default_backbone_connection_id: backboneConnectionId,
             } as any)
 
             if (result.error) {
@@ -133,6 +138,22 @@ export function BoardSettingsForm({ board }: BoardSettingsFormProps) {
                         </button>
                     ))}
                 </div>
+            </div>
+
+            {/* AI Backbone */}
+            <div>
+                <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
+                    AI Backbone
+                </Label>
+                <p className="text-[10px] text-muted-foreground mb-2">
+                    AI provider used by this board. Steps inherit this unless overridden.
+                </p>
+                <BackbonePicker
+                    value={backboneConnectionId}
+                    onChange={setBackboneConnectionId}
+                    showInheritOption
+                    inheritLabel="Inherit from account default"
+                />
             </div>
 
             {/* Tags */}

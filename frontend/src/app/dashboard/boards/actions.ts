@@ -117,6 +117,7 @@ export async function updateBoard(
         display_order: number
         is_archived: boolean
         default_category_id: string | null
+        default_backbone_connection_id: string | null
         settings_override: Record<string, any>
     }>
 ): Promise<{ success?: boolean; board?: Board; error?: string }> {
@@ -289,6 +290,7 @@ export async function updateBoardStep(
         webhook_auth_header: string | null
         schedule_cron: string | null
         system_prompt: string | null
+        backbone_connection_id: string | null
     }>
 ): Promise<{ success?: boolean; step?: BoardStep; error?: string }> {
     const headers = await getAuthHeaders()

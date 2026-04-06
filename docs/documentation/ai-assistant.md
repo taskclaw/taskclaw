@@ -17,6 +17,10 @@ graph TD
     AS -->|Context Injection| LC[LangChain Agent]
     LC -->|Tool Call| ST[SQL Tool]
     ST -->|RPC exec_sql| DB[(Supabase DB)]
+    LC -->|Avatar Tool Call| AT[Avatar Tools]
+    AT -->|ElevenLabs API| EL[ElevenLabs]
+    AT -->|Replicate API| RP[Replicate]
+    AT -->|Supabase Query| DB
 ```
 
 ### Key Principles
@@ -24,6 +28,7 @@ graph TD
 2.  **Stateless API**: Conversations are stored in DB, but each request sends full necessary context.
 3.  **Secure By Design**: The SQL Tool is explicitly restricted to `SELECT` (Read-Only) statements.
 4.  **OpenRouter Compatible**: Configured to work with any model via OpenAI-compatible API.
+5.  **Conditional Tool Loading**: Avatar tools (ElevenLabs, Replicate) are only injected when `accountId` is present and the account has active integration connections.
 
 ---
 
@@ -34,11 +39,19 @@ graph TD
 ```text
 backend/src/ai-assistant/
 ├── ai-assistant.module.ts      # NestJS Module config
-├── ai-assistant.controller.ts  # HTTP Endpoints (GET/POST/DELETE)
+├── ai-assistant.controller.ts  # HTTP Endpoints (GET/POST/DELETE/PATCH)
 ├── ai-assistant.service.ts     # Core LangGraph Agent logic
-├── system-prompt.ts            # Base instructions & Context injection
+├── system-prompt.ts            # System prompts (default, field_assistant, avatar)
+├── services/
+│   └── embedding.service.ts   # Embedding generation service
 └── tools/
-    └── sql.tool.ts             # Zod-schema definition for SQL execution
+    ├── sql.tool.ts             # Zod-schema definition for SQL execution
+    ├── elevenlabs-tts.tool.ts          # ElevenLabs text-to-speech
+    ├── elevenlabs-clone-voice.tool.ts  # ElevenLabs Instant Voice Cloning
+    ├── replicate-predict.tool.ts       # Replicate SadTalker prediction
+    ├── replicate-poll.tool.ts          # Replicate prediction status polling
+    ├── upload-to-storage.tool.ts       # Replicate Files API upload
+    └── query-board-tasks.tool.ts       # TaskClaw board task queries
 ```
 
 ### 2. The Service Pattern (`AiAssistantService`)
@@ -71,7 +84,46 @@ if (user) {
 
 > **Why?** Postgres session variables (like `current_setting`) are not reliable in this stateless agent environment. Always force the LLM to use the explicit UUID in its SQL queries.
 
-### 4. Adding New Tools
+### 4. The Chat Endpoint
+
+`POST /ai-assistant/chat`
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `message` | `string` | Yes | The user's message |
+| `history` | `array` | Yes | Prior conversation turns |
+| `conversationId` | `string` | No | Resume an existing conversation |
+| `systemPromptKey` | `string` | No | `"default"`, `"field_assistant"`, or `"avatar"` |
+| `accountId` | `string` | No | Account UUID — enables avatar tools when present |
+
+When `accountId` is provided, the service calls `getAvatarTools()` which checks `integration_connections` for active `elevenlabs` and `replicate` connections under that account. If found, credentials are decrypted and the corresponding tools are injected into the agent alongside the standard SQL/semantic-search tools.
+
+### 5. System Prompt Keys
+
+| Key | Prompt | Use Case |
+|---|---|---|
+| `default` | `DEFAULT_SYSTEM_PROMPT` | General DB assistant (read-only SQL + semantic search) |
+| `field_assistant` | `FIELD_ASSISTANT_PROMPT` | Inline writing assistant for form fields |
+| `avatar` | `AVATAR_ASSISTANT_PROMPT` | Digital avatar generation with voice + lipsync tools |
+
+The `avatar` key activates a specialized prompt that instructs the agent to chain: voice cloning → TTS → storage upload → Replicate prediction → poll. It expects `accountId` to also be present so the avatar tools are loaded.
+
+### 6. Avatar Tools (`getAvatarTools`)
+
+Avatar tools are loaded conditionally inside `AiAssistantService.getAvatarTools(accountId)`. This method:
+
+1. Always pushes `query_board_tasks` (uses `supabaseAdmin`, no external credentials needed).
+2. Queries `integration_definitions` to resolve definition IDs for slugs `elevenlabs` and `replicate`.
+3. Looks up active `integration_connections` for the given `accountId`.
+4. Decrypts stored credentials inline using `decrypt()` (no IntegrationsModule import — circular dep eliminated).
+5. Pushes ElevenLabs tools (`elevenlabs_tts`, `elevenlabs_clone_voice`) if an active ElevenLabs connection exists.
+6. Pushes Replicate tools (`upload_to_storage`, `replicate_predict`, `replicate_poll`) if an active Replicate connection exists.
+
+> **Architecture note**: `AiAssistantModule` no longer imports `IntegrationsModule`. Credential decryption is handled directly via `supabaseAdmin.getClient()` + `decrypt()`, which eliminated the circular dependency between the two modules.
+
+### 7. Adding New Tools
 
 Tools are defined using `DynamicStructuredTool` from LangChain.
 
@@ -97,6 +149,71 @@ export const emailTool = new DynamicStructuredTool({
 Then register it in `ai-assistant.service.ts`:
 ```typescript
 const tools = [sqlTool, emailTool]; // Add to array
+```
+
+---
+
+## 🛠️ AI Tools
+
+The following tools are available to the agent. Which tools are active depends on the `systemPromptKey` and whether `accountId` is present with valid integration connections.
+
+### Core Tools (always available)
+
+| Tool | Source File | Description |
+|---|---|---|
+| `perform_sql_query` | `sql.tool.ts` | Run read-only SELECT queries against the Supabase DB |
+| `semantic_search` | _(embedding service)_ | Vector similarity search across projects, users, messages |
+
+### Avatar Tools (require `accountId` + integration credentials)
+
+| Tool | Source File | Requires Integration |
+|---|---|---|
+| `query_board_tasks` | `query-board-tasks.tool.ts` | None (uses supabaseAdmin) |
+| `elevenlabs_tts` | `elevenlabs-tts.tool.ts` | ElevenLabs |
+| `elevenlabs_clone_voice` | `elevenlabs-clone-voice.tool.ts` | ElevenLabs |
+| `upload_to_storage` | `upload-to-storage.tool.ts` | Replicate |
+| `replicate_predict` | `replicate-predict.tool.ts` | Replicate |
+| `replicate_poll` | `replicate-poll.tool.ts` | Replicate |
+
+#### `query_board_tasks`
+Queries tasks from a TaskClaw board for the current account. Accepts `board_name` (required, partial ILIKE match), `step_name` (optional, filters by board column), and `search_query` (optional, filters by title). Returns up to 50 tasks with their `input_fields`, `output_fields`, `metadata`, and step name.
+
+#### `elevenlabs_tts`
+Converts text to speech using ElevenLabs `eleven_multilingual_v2`. Inputs: `text`, `voice_id` (default: Rachel `21m00Tcm4TlvDq8ikWAM`), `stability` (0-1), `similarity_boost` (0-1), `style` (0-1). Returns `{ audio_base64, content_type, char_count }`.
+
+#### `elevenlabs_clone_voice`
+Clones a voice via ElevenLabs Instant Voice Cloning. Inputs: `name`, `audio_url` (public MP3/WAV, 30s–3min recommended), `description` (optional). Returns `{ voice_id, name }`. Requires the `create_instant_voice_clone` permission on the API key.
+
+#### `upload_to_storage`
+Uploads a base64-encoded file to the Replicate Files API to get a public URL. Inputs: `audio_base64`, `file_name`, `content_type` (default `audio/mpeg`). Returns `{ url, file_id }`. Use this after `elevenlabs_tts` before passing audio to `replicate_predict`.
+
+#### `replicate_predict`
+Starts a SadTalker talking-head lip-sync prediction on Replicate. Inputs: `audio_url` (public URL), `image_url` (face image), `still_mode` (default `true`), `use_enhancer` (default `false`). Returns `{ prediction_id, status }`. Estimated cost ~$0.05/video.
+
+#### `replicate_poll`
+Polls a Replicate prediction by ID until it completes. Input: `prediction_id`. Returns `{ status, output, error }`. Call repeatedly after `replicate_predict` until `status` is `"succeeded"` or `"failed"`. When succeeded, `output` contains the video URL.
+
+### Typical Avatar Generation Flow
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant EL as ElevenLabs
+    participant Rep as Replicate
+
+    Agent->>EL: elevenlabs_clone_voice(audio_url, name)
+    EL-->>Agent: { voice_id }
+    Agent->>EL: elevenlabs_tts(text, voice_id)
+    EL-->>Agent: { audio_base64 }
+    Agent->>Rep: upload_to_storage(audio_base64, "voice.mp3")
+    Rep-->>Agent: { url: "https://..." }
+    Agent->>Rep: replicate_predict(audio_url, image_url)
+    Rep-->>Agent: { prediction_id }
+    loop Poll until done
+        Agent->>Rep: replicate_poll(prediction_id)
+        Rep-->>Agent: { status, output }
+    end
+    Agent-->>User: Video URL
 ```
 
 ---
@@ -171,6 +288,23 @@ AI_MODEL=anthropic/claude-3-haiku
 Currently, the backend returns a full JSON response. To support streaming:
 1.  Update Controller to return `See setStream(true)` on LangChain.
 2.  Change `actions.ts` to handle `ReadableStream`.
+
+### Scenario D: I want to use the avatar tools
+1.  Connect ElevenLabs and Replicate integrations in your account settings.
+2.  Pass `accountId` and `systemPromptKey: "avatar"` in the chat request body.
+3.  The agent will have access to `elevenlabs_tts`, `elevenlabs_clone_voice`, `upload_to_storage`, `replicate_predict`, `replicate_poll`, and `query_board_tasks`.
+
+```bash
+curl -X POST http://localhost:3003/ai-assistant/chat \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Generate a talking video of Fernando using voice sample at https://example.com/sample.mp3 and face image at https://example.com/face.jpg",
+    "history": [],
+    "systemPromptKey": "avatar",
+    "accountId": "YOUR_ACCOUNT_UUID"
+  }'
+```
 
 ---
 
@@ -471,12 +605,18 @@ async createBlogPost(title: string, content: string) {
 backend/src/ai-assistant/
 ├── ai-assistant.module.ts       # Module registration
 ├── ai-assistant.controller.ts   # HTTP endpoints
-├── ai-assistant.service.ts      # Core agent logic
-├── system-prompt.ts             # System prompts & instructions
+├── ai-assistant.service.ts      # Core agent logic + getAvatarTools()
+├── system-prompt.ts             # System prompts (default, field_assistant, avatar)
 ├── services/
 │   └── embedding.service.ts     # Embedding generation service
 └── tools/
-    └── sql.tool.ts              # Tool definitions (optional)
+    ├── sql.tool.ts                     # Read-only SQL execution
+    ├── elevenlabs-tts.tool.ts          # ElevenLabs TTS
+    ├── elevenlabs-clone-voice.tool.ts  # ElevenLabs voice cloning
+    ├── replicate-predict.tool.ts       # Replicate SadTalker prediction
+    ├── replicate-poll.tool.ts          # Replicate prediction polling
+    ├── upload-to-storage.tool.ts       # Replicate Files API upload
+    └── query-board-tasks.tool.ts       # TaskClaw board task queries
 ```
 
 **Key Principles:**
@@ -710,7 +850,10 @@ this.logger.debug(`Vector search returned ${results.length} results`)
 - [x] Auto-embedding on CRUD operations
 - [x] Admin endpoints for backfilling
 
-**Phase 2 - Planned:**
+**Phase 2 - Planned/In Progress:**
+- [x] Avatar tools: ElevenLabs TTS + voice cloning, Replicate SadTalker lip-sync
+- [x] Conditional tool loading based on `accountId` + integration credentials
+- [x] `avatar` system prompt key for digital avatar workflows
 - [ ] Streaming responses (update controller + frontend)
 - [ ] Multi-turn conversation context compression
 - [ ] RAG with uploaded documents

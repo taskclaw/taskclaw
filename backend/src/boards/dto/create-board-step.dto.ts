@@ -24,4 +24,8 @@ export class CreateBoardStepDto {
   @IsOptional()
   @IsString()
   linked_category_id?: string;
+
+  @IsOptional()
+  @IsString()
+  backbone_connection_id?: string;
 }

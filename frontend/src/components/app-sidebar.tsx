@@ -7,6 +7,7 @@ import {
     Settings2,
     MessageCircle,
     Brain,
+    BrainCircuit,
     Plug,
     Bot,
     Import,
@@ -84,6 +85,10 @@ const data = {
                         url: "/dashboard/settings/billing",
                     },
                 ] : []),
+                {
+                    title: "AI Backbones",
+                    url: "/dashboard/settings/backbones",
+                },
                 {
                     title: "OpenClaw Settings",
                     url: "/dashboard/settings/ai-provider",

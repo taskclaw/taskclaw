@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
+import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { EmbeddingService } from './services/embedding.service';
 import { SYSTEM_PROMPT, PROMPTS } from './system-prompt';
 import { ChatOpenAI } from '@langchain/openai';
@@ -13,6 +14,13 @@ import {
   AIMessage,
   ToolMessage,
 } from '@langchain/core/messages';
+import { decrypt } from '../common/utils/encryption.util';
+import { createElevenLabsTtsTool } from './tools/elevenlabs-tts.tool';
+import { createElevenLabsCloneVoiceTool } from './tools/elevenlabs-clone-voice.tool';
+import { createUploadToStorageTool } from './tools/upload-to-storage.tool';
+import { createReplicatePredictTool } from './tools/replicate-predict.tool';
+import { createReplicatePollTool } from './tools/replicate-poll.tool';
+import { createQueryBoardTasksTool } from './tools/query-board-tasks.tool';
 
 @Injectable()
 export class AiAssistantService {
@@ -22,6 +30,7 @@ export class AiAssistantService {
   constructor(
     private configService: ConfigService,
     private supabaseService: SupabaseService,
+    private supabaseAdmin: SupabaseAdminService,
     private embeddingService: EmbeddingService,
   ) {
     const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
@@ -55,7 +64,7 @@ export class AiAssistantService {
   async chat(
     message: string,
     history: any[] = [],
-    user?: { id: string; email?: string },
+    user?: { id: string; email?: string; accountId?: string },
     conversationId?: string,
     systemPromptKey: string = 'default',
   ) {
@@ -242,14 +251,19 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
         },
       });
 
-      // 5. Create LangGraph Agent
-      const tools = [sqlTool, semanticSearchTool];
+      // 5. Load avatar tools if accountId is available
+      const avatarTools = user?.accountId
+        ? await this.getAvatarTools(user.accountId)
+        : [];
+
+      // 6. Create LangGraph Agent
+      const tools = [sqlTool, semanticSearchTool, ...avatarTools];
       const agent = createReactAgent({
         llm: this.model,
         tools,
       });
 
-      // 6. Convert History to LangChain Messages
+      // 7. Convert History to LangChain Messages
       const langchainHistory = history.map((msg) => {
         if (msg.role === 'user') return new HumanMessage(msg.content);
         if (msg.role === 'assistant') return new AIMessage(msg.content);
@@ -265,7 +279,7 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
         ],
       };
 
-      // 7. Run Agent
+      // 8. Run Agent
       // Using invoke to get the final state
       const result = await agent.invoke(inputs);
       const formattingMessages = result.messages;
@@ -275,7 +289,7 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
           ? lastMessage.content
           : JSON.stringify(lastMessage.content);
 
-      // 8. Save Agent Execution Steps (Optional but good for debugging/audit)
+      // 9. Save Agent Execution Steps (Optional but good for debugging/audit)
       // We'll iterate through new messages and save them to Supabase
       // Note: This is an approximation. LangGraph returns full history.
       // We really only want to save the *new* messages (tool calls, tool outputs, final answer).
@@ -346,6 +360,101 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
           'Sorry, I encountered an error while processing your request.',
       };
     }
+  }
+
+  private async getAvatarTools(accountId: string): Promise<DynamicStructuredTool[]> {
+    const tools: DynamicStructuredTool[] = [];
+
+    try {
+      const client = this.supabaseAdmin.getClient();
+
+      // Always include the board tasks query tool
+      tools.push(createQueryBoardTasksTool(this.supabaseAdmin, accountId));
+
+      // Resolve definition IDs for elevenlabs and replicate slugs
+      const { data: defRows } = await client
+        .from('integration_definitions')
+        .select('id, slug')
+        .in('slug', ['elevenlabs', 'replicate']);
+
+      const defMap: Record<string, string> = {};
+      for (const def of defRows ?? []) {
+        defMap[def.slug] = def.id;
+      }
+
+      // Find ElevenLabs connection
+      const elevenLabsDefId = defMap['elevenlabs'];
+      let elevenLabsConn: { id: string } | null = null;
+      if (elevenLabsDefId) {
+        const { data: rows } = await client
+          .from('integration_connections')
+          .select('id')
+          .eq('account_id', accountId)
+          .eq('definition_id', elevenLabsDefId)
+          .eq('status', 'active')
+          .limit(1);
+        elevenLabsConn = rows?.[0] ?? null;
+      }
+
+      // Find Replicate connection
+      const replicateDefId = defMap['replicate'];
+      let replicateConn: { id: string } | null = null;
+      if (replicateDefId) {
+        const { data: rows } = await client
+          .from('integration_connections')
+          .select('id')
+          .eq('account_id', accountId)
+          .eq('definition_id', replicateDefId)
+          .eq('status', 'active')
+          .limit(1);
+        replicateConn = rows?.[0] ?? null;
+      }
+
+      if (elevenLabsConn) {
+        const { data: connRow } = await client
+          .from('integration_connections')
+          .select('credentials')
+          .eq('id', elevenLabsConn.id)
+          .single();
+        if (connRow?.credentials) {
+          try {
+            const creds = JSON.parse(decrypt(connRow.credentials));
+            const apiKey = creds['api_key'] || creds['apiKey'] || '';
+            if (apiKey) {
+              tools.push(createElevenLabsTtsTool(apiKey));
+              tools.push(createElevenLabsCloneVoiceTool(apiKey));
+            }
+          } catch (err: any) {
+            this.logger.warn(`Failed to decrypt ElevenLabs credentials: ${err.message}`);
+          }
+        }
+      }
+
+      if (replicateConn) {
+        const { data: connRow } = await client
+          .from('integration_connections')
+          .select('credentials')
+          .eq('id', replicateConn.id)
+          .single();
+        if (connRow?.credentials) {
+          try {
+            const creds = JSON.parse(decrypt(connRow.credentials));
+            const apiKey = creds['api_key'] || creds['apiKey'] || '';
+            if (apiKey) {
+              tools.push(createUploadToStorageTool(apiKey));
+              tools.push(createReplicatePredictTool(apiKey));
+              tools.push(createReplicatePollTool(apiKey));
+            }
+          } catch (err: any) {
+            this.logger.warn(`Failed to decrypt Replicate credentials: ${err.message}`);
+          }
+        }
+      }
+    } catch (e: any) {
+      this.logger.warn(`getAvatarTools failed for account ${accountId}: ${e.message}`);
+    }
+
+    return tools;
   }
 
   async getUserConversations(userId: string) {

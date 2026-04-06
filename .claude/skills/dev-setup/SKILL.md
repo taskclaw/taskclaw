@@ -386,7 +386,7 @@ curl -s -X POST http://localhost:7431/auth/v1/admin/users \
   -H "apikey: <ANON_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "admin@ott.dev",
+    "email": "admin@taskclaw.local",
     "password": "admin123456",
     "email_confirm": true,
     "user_metadata": {"full_name": "Super Admin"},
@@ -400,7 +400,7 @@ Extract the user `id` from the response, then create the profile and account:
 # 2. Create public.users profile
 docker compose exec db psql -U postgres -c "
 INSERT INTO public.users (id, email, name, status)
-VALUES ('<USER_ID>', 'admin@ott.dev', 'Super Admin', 'active')
+VALUES ('<USER_ID>', 'admin@taskclaw.local', 'Super Admin', 'active')
 ON CONFLICT (id) DO UPDATE SET name = 'Super Admin', status = 'active';
 "
 
@@ -484,7 +484,7 @@ And the login credentials:
 | | |
 |---|---|
 | **URL** | http://localhost:3002 |
-| **Email** | `admin@ott.dev` |
+| **Email** | `admin@taskclaw.local` |
 | **Password** | `admin123456` |
 | **Role** | `super_admin` |
 

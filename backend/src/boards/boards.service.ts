@@ -157,6 +157,7 @@ export class BoardsService {
         is_favorite: dto.is_favorite || false,
         default_category_id: dto.default_category_id || null,
         orchestrator_category_id: dto.orchestrator_category_id || null,
+        backbone_connection_id: dto.default_backbone_connection_id || null,
       })
       .select()
       .single();
@@ -215,6 +216,12 @@ export class BoardsService {
     await this.findOne(userId, accountId, boardId);
 
     const updateData: any = { ...dto };
+    // Map DTO field name to DB column name (F022)
+    if ('default_backbone_connection_id' in updateData) {
+      updateData.backbone_connection_id =
+        updateData.default_backbone_connection_id;
+      delete updateData.default_backbone_connection_id;
+    }
     if (dto.is_archived === true) {
       updateData.archived_at = new Date().toISOString();
     } else if (dto.is_archived === false) {
@@ -293,6 +300,7 @@ export class BoardsService {
         installed_version: original.installed_version,
         default_category_id: original.default_category_id || null,
         orchestrator_category_id: original.orchestrator_category_id || null,
+        backbone_connection_id: original.backbone_connection_id || null,
       })
       .select()
       .single();
@@ -311,6 +319,7 @@ export class BoardsService {
         position: step.position,
         color: step.color,
         linked_category_id: step.linked_category_id || null,
+        backbone_connection_id: step.backbone_connection_id || null,
         trigger_type: step.trigger_type || 'on_entry',
         ai_first: step.ai_first || false,
         input_schema: step.input_schema || [],
@@ -410,6 +419,24 @@ export class BoardsService {
       categoryIdToSlug[cat.id] = cat.slug;
     }
 
+    // F024: Resolve backbone connection IDs to slugs for export
+    const backboneIds = [
+      board.backbone_connection_id,
+      ...(board.board_steps || []).map((s: any) => s.backbone_connection_id),
+    ].filter(Boolean);
+    const backboneIdToSlug: Record<string, string> = {};
+    if (backboneIds.length > 0) {
+      const { data: conns } = await client
+        .from('backbone_connections')
+        .select('id, backbone_type')
+        .in('id', [...new Set(backboneIds)]);
+      if (conns) {
+        for (const c of conns) {
+          backboneIdToSlug[c.id] = c.backbone_type;
+        }
+      }
+    }
+
     const manifest: any = {
       manifest_version: '1.0',
       id: board.name.toLowerCase().replace(/\s+/g, '-'),
@@ -423,6 +450,9 @@ export class BoardsService {
       orchestrator_category_id: board.orchestrator_category_id || null,
       orchestrator_category_slug: board.orchestrator_category_id
         ? categoryIdToSlug[board.orchestrator_category_id] || null
+        : null,
+      default_backbone: board.backbone_connection_id
+        ? backboneIdToSlug[board.backbone_connection_id] || null
         : null,
       version: '1.0.0',
       icon: board.icon,
@@ -441,6 +471,9 @@ export class BoardsService {
           ? categoryIdToSlug[step.linked_category_id] || null
           : null,
         linked_category_name: step.linked_category?.name || null,
+        backbone_override: step.backbone_connection_id
+          ? backboneIdToSlug[step.backbone_connection_id] || null
+          : null,
         trigger_type: step.trigger_type || 'on_entry',
         ai_first: step.ai_first || false,
         system_prompt: step.system_prompt || null,

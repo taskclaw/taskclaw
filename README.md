@@ -250,3 +250,7 @@ TaskClaw is licensed under the [Sustainable Use License](./LICENSE.md) — free 
 personal and internal business use. Enterprise license required for providing
 hosted services. Files in `backend/src/ee/` are governed by a separate
 [Enterprise License](./LICENSE_EE.md).
+
+## Author
+
+Created by [DevOtts](https://github.com/DevOtts).

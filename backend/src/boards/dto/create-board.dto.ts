@@ -66,6 +66,10 @@ export class CreateBoardDto {
   orchestrator_category_id?: string;
 
   @IsOptional()
+  @IsUUID()
+  default_backbone_connection_id?: string;
+
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => InlineStepDto)

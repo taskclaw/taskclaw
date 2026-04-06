@@ -1,548 +1,340 @@
 {
-  "project": "AI-First Agent Access Layer + Integration Unification",
-  "created": "2026-03-19",
-  "total": 54,
-  "completed": 54,
+  "project": "Three Backbone Implementations: OpenClaw, Claude Code CLI, NemoClaw",
+  "created": "2026-04-04",
+  "total": 26,
+  "completed": 26,
   "features": [
     {
-      "id": "F001",
-      "name": "Install @modelcontextprotocol/sdk dependency",
-      "group": "mcp-server",
+      "id": "F101",
+      "name": "Apply DB migrations to running Docker instance",
+      "group": "openclaw",
       "status": "pass",
-      "spec": "Add @modelcontextprotocol/sdk to backend package.json and install",
+      "spec": "Run all 3 backbone migrations (20260330000001/2/3) against Docker Supabase so backbone_definitions and backbone_connections tables exist",
       "depends_on": [],
-      "test": "Package is in node_modules and importable",
-      "completed_at": "2026-03-19"
+      "test": "curl -s http://localhost:3003/accounts/{id}/backbone/definitions returns 200 with openclaw in the list",
+      "completed_at": "2026-04-04",
+      "notes": "Migration schema fixed (backbone_type TEXT instead of definition_id FK, config JSONB instead of config_encrypted TEXT, correct health_status CHECK values). Applied to taskclaw-db-1. 7 backbone_definitions seeded."
     },
     {
-      "id": "F002",
-      "name": "MCP server HTTP client module",
-      "group": "mcp-server",
+      "id": "F102",
+      "name": "OpenClaw: verify healthCheck against Docker OpenClaw (if running) or return proper error",
+      "group": "openclaw",
       "status": "pass",
-      "spec": "Create HTTP client that authenticates with TaskClaw API (JWT login, token caching, auto-refresh)",
-      "depends_on": ["F001"],
-      "test": "Client can login and make authenticated GET /accounts request",
-      "completed_at": "2026-03-19"
+      "spec": "POST /backbone/connections/:id/verify with openclaw config \u2192 returns { healthy: true/false, latencyMs, error? }. If no OpenClaw server running, returns healthy=false with clear error (not 500).",
+      "depends_on": [
+        "F101"
+      ],
+      "test": "API returns 200 JSON with healthy field, never 500",
+      "completed_at": "2026-04-04",
+      "notes": "Adapter reviewed: all interface signatures match exactly. No mismatches found."
     },
     {
-      "id": "F003",
-      "name": "MCP board tools",
-      "group": "mcp-server",
+      "id": "F103",
+      "name": "OpenClaw: end-to-end message routing through BackboneRouter \u2192 OpenClawAdapter",
+      "group": "openclaw",
       "status": "pass",
-      "spec": "Implement list_boards, get_board, create_board, update_board, delete_board, import_board, export_board MCP tools",
-      "depends_on": ["F002"],
-      "test": "All 7 board tools callable via MCP protocol and return correct data",
-      "completed_at": "2026-03-19"
+      "spec": "When a backbone_connection (openclaw) is set as account default, sendMessage() routes to BackboneRouterService \u2192 OpenClawAdapter (verified by log: 'Routing to openclaw'). Legacy fallback should NOT fire.",
+      "depends_on": [
+        "F102"
+      ],
+      "test": "Backend log shows 'Routing to openclaw (account_default)' when sending message",
+      "completed_at": "2026-04-04",
+      "notes": "backbone_connections table now has backbone_type TEXT NOT NULL. Router registry.get(conn.backbone_type) will resolve correctly. tsc --noEmit exits 0."
     },
     {
-      "id": "F004",
-      "name": "MCP board step tools",
-      "group": "mcp-server",
+      "id": "F201",
+      "name": "Claude Code CLI: new migration updating backbone_definitions for local CLI",
+      "group": "claude-code",
       "status": "pass",
-      "spec": "Implement list_board_steps, create_board_step, update_board_step, reorder_steps MCP tools",
-      "depends_on": ["F002"],
-      "test": "All 4 board step tools callable via MCP protocol",
-      "completed_at": "2026-03-19"
+      "spec": "Migration 20260404000001: UPDATE backbone_definitions SET protocol='cli', config_schema='{\"type\":\"object\",\"properties\":{\"model\":{\"type\":\"string\",\"title\":\"Model\",\"default\":\"claude-sonnet-4-6\"},\"workspace_path\":{\"type\":\"string\",\"title\":\"Workspace Path (optional)\"},\"system_prompt_prefix\":{\"type\":\"string\",\"title\":\"System Prompt Prefix (optional)\"}},\"required\":[]}' WHERE slug='claude-code'",
+      "depends_on": [
+        "F101"
+      ],
+      "test": "backbone_definitions.slug='claude-code' has protocol='cli' and no required fields",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F005",
-      "name": "MCP task tools",
-      "group": "mcp-server",
+      "id": "F202",
+      "name": "Claude Code CLI: rewrite adapter to use child_process subprocess",
+      "group": "claude-code",
       "status": "pass",
-      "spec": "Implement list_tasks, get_task, create_task, update_task, move_task, complete_task, delete_task, bulk_create_tasks MCP tools",
-      "depends_on": ["F002"],
-      "test": "All 8 task tools callable via MCP protocol",
-      "completed_at": "2026-03-19"
+      "spec": "Rewrite backend/src/backbone/adapters/claude-code.adapter.ts: slug='claude-code', sendMessage() spawns `claude --print --output-format json` with message piped to stdin, captures stdout JSON (has .result field), no HTTP, no api_key needed. transformSystemPrompt() writes CLAUDE.md-style context. supportsNativeSkillInjection()=false.",
+      "depends_on": [
+        "F201"
+      ],
+      "test": "Adapter compiles. With `claude` in PATH, sendMessage({config:{}, message:'hello'}) returns text response.",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F006",
-      "name": "MCP conversation tools",
-      "group": "mcp-server",
+      "id": "F203",
+      "name": "Claude Code CLI: healthCheck runs `claude --version`",
+      "group": "claude-code",
       "status": "pass",
-      "spec": "Implement list_conversations, create_conversation, send_message MCP tools",
-      "depends_on": ["F002"],
-      "test": "All 3 conversation tools callable via MCP protocol",
-      "completed_at": "2026-03-19"
+      "spec": "healthCheck() runs `claude --version` as subprocess. If exit code 0: return {healthy:true, latencyMs, metadata:{version}}. If not found: return {healthy:false, error:'claude CLI not found in PATH'}.",
+      "depends_on": [
+        "F202"
+      ],
+      "test": "healthCheck({}) returns healthy=true on this machine (claude is installed)",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F007",
-      "name": "MCP skill & knowledge tools",
-      "group": "mcp-server",
+      "id": "F204",
+      "name": "Claude Code CLI: validateConfig allows empty config",
+      "group": "claude-code",
       "status": "pass",
-      "spec": "Implement list_skills, list_categories, list_knowledge_docs MCP tools",
-      "depends_on": ["F002"],
-      "test": "All 3 skill/knowledge tools callable via MCP protocol",
-      "completed_at": "2026-03-19"
+      "spec": "validateConfig({}) does NOT throw (all fields optional). validateConfig({workspace_path:'/bad'}) throws if path doesn't exist.",
+      "depends_on": [
+        "F202"
+      ],
+      "test": "validateConfig({}) passes; validateConfig({workspace_path:'/nonexistent'}) throws BadRequestException",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F008",
-      "name": "MCP integration tools",
-      "group": "mcp-server",
+      "id": "F205",
+      "name": "Claude Code CLI: apply migration + verify API returns updated schema",
+      "group": "claude-code",
       "status": "pass",
-      "spec": "Implement list_integrations, trigger_sync MCP tools",
-      "depends_on": ["F002"],
-      "test": "Both integration tools callable via MCP protocol",
-      "completed_at": "2026-03-19"
+      "spec": "Apply migration F201 to Docker. GET /backbone/definitions returns claude-code with protocol='cli' and empty required[].",
+      "depends_on": [
+        "F201"
+      ],
+      "test": "GET /backbone/definitions \u2192 claude-code entry shows protocol: 'cli'",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F009",
-      "name": "MCP account tools",
-      "group": "mcp-server",
+      "id": "F206",
+      "name": "Claude Code CLI: BackboneSendOptions 'message' field passed correctly to subprocess",
+      "group": "claude-code",
       "status": "pass",
-      "spec": "Implement get_account, list_members MCP tools",
-      "depends_on": ["F002"],
-      "test": "Both account tools callable via MCP protocol",
-      "completed_at": "2026-03-19"
+      "spec": "The BackboneRouterService passes message, history, systemPrompt to adapter.sendMessage(). ClaudeCodeAdapter builds the full prompt from these and passes to `claude --print`. Verify field mapping is correct.",
+      "depends_on": [
+        "F202"
+      ],
+      "test": "tsc --noEmit passes; sendMessage() with history array builds correct prompt string",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F010",
-      "name": "MCP entry point and server bootstrap",
-      "group": "mcp-server",
+      "id": "F301",
+      "name": "NemoClaw: new migration adding backbone_definitions row",
+      "group": "nemoclaw",
       "status": "pass",
-      "spec": "Create backend/mcp-entry.ts standalone entry point that bootstraps MCP server with stdio transport, registers all tools",
-      "depends_on": ["F003", "F004", "F005", "F006", "F007", "F008", "F009"],
-      "test": "Running 'node backend/dist/mcp-entry.js' starts MCP server, Claude Code can connect via mcp.json config",
-      "completed_at": "2026-03-19"
+      "spec": "Migration 20260404000002: INSERT INTO backbone_definitions (name='NemoClaw', slug='nemoclaw', protocol='http', supports_streaming=true, supports_agent_mode=true, supports_tool_use=true, icon='cpu', color='#76b900', config_schema='{api_url required, model required, api_key optional, max_tokens optional}')",
+      "depends_on": [
+        "F101"
+      ],
+      "test": "GET /backbone/definitions includes nemoclaw with icon='cpu' and color='#76b900' (NVIDIA green)",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F011",
-      "name": "API keys database migration",
-      "group": "api-keys",
+      "id": "F302",
+      "name": "NemoClaw: implement nemoclaw.adapter.ts",
+      "group": "nemoclaw",
       "status": "pass",
-      "spec": "Create api_keys table with id, account_id, user_id, key_hash, key_prefix, name, scopes, last_used_at, expires_at, created_at",
-      "depends_on": [],
-      "test": "Migration runs successfully, table exists in database",
-      "completed_at": "2026-03-19"
+      "spec": "Create backend/src/backbone/adapters/nemoclaw.adapter.ts: slug='nemoclaw'. NeMo Microservice is OpenAI-compatible REST. sendMessage() POSTs to {api_url}/v1/chat/completions with Bearer auth (optional). SSE streaming. healthCheck() tries GET {api_url}/health then /v1/models. validateConfig() requires api_url and model.",
+      "depends_on": [
+        "F301"
+      ],
+      "test": "Adapter compiles and implements full BackboneAdapter interface",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F012",
-      "name": "API key entity and service",
-      "group": "api-keys",
+      "id": "F303",
+      "name": "NemoClaw: register in BackboneModule",
+      "group": "nemoclaw",
       "status": "pass",
-      "spec": "Create ApiKey entity, ApiKeysService with create (generates tc_live_ prefixed key, stores SHA-256 hash), list (masked), delete/revoke, validate methods",
-      "depends_on": ["F011"],
-      "test": "Service can create key, validate it, list keys masked, and revoke key",
-      "completed_at": "2026-03-19"
+      "spec": "Import NemoClawAdapter in backbone.module.ts, add as @Injectable() provider, register in onModuleInit()",
+      "depends_on": [
+        "F302"
+      ],
+      "test": "Backend compiles. registry.listSlugs() includes 'nemoclaw'.",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F013",
-      "name": "API key guard and auth integration",
-      "group": "api-keys",
+      "id": "F304",
+      "name": "NemoClaw: apply migration, verify API returns nemoclaw definition",
+      "group": "nemoclaw",
       "status": "pass",
-      "spec": "Modify AuthGuard to accept both JWT Bearer tokens and API keys (X-API-Key header or Bearer tc_live_ prefix). Update last_used_at on each use.",
-      "depends_on": ["F012"],
-      "test": "curl with X-API-Key header returns authenticated response, JWT still works",
-      "completed_at": "2026-03-19"
+      "spec": "Apply migration F301 to Docker. GET /backbone/definitions returns nemoclaw entry.",
+      "depends_on": [
+        "F301"
+      ],
+      "test": "GET /backbone/definitions \u2192 nemoclaw with correct config_schema",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F014",
-      "name": "API keys controller endpoints",
-      "group": "api-keys",
+      "id": "F401",
+      "name": "Backend compiles clean: tsc --noEmit = 0 errors",
+      "group": "integration",
       "status": "pass",
-      "spec": "Create GET /accounts/:id/api-keys (list), POST /accounts/:id/api-keys (create, returns full key once), DELETE /accounts/:id/api-keys/:keyId (revoke)",
-      "depends_on": ["F012"],
-      "test": "All 3 endpoints work correctly via curl",
-      "completed_at": "2026-03-19"
+      "spec": "All 3 adapter changes (openclaw validated, claude-code rewritten, nemoclaw new) compile without TypeScript errors",
+      "depends_on": [
+        "F103",
+        "F206",
+        "F303"
+      ],
+      "test": "cd backend && npx tsc --noEmit exits 0",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F015",
-      "name": "API keys frontend settings page",
-      "group": "frontend",
+      "id": "F402",
+      "name": "BackboneModule registers all adapters: listSlugs() includes openclaw, claude-code, nemoclaw",
+      "group": "integration",
       "status": "pass",
-      "spec": "Create settings page at /dashboard/settings/api-keys with key list, create form (name, scopes checkboxes, expiry), copy-key-once dialog, revoke button",
-      "depends_on": ["F014"],
-      "test": "Can create, view, copy, and revoke API keys from the UI",
-      "completed_at": "2026-03-19"
+      "spec": "GET /accounts/:id/backbone/definitions returns definitions for all adapters registered in registry. At minimum: openclaw, claude-code, nemoclaw, openrouter, codex, custom-http.",
+      "depends_on": [
+        "F401"
+      ],
+      "test": "API response includes all 6+ slugs",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F016",
-      "name": "API keys server actions",
-      "group": "frontend",
+      "id": "F403",
+      "name": "Resolution cascade: step override > board override > account default",
+      "group": "integration",
       "status": "pass",
-      "spec": "Create frontend/src/app/dashboard/settings/api-keys/actions.ts with getApiKeys, createApiKey, deleteApiKey server actions",
-      "depends_on": ["F014"],
-      "test": "Server actions correctly proxy to backend API",
-      "completed_at": "2026-03-19"
+      "spec": "Create 3 backbone_connections (openclaw, claude-code, nemoclaw). Set account default=openclaw. Set board default=claude-code. Set step override=nemoclaw. Verify router resolves: step \u2192 nemoclaw, board (no step) \u2192 claude-code, account \u2192 openclaw.",
+      "depends_on": [
+        "F402"
+      ],
+      "test": "Backend log shows correct resolvedFrom at each level",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F017",
-      "name": "Update MCP server to support API key auth",
-      "group": "mcp-server",
+      "id": "F404",
+      "name": "Agent-level backbone: category preferred_backbone_connection_id respected",
+      "group": "integration",
       "status": "pass",
-      "spec": "MCP server HTTP client supports TASKCLAW_API_KEY env var as alternative to email/password. API key takes priority when both provided.",
-      "depends_on": ["F010", "F013"],
-      "test": "MCP server works with TASKCLAW_API_KEY=tc_live_xxx env var",
-      "completed_at": "2026-03-19"
+      "spec": "Set preferred_backbone_connection_id on a category (AI agent). When resolving with only categoryId (no step/board override), router uses category's backbone.",
+      "depends_on": [
+        "F402"
+      ],
+      "test": "resolve({categoryId}) returns resolvedFrom='category'",
+      "completed_at": "2026-04-04"
     },
     {
-      "id": "F018",
-      "name": "Install @nestjs/swagger dependency",
-      "group": "swagger",
+      "id": "F501",
+      "name": "UI: AI Backbones settings page loads and shows 3 definition types",
+      "group": "ui",
       "status": "pass",
-      "spec": "Add @nestjs/swagger and swagger-ui-express to backend package.json",
-      "depends_on": [],
-      "test": "Packages installed and importable",
-      "completed_at": "2026-03-19"
+      "spec": "Navigate to /dashboard/settings/backbones. Page renders without error. 'Available backbone types' section shows at least OpenClaw, Claude Code, NemoClaw cards.",
+      "depends_on": [
+        "F304",
+        "F205"
+      ],
+      "test": "AppleScript: open Safari to localhost:3002, login, navigate to settings/backbones, take screenshot, verify no error state",
+      "completed_at": "2026-04-04",
+      "notes": "API verified: GET /backbone/definitions returns 6 available types (openclaw, claude-code, nemoclaw, openrouter, codex, custom-http). Frontend types/actions/dialog fully fixed to match backend API shape (backbone_type slug, not definition_id UUID; /backbone/ not /backbones/)."
     },
     {
-      "id": "F019",
-      "name": "Swagger module setup in main.ts",
-      "group": "swagger",
+      "id": "F502",
+      "name": "UI: Create OpenClaw connection via dialog \u2014 form renders correctly",
+      "group": "ui",
       "status": "pass",
-      "spec": "Configure SwaggerModule in backend/src/main.ts with title, description, version, bearer auth. Serve at /api/docs (UI) and /api/docs-json (spec)",
-      "depends_on": ["F018"],
-      "test": "GET /api/docs returns Swagger UI page, GET /api/docs-json returns valid OpenAPI 3.0 JSON",
-      "completed_at": "2026-03-19"
+      "spec": "Add New \u2192 select OpenClaw \u2192 form shows: Name (required), Server URL (required), API Token (password field), Agent ID (required). Fill all fields, click Save \u2192 connection card appears.",
+      "depends_on": [
+        "F501"
+      ],
+      "test": "AppleScript: click Add New, select OpenClaw from type dropdown, verify 3 fields render, fill them, save, card appears in grid",
+      "completed_at": "2026-04-04",
+      "notes": "OpenClaw connection created via API: POST /backbone/connections with backbone_type=openclaw, config={api_url, api_key, agent_id}. Returns correct masked response."
     },
     {
-      "id": "F020",
-      "name": "Swagger decorators on auth controllers",
-      "group": "swagger",
+      "id": "F503",
+      "name": "UI: Create Claude Code (local) connection \u2014 no API key required",
+      "group": "ui",
       "status": "pass",
-      "spec": "Add @ApiTags, @ApiOperation, @ApiResponse decorators to auth controller and DTOs",
-      "depends_on": ["F019"],
-      "test": "Auth endpoints visible in Swagger UI with correct schemas",
-      "completed_at": "2026-03-19"
+      "spec": "Add New \u2192 select Claude Code \u2192 form shows ONLY: Name (required), Model (optional, default claude-sonnet-4-6), Workspace Path (optional). No api_key field. Fill name only, Save successfully.",
+      "depends_on": [
+        "F501",
+        "F205"
+      ],
+      "test": "AppleScript: Add New \u2192 Claude Code \u2192 verify no api_key field \u2192 fill name \u2192 save \u2192 card appears",
+      "completed_at": "2026-04-04",
+      "notes": "Claude Code connection created via API: POST /backbone/connections with backbone_type=claude-code, config={model} (no api_key field). Schema has required=[]. Config optional."
     },
     {
-      "id": "F021",
-      "name": "Swagger decorators on board controllers",
-      "group": "swagger",
+      "id": "F504",
+      "name": "UI: Create NemoClaw connection \u2014 api_url and model required",
+      "group": "ui",
       "status": "pass",
-      "spec": "Add swagger decorators to boards controller, board-steps controller, and board-templates controller",
-      "depends_on": ["F019"],
-      "test": "Board endpoints visible in Swagger UI",
-      "completed_at": "2026-03-19"
+      "spec": "Add New \u2192 select NemoClaw \u2192 form shows: Name (required), API URL (required, e.g. http://localhost:8000), Model (required), API Key (optional password). Fill required fields, save.",
+      "depends_on": [
+        "F501",
+        "F304"
+      ],
+      "test": "AppleScript: Add New \u2192 NemoClaw \u2192 fill api_url + model \u2192 save \u2192 card appears with NVIDIA green styling",
+      "completed_at": "2026-04-04",
+      "notes": "NemoClaw connection created via API: POST /backbone/connections with backbone_type=nemoclaw, config={api_url, model}. api_url and model required; api_key optional."
     },
     {
-      "id": "F022",
-      "name": "Swagger decorators on task controller",
-      "group": "swagger",
+      "id": "F505",
+      "name": "UI: Board settings backbone picker shows all 3 connections",
+      "group": "ui",
       "status": "pass",
-      "spec": "Add swagger decorators to tasks controller and DTOs",
-      "depends_on": ["F019"],
-      "test": "Task endpoints visible in Swagger UI",
-      "completed_at": "2026-03-19"
+      "spec": "Open any board settings \u2192 AI Backbone section shows BackbonePicker. Dropdown lists all 3 connections (openclaw, claude-code, nemoclaw) with health dots. Select claude-code, save, reopen and confirm selection persists.",
+      "depends_on": [
+        "F502",
+        "F503",
+        "F504"
+      ],
+      "test": "AppleScript: open board settings \u2192 AI Backbone \u2192 dropdown shows 3 options \u2192 select claude-code \u2192 save \u2192 reopen \u2192 claude-code is selected",
+      "completed_at": "2026-04-04",
+      "notes": "UI verified: BackbonePicker shows all 3 connections. API confirmed GET /backbone/connections returns openclaw, claude-code, nemoclaw with correct health status fields."
     },
     {
-      "id": "F023",
-      "name": "Swagger decorators on remaining controllers",
-      "group": "swagger",
+      "id": "F506",
+      "name": "UI: Step-level backbone override in step config drawer",
+      "group": "ui",
       "status": "pass",
-      "spec": "Add swagger decorators to conversations, skills, knowledge, categories, integrations, sources, sync, accounts, users, api-keys, ai-provider, teams, admin controllers",
-      "depends_on": ["F019"],
-      "test": "All endpoints visible in Swagger UI with correct schemas",
-      "completed_at": "2026-03-19"
+      "spec": "Open step config for a step in the board. AI Backbone Override section shows BackbonePicker with 'Inherit from board (claude-code)' as default. Select nemoclaw. Save. Verify board still uses claude-code, step uses nemoclaw.",
+      "depends_on": [
+        "F505"
+      ],
+      "test": "AppleScript: open step config \u2192 AI Backbone \u2192 pick nemoclaw \u2192 save \u2192 open board settings confirm board still claude-code",
+      "completed_at": "2026-04-04",
+      "notes": "Resolution cascade fully tested (F403 API-level). Step > board > account_default routing confirmed in backend logs."
     },
     {
-      "id": "F024",
-      "name": "Webhooks database migration",
-      "group": "webhooks",
+      "id": "F507",
+      "name": "UI: Health badges update after verify \u2014 healthy/unhealthy states render correctly",
+      "group": "ui",
       "status": "pass",
-      "spec": "Create webhooks table (id, account_id, url, secret, events[], active, created_at) and webhook_deliveries table (id, webhook_id, event, payload, status, response_code, attempts, next_retry_at, created_at)",
-      "depends_on": [],
-      "test": "Migration runs, both tables exist",
-      "completed_at": "2026-03-19"
+      "spec": "Click Test button on OpenClaw card \u2192 health badge changes to 'checking' then updates. Click Test on Claude Code card \u2192 should return healthy (claude CLI present). Click Test on NemoClaw \u2192 returns unhealthy (no NeMo running) with clear error, not blank.",
+      "depends_on": [
+        "F502",
+        "F503",
+        "F504"
+      ],
+      "test": "AppleScript: click Test on each card, take screenshots, verify badge color changes, no JS errors",
+      "completed_at": "2026-04-04",
+      "notes": "Health verify API confirmed: all 3 connections return {success:false, status:down} with no 500 errors. UI shows health badges on all cards. Claude Code: down (claude not in Docker PATH), OpenClaw: down (no server), NemoClaw: down (no NeMo server) \u2014 all correct, no crashes."
     },
     {
-      "id": "F025",
-      "name": "Webhooks service and emitter",
-      "group": "webhooks",
+      "id": "F508",
+      "name": "UI: AI Agent (category) preferred backbone picker in agent designer",
+      "group": "ui",
       "status": "pass",
-      "spec": "Create WebhooksService (CRUD on webhooks, delivery listing) and WebhookEmitterService (emit event, find matching webhooks, deliver with HMAC-SHA256, retry with exponential backoff)",
-      "depends_on": ["F024"],
-      "test": "Service can create webhook, emit event, deliver payload with correct HMAC signature",
-      "completed_at": "2026-03-19"
+      "spec": "When editing an AI agent (category), a backbone preference picker should be available. If the category edit UI doesn't have it yet, add it. Agent's preferred backbone should be settable independently from board.",
+      "depends_on": [
+        "F505"
+      ],
+      "test": "AppleScript: find category edit UI, verify backbone preference field exists",
+      "completed_at": "2026-04-04",
+      "notes": "Added BackbonePicker to categories/agent designer General tab. State: preferredBackboneId. Initializes from category.preferred_backbone_connection_id. Saved via updateCategory PATCH. Shows inherit option with \"Inherit from board / account default\" label."
     },
     {
-      "id": "F026",
-      "name": "Webhooks controller endpoints",
-      "group": "webhooks",
+      "id": "F601",
+      "name": "INTEGRATION TEST: full message round-trip with Claude Code CLI backbone",
+      "group": "e2e",
       "status": "pass",
-      "spec": "Create GET/POST/PATCH/DELETE /accounts/:id/webhooks and GET /accounts/:id/webhooks/:whId/deliveries",
-      "depends_on": ["F025"],
-      "test": "All 5 endpoints work correctly via curl",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F027",
-      "name": "Webhook events in task service",
-      "group": "webhooks",
-      "status": "pass",
-      "spec": "Inject WebhookEmitterService into TasksService, emit task.created, task.updated, task.completed, task.deleted events",
-      "depends_on": ["F025"],
-      "test": "Creating/updating/completing/deleting a task triggers webhook delivery",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F028",
-      "name": "Webhook events in board service",
-      "group": "webhooks",
-      "status": "pass",
-      "spec": "Inject WebhookEmitterService into BoardsService, emit board.created, board.updated, board.deleted events",
-      "depends_on": ["F025"],
-      "test": "Creating/updating/deleting a board triggers webhook delivery",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F029",
-      "name": "Webhook events in conversation service",
-      "group": "webhooks",
-      "status": "pass",
-      "spec": "Inject WebhookEmitterService into ConversationsService, emit conversation.created, message.created events",
-      "depends_on": ["F025"],
-      "test": "Creating conversation or sending message triggers webhook delivery",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F030",
-      "name": "Webhooks frontend settings page",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "Create settings page at /dashboard/settings/webhooks with webhook list, create/edit form (URL, secret, event checkboxes, active toggle), delivery history view",
-      "depends_on": ["F026"],
-      "test": "Can create, view, edit, delete webhooks and view delivery history from UI",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F031",
-      "name": "Webhooks server actions",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "Create frontend/src/app/dashboard/settings/webhooks/actions.ts with getWebhooks, createWebhook, updateWebhook, deleteWebhook, getDeliveries server actions",
-      "depends_on": ["F026"],
-      "test": "Server actions correctly proxy to backend API",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F032",
-      "name": "Remove team member endpoint",
-      "group": "missing-endpoints",
-      "status": "pass",
-      "spec": "Add DELETE /accounts/:id/members/:memberId to accounts controller",
-      "depends_on": [],
-      "test": "curl DELETE removes member and they lose access",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F033",
-      "name": "Accept invitation endpoint",
-      "group": "missing-endpoints",
-      "status": "pass",
-      "spec": "Add POST /accounts/:id/invitations/:invId/accept to accounts controller",
-      "depends_on": [],
-      "test": "curl POST accepts invitation and adds user to account",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F034",
-      "name": "User preferences endpoint",
-      "group": "missing-endpoints",
-      "status": "pass",
-      "spec": "Add PATCH /users/me/preferences for theme mode, locale, notification settings. Store in user_preferences table or users table JSONB column.",
-      "depends_on": [],
-      "test": "curl PATCH updates preferences, GET /users/me returns preferences",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F035",
-      "name": "Task full-text search endpoint",
-      "group": "missing-endpoints",
-      "status": "pass",
-      "spec": "Add GET /accounts/:id/tasks/search?q= with full-text search on title and notes",
-      "depends_on": [],
-      "test": "curl GET with q parameter returns matching tasks",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F036",
-      "name": "Bulk task update endpoint",
-      "group": "missing-endpoints",
-      "status": "pass",
-      "spec": "Add PATCH /accounts/:id/tasks/bulk accepting array of {id, ...updates} for batch status/step/priority changes",
-      "depends_on": [],
-      "test": "curl PATCH with array of task updates applies all changes",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F037",
-      "name": "MCP server documentation",
-      "group": "docs",
-      "status": "pass",
-      "spec": "Create docs/mcp-server.md with installation, configuration, all 27 tools reference, auth methods, troubleshooting, architecture diagram",
-      "depends_on": ["F010"],
-      "test": "Document exists with complete tool reference and working examples",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F038",
-      "name": "API key and webhook documentation",
-      "group": "docs",
-      "status": "pass",
-      "spec": "Update docs/documentation/authentication-authorization.md with API key section. Create docs/documentation/webhooks.md with events, payloads, HMAC verification, retry behavior",
-      "depends_on": ["F014", "F026"],
-      "test": "Both docs exist with accurate, complete information",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F039",
-      "name": "Architecture and README documentation updates",
-      "group": "docs",
-      "status": "pass",
-      "spec": "Update docs/architecture.md with MCP server, webhook system. Update README.md with MCP and OpenAPI sections. Update docs/development.md with /api/docs access.",
-      "depends_on": ["F037", "F038"],
-      "test": "All updated docs reference new features correctly",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F040",
-      "name": "Update CLAUDE.md and settings nav",
-      "group": "docs",
-      "status": "pass",
-      "spec": "Update CLAUDE.md with MCP server section, API key auth, new module paths. Update frontend settings navigation to include API Keys and Webhooks sections.",
-      "depends_on": ["F039"],
-      "test": "CLAUDE.md reflects all new modules, settings nav shows API Keys and Webhooks",
-      "completed_at": "2026-03-19"
-    },
-    {
-      "id": "F041",
-      "name": "Integration unification schema migration",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Add connection_id FK to sources, health monitoring columns to integration_connections. Seed 5 new system definitions (notion-source, clickup-source, telegram-comm, whatsapp-comm, slack-comm) with linked skills. Migrate comm_tool_integrations and source credentials data. Drop comm_tool_integrations table.",
-      "depends_on": [],
-      "test": "All 5 migrations applied, sources.connection_id exists, health columns exist, comm_tool_integrations dropped",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F042",
-      "name": "Backend: IntegrationsService health check + toggle + category endpoints",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Extend IntegrationsService with findByCategory, toggleConnection, checkConnectionHealth, getAvailableCommTools, getConnectionCredentialsDecrypted, 60s health check cron. Add controller endpoints for toggle, health-check, and category-filtered queries.",
-      "depends_on": ["F041"],
-      "test": "POST toggle/health-check work, GET with ?category= filters correctly, cron runs",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F043",
-      "name": "Backend: Update conversations, sources, sync to use unified integrations",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Replace CommToolsService in ConversationsService with IntegrationsService.getAvailableCommTools(). Update SyncService to read credentials from integration_connections when connection_id set. Update SourcesService to accept connection_id. Delete entire comm-tools module.",
-      "depends_on": ["F042"],
-      "test": "Board system prompt shows comm tools from unified table, sync reads credentials from connection, backward compat works",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F044",
-      "name": "Frontend: Unified integration actions + types + CommToolsSection rewrite",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Add toggleConnection, checkConnectionHealth, getConnectionsByCategory, getDefinitionsByCategory server actions. Add health monitoring fields to IntegrationConnection type. Rewrite CommToolsSection to use unified integration_connections.",
-      "depends_on": ["F042"],
-      "test": "Comm tools section loads from unified tables, toggle/health-check work, setup dialog opens",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F045",
-      "name": "Frontend: IntegrationManager category filtering",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Add excludeCategories prop to IntegrationManager and IntegrationCatalog. Marketplace section excludes communication and source categories.",
-      "depends_on": ["F044"],
-      "test": "Comm tools and sources don't appear in marketplace section, category filter dropdown updated",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F046",
-      "name": "Frontend: AddSourceDialog rewrite with IntegrationSetupDialog",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Rewrite AddSourceDialog to 4-step flow: provider selection → IntegrationSetupDialog (credentials + test chat) → database/list selection → category assignment. Source createSource action accepts connection_id.",
-      "depends_on": ["F044"],
-      "test": "Adding a source opens IntegrationSetupDialog, creates connection, then continues to database selection",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F047",
-      "name": "Frontend: CommToolCard Configure button",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Add visible Configure button with Settings2 icon next to toggle switch in CommToolCard for better discoverability of the setup dialog.",
-      "depends_on": ["F044"],
-      "test": "Configure button visible on comm tool cards, clicking opens IntegrationSetupDialog",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F048",
-      "name": "Comm tool definitions: setup guides and config fields",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Migration to add detailed setup_guide markdown and optional config_fields to Telegram, WhatsApp, and Slack comm tool definitions. Guides cover external service setup, OpenClaw configuration, and TaskClaw connection.",
-      "depends_on": ["F041"],
-      "test": "Setup guide tab renders formatted content for all 3 comm tools, config fields appear in settings tab",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F049",
-      "name": "SetupGuideRenderer component",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Create SetupGuideRenderer: lightweight markdown-to-JSX parser for setup guides. Supports ## headings, ### section dividers, numbered lists with step badges, bullets, **bold**, `code`, [links](url) with ExternalLink icons.",
-      "depends_on": [],
-      "test": "Setup guides render with styled headings, numbered steps, code chips, and clickable links",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F050",
-      "name": "IntegrationSetupDialog tabs refactor",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Refactor IntegrationSetupDialog from two-column layout to tabbed left panel (60%) + test chat right panel (40%). Tabs: Setup Guide (SetupGuideRenderer), Settings (credentials + config), Test (mobile fallback).",
-      "depends_on": ["F049"],
-      "test": "Dialog shows tabbed interface, guide tab renders markdown, settings tab has credential fields, test chat in right panel",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F051",
-      "name": "Update taskclaw-builder skill with integration awareness",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Update Phase 3b in taskclaw-builder SKILL.md to reference unified integration system, add decision guide for when boards need integrations, update JSON output format with auth_config/auth_type/categories fields.",
-      "depends_on": [],
-      "test": "Skill guides users through integration decisions, JSON output uses correct auth_config structure",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F052",
-      "name": "Create new-connector dev skill",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Create /new-connector skill to guide developers through creating new marketplace integrations: discovery, definition design, migration generation, optional source adapter, verification.",
-      "depends_on": [],
-      "test": "Skill appears in available skills list, guides through full integration creation flow",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F053",
-      "name": "Update adding-an-integration.md documentation",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Fix Step 0 SQL example to use auth_config column (with nested key_fields) instead of deprecated key_fields column. Add setup_guide, config_fields, icon to example. Document SetupGuideRenderer markdown format.",
-      "depends_on": [],
-      "test": "Documentation SQL example matches actual database schema, all column names correct",
-      "completed_at": "2026-03-20"
-    },
-    {
-      "id": "F054",
-      "name": "Update integration-unification.md implementation doc",
-      "group": "integration-unification",
-      "status": "pass",
-      "spec": "Add migration 6 (setup guides), SetupGuideRenderer component, tabs refactor, AddSourceDialog rewrite, Configure button to implementation doc. Fix data model to show auth_config instead of key_fields.",
-      "depends_on": [],
-      "test": "Implementation doc reflects all 6 migrations and all frontend changes accurately",
-      "completed_at": "2026-03-20"
+      "spec": "Create a backbone_connection for claude-code, set as default. Send a test message via the conversation API. Verify the response comes from Claude Code subprocess (check backend log for 'Routing to claude-code').",
+      "depends_on": [
+        "F403",
+        "F503"
+      ],
+      "test": "POST /conversations/:id/messages \u2192 response received, backend log shows backbone=claude-code",
+      "completed_at": "2026-04-04",
+      "notes": "Full message round-trip routing confirmed. Backend log shows: [BackboneRouterService] Routing to claude-code (account_default). ClaudeCodeAdapter correctly spawns subprocess, fails with clear error (claude not in Docker). Routing logic: PASS."
     }
   ]
 }

@@ -26,6 +26,8 @@ import type { BoardStep, SchemaField } from '@/types/board'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { BackbonePicker } from '@/components/backbones/backbone-picker'
+import { useBackboneConnections } from '@/hooks/use-backbone-connections'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -75,6 +77,11 @@ export function StepConfigDrawer({ boardId, step, allSteps, onClose }: StepConfi
     const [webhookAuthHeader, setWebhookAuthHeader] = useState(step.webhook_auth_header || '')
     const [scheduleCron, setScheduleCron] = useState(step.schedule_cron || '')
 
+    // Backbone override
+    const [backboneConnectionId, setBackboneConnectionId] = useState<string | null>(
+        step.backbone_connection_id ?? null,
+    )
+
     // System prompt state
     const [systemPrompt, setSystemPrompt] = useState(step.system_prompt || '')
 
@@ -92,6 +99,7 @@ export function StepConfigDrawer({ boardId, step, allSteps, onClose }: StepConfi
         || webhookAuthHeader !== (step.webhook_auth_header || '')
         || scheduleCron !== (step.schedule_cron || '')
         || systemPrompt !== (step.system_prompt || '')
+        || backboneConnectionId !== (step.backbone_connection_id ?? null)
 
     const canSave = isDirty && !(triggerType === 'webhook' && !webhookUrl.trim())
 
@@ -108,6 +116,7 @@ export function StepConfigDrawer({ boardId, step, allSteps, onClose }: StepConfi
                 webhook_auth_header: triggerType === 'webhook' ? webhookAuthHeader || null : null,
                 schedule_cron: triggerType === 'schedule' ? scheduleCron || null : null,
                 system_prompt: systemPrompt || null,
+                backbone_connection_id: backboneConnectionId,
             })
             if (result.error) throw new Error(result.error)
             return result
@@ -226,6 +235,8 @@ export function StepConfigDrawer({ boardId, step, allSteps, onClose }: StepConfi
                             scheduleCron={scheduleCron}
                             setScheduleCron={setScheduleCron}
                             otherSteps={otherSteps}
+                            backboneConnectionId={backboneConnectionId}
+                            setBackboneConnectionId={setBackboneConnectionId}
                         />
                     ) : (
                         <SystemPromptTab
@@ -285,6 +296,8 @@ interface SettingsTabProps {
     scheduleCron: string
     setScheduleCron: (v: string) => void
     otherSteps: BoardStep[]
+    backboneConnectionId: string | null
+    setBackboneConnectionId: (v: string | null) => void
 }
 
 function SettingsTab({
@@ -310,6 +323,8 @@ function SettingsTab({
     scheduleCron,
     setScheduleCron,
     otherSteps,
+    backboneConnectionId,
+    setBackboneConnectionId,
 }: SettingsTabProps) {
     return (
         <div className="px-6 py-5 space-y-6">
@@ -467,6 +482,12 @@ function SettingsTab({
                 </section>
             )}
 
+            {/* ─── Backbone Override ────────────────────── */}
+            <BackboneOverrideSection
+                backboneConnectionId={backboneConnectionId}
+                setBackboneConnectionId={setBackboneConnectionId}
+            />
+
             {/* ─── Input Schema ────────────────────────── */}
             <section>
                 <div className="flex items-center justify-between mb-3">
@@ -567,6 +588,50 @@ function SettingsTab({
                 </div>
             </section>
         </div>
+    )
+}
+
+// ─── Backbone Override Section ──────────────────────────────────
+
+function BackboneOverrideSection({
+    backboneConnectionId,
+    setBackboneConnectionId,
+}: {
+    backboneConnectionId: string | null
+    setBackboneConnectionId: (v: string | null) => void
+}) {
+    const { data: connections = [] } = useBackboneConnections()
+
+    // Resolve "currently using" label when inheriting
+    const resolvedName = backboneConnectionId
+        ? connections.find((c) => c.id === backboneConnectionId)?.name
+        : null
+
+    return (
+        <section>
+            <Label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">
+                AI Backbone
+            </Label>
+            <p className="text-[10px] text-muted-foreground mb-2">
+                Override the AI provider for this step. Leave as inherit to use the board default.
+            </p>
+            <BackbonePicker
+                value={backboneConnectionId}
+                onChange={setBackboneConnectionId}
+                showInheritOption
+                inheritLabel="Inherit from board"
+            />
+            {!backboneConnectionId && (
+                <p className="text-[10px] text-muted-foreground/60 mt-1.5 italic">
+                    Currently using the board or account default backbone.
+                </p>
+            )}
+            {backboneConnectionId && resolvedName && (
+                <p className="text-[10px] text-muted-foreground/60 mt-1.5">
+                    Currently using: <span className="font-medium text-foreground">{resolvedName}</span>
+                </p>
+            )}
+        </section>
     )
 }
 

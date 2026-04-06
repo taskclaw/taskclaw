@@ -3,6 +3,8 @@ import {
   NotFoundException,
   Logger,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
@@ -13,6 +15,7 @@ import { KnowledgeService } from '../knowledge/knowledge.service';
 import { SkillsService } from '../skills/skills.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
+import { BackboneRouterService } from '../backbone/backbone-router.service';
 
 import { IntegrationsService } from '../integrations/integrations.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
@@ -34,6 +37,8 @@ export class ConversationsService {
     private readonly skillsService: SkillsService,
     private readonly notionAdapter: NotionAdapter,
     private readonly agentSyncService: AgentSyncService,
+    @Inject(forwardRef(() => BackboneRouterService))
+    private readonly backboneRouter: BackboneRouterService,
     private readonly integrationsService: IntegrationsService,
     private readonly webhookEmitter: WebhookEmitterService,
   ) {}
@@ -260,7 +265,9 @@ export class ConversationsService {
   }
 
   /**
-   * Send a message and get AI response
+   * Send a message and get AI response.
+   * Uses BackboneRouter when backbone connections exist; falls back to
+   * legacy ai_provider_configs + OpenClawService otherwise (F038).
    */
   async sendMessage(
     userId: string,
@@ -276,12 +283,6 @@ export class ConversationsService {
       userId,
       accountId,
       conversationId,
-      accessToken,
-    );
-
-    // Get AI provider config
-    const aiConfig = await this.aiProviderService.getDecryptedConfig(
-      accountId,
       accessToken,
     );
 
@@ -306,49 +307,122 @@ export class ConversationsService {
     });
 
     try {
+      // Resolve the effective category for the task (used by both paths)
+      const task = conversation.task;
+      const resolvedCategoryId = task
+        ? await this.resolveAgentCategoryId(task)
+        : null;
+
       // Get conversation history
       const history = await this.getConversationHistory(
         conversationId,
         accessToken,
       );
 
-      // Build system prompt with context (board chat uses board-specific prompt)
-      const systemPrompt = conversation.board_id
-        ? await this.buildBoardSystemPrompt(conversation, accessToken)
-        : await this.buildSystemPrompt(conversation, accessToken);
+      // ── Try backbone path first (F018/F019) ──
+      let aiResponseText: string;
+      let aiResponseMetadata: Record<string, any> = {};
+      let backboneConnectionId: string | null = null;
 
-      // Build message array for OpenClaw
-      const messages = this.openClawService.buildMessageHistory(
-        systemPrompt,
-        history,
-        dto.content,
-      );
+      const backboneResolved = await this.tryResolveBackbone(accountId, {
+        boardId: conversation.board_id || undefined,
+        stepId: task?.current_step_id || undefined,
+        categoryId: resolvedCategoryId || undefined,
+      });
 
-      // Send to OpenClaw (with Langfuse trace context)
-      const aiResponse = await this.openClawService.sendMessage(
-        aiConfig,
-        messages,
-        {
-          userId,
+      if (backboneResolved) {
+        // ── Backbone path ──
+        backboneConnectionId = backboneResolved.connection.id;
+
+        // Build system prompt with native skill injection check (F020)
+        const systemPrompt = await this.buildSystemPromptWithBackbone(
+          conversation,
+          accessToken,
+          backboneResolved,
+          resolvedCategoryId,
+        );
+
+        const result = await this.backboneRouter.send({
           accountId,
-          conversationId,
-        },
-      );
+          boardId: conversation.board_id || undefined,
+          stepId: task?.current_step_id || undefined,
+          categoryId: resolvedCategoryId || undefined,
+          sendOptions: {
+            systemPrompt,
+            message: dto.content,
+            history: history.map((h) => ({
+              role: h.role as 'user' | 'assistant' | 'system',
+              content: h.content,
+            })),
+            metadata: { userId, accountId, conversationId },
+          },
+        });
 
-      // Store AI response
+        aiResponseText = result.text;
+        aiResponseMetadata = {
+          model: result.model,
+          ...(result.usage || {}),
+          backbone_connection_id: backboneConnectionId,
+          resolved_from: backboneResolved.resolvedFrom,
+        };
+      } else {
+        // ── Legacy fallback (F038) ──
+        this.logger.debug(
+          `No backbone connection for account ${accountId}; using legacy ai_provider path`,
+        );
+
+        const aiConfig = await this.aiProviderService.getDecryptedConfig(
+          accountId,
+          accessToken,
+        );
+
+        const systemPrompt = conversation.board_id
+          ? await this.buildBoardSystemPrompt(conversation, accessToken)
+          : await this.buildSystemPrompt(conversation, accessToken);
+
+        const messages = this.openClawService.buildMessageHistory(
+          systemPrompt,
+          history,
+          dto.content,
+        );
+
+        const aiResponse = await this.openClawService.sendMessage(
+          aiConfig,
+          messages,
+          { userId, accountId, conversationId },
+        );
+
+        aiResponseText = aiResponse.response;
+        aiResponseMetadata = aiResponse.metadata || {};
+      }
+
+      // Store AI response (F021: include backbone_connection_id)
+      const assistantInsert: Record<string, any> = {
+        conversation_id: conversationId,
+        role: 'assistant',
+        content: aiResponseText,
+        metadata: aiResponseMetadata,
+      };
+      if (backboneConnectionId) {
+        assistantInsert.backbone_connection_id = backboneConnectionId;
+      }
+
       const { data: assistantMessage, error: aiMsgError } = await client
         .from('messages')
-        .insert({
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: aiResponse.response,
-          metadata: aiResponse.metadata || {},
-        })
+        .insert(assistantInsert)
         .select()
         .single();
 
       if (aiMsgError) {
         throw new Error(`Failed to store AI response: ${aiMsgError.message}`);
+      }
+
+      // F021: Store backbone_connection_id on conversation if resolved
+      if (backboneConnectionId && !conversation.backbone_connection_id) {
+        await client
+          .from('conversations')
+          .update({ backbone_connection_id: backboneConnectionId })
+          .eq('id', conversationId);
       }
 
       this.webhookEmitter.emit(accountId, 'message.created', {
@@ -366,7 +440,7 @@ export class ConversationsService {
       );
 
       // Fire-and-forget: mirror messages to Notion as comments
-      this.mirrorToNotion(conversation, dto.content, aiResponse.response);
+      this.mirrorToNotion(conversation, dto.content, aiResponseText);
 
       return {
         userMessage,
@@ -469,6 +543,7 @@ export class ConversationsService {
   /**
    * Process AI request in background. When done, stores response, mirrors to Notion,
    * and routes the task based on board settings (Full AI mode or "In Review").
+   * Uses BackboneRouter when available; falls back to legacy path (F038).
    */
   private processAiInBackground(
     userId: string,
@@ -488,13 +563,23 @@ export class ConversationsService {
       try {
         this.logger.log(`${logPrefix} Starting background AI processing`);
 
-        // Step 1: Get AI provider config
-        this.logger.debug(`${logPrefix} Step 1/5: Fetching AI provider config`);
-        const aiConfig = await this.aiProviderService.getDecryptedConfig(
-          accountId,
-          accessToken,
-        );
-        this.logger.debug(`${logPrefix} Provider: ${aiConfig.api_url}`);
+        const task = conversation.task;
+        const resolvedCategoryId = task
+          ? await this.resolveAgentCategoryId(task)
+          : null;
+
+        // Step 1: Resolve backbone or legacy provider
+        this.logger.debug(`${logPrefix} Step 1/5: Resolving AI backbone`);
+
+        let aiResponseText: string;
+        let aiResponseMetadata: Record<string, any> = {};
+        let backboneConnectionId: string | null = null;
+
+        const backboneResolved = await this.tryResolveBackbone(accountId, {
+          boardId: conversation.board_id || undefined,
+          stepId: task?.current_step_id || undefined,
+          categoryId: resolvedCategoryId || undefined,
+        });
 
         // Step 2: Get conversation history
         this.logger.debug(
@@ -506,47 +591,122 @@ export class ConversationsService {
         );
         this.logger.debug(`${logPrefix} History: ${history.length} messages`);
 
-        // Step 3: Build system prompt with context (board chat uses board-specific prompt)
-        this.logger.debug(`${logPrefix} Step 3/5: Building system prompt`);
-        const systemPrompt = conversation.board_id
-          ? await this.buildBoardSystemPrompt(conversation, accessToken)
-          : await this.buildSystemPrompt(conversation, accessToken);
+        if (backboneResolved) {
+          // ── Backbone path (F018) ──
+          backboneConnectionId = backboneResolved.connection.id;
+          this.logger.debug(
+            `${logPrefix} Using backbone: ${backboneResolved.adapter.slug} (${backboneResolved.resolvedFrom})`,
+          );
 
-        // Step 4: Send to OpenClaw
-        const messages = this.openClawService.buildMessageHistory(
-          systemPrompt,
-          history,
-          userContent,
-        );
+          // Step 3: Build system prompt with native skill injection check (F020)
+          this.logger.debug(`${logPrefix} Step 3/5: Building system prompt`);
+          const systemPrompt = await this.buildSystemPromptWithBackbone(
+            conversation,
+            accessToken,
+            backboneResolved,
+            resolvedCategoryId,
+          );
+
+          // Step 4: Send via backbone router
+          this.logger.log(
+            `${logPrefix} Step 4/5: Sending to backbone ${backboneResolved.adapter.slug}`,
+          );
+
+          const result = await this.backboneRouter.send({
+            accountId,
+            boardId: conversation.board_id || undefined,
+            stepId: task?.current_step_id || undefined,
+            categoryId: resolvedCategoryId || undefined,
+            sendOptions: {
+              systemPrompt,
+              message: userContent,
+              history: history.map((h) => ({
+                role: h.role as 'user' | 'assistant' | 'system',
+                content: h.content,
+              })),
+              metadata: { userId, accountId, conversationId },
+            },
+          });
+
+          aiResponseText = result.text;
+          aiResponseMetadata = {
+            model: result.model,
+            ...(result.usage || {}),
+            backbone_connection_id: backboneConnectionId,
+            resolved_from: backboneResolved.resolvedFrom,
+          };
+        } else {
+          // ── Legacy fallback (F038) ──
+          this.logger.debug(
+            `${logPrefix} No backbone; using legacy ai_provider path`,
+          );
+
+          const aiConfig = await this.aiProviderService.getDecryptedConfig(
+            accountId,
+            accessToken,
+          );
+          this.logger.debug(`${logPrefix} Provider: ${aiConfig.api_url}`);
+
+          // Step 3: Build system prompt (legacy)
+          this.logger.debug(`${logPrefix} Step 3/5: Building system prompt`);
+          const systemPrompt = conversation.board_id
+            ? await this.buildBoardSystemPrompt(conversation, accessToken)
+            : await this.buildSystemPrompt(conversation, accessToken);
+
+          // Step 4: Send to OpenClaw (legacy)
+          const messages = this.openClawService.buildMessageHistory(
+            systemPrompt,
+            history,
+            userContent,
+          );
+          this.logger.log(
+            `${logPrefix} Step 4/5: Sending ${messages.length} messages to OpenClaw`,
+          );
+
+          const aiResponse = await this.openClawService.sendMessage(
+            aiConfig,
+            messages,
+            { userId, accountId, conversationId },
+          );
+
+          aiResponseText = aiResponse.response;
+          aiResponseMetadata = aiResponse.metadata || {};
+        }
+
         this.logger.log(
-          `${logPrefix} Step 4/5: Sending ${messages.length} messages to OpenClaw`,
+          `${logPrefix} AI responded (${aiResponseText.length} chars, model: ${aiResponseMetadata?.model || 'unknown'})`,
         );
 
-        const aiResponse = await this.openClawService.sendMessage(
-          aiConfig,
-          messages,
-          { userId, accountId, conversationId },
-        );
-
-        this.logger.log(
-          `${logPrefix} AI responded (${aiResponse.response.length} chars, model: ${aiResponse.metadata?.model || 'unknown'})`,
-        );
-
-        // Step 5: Store AI response
+        // Step 5: Store AI response (F021: include backbone_connection_id)
         this.logger.debug(
           `${logPrefix} Step 5/5: Storing response and updating task`,
         );
-        const { error: insertError } = await client.from('messages').insert({
+        const messageInsert: Record<string, any> = {
           conversation_id: conversationId,
           role: 'assistant',
-          content: aiResponse.response,
-          metadata: aiResponse.metadata || {},
-        });
+          content: aiResponseText,
+          metadata: aiResponseMetadata,
+        };
+        if (backboneConnectionId) {
+          messageInsert.backbone_connection_id = backboneConnectionId;
+        }
+
+        const { error: insertError } = await client
+          .from('messages')
+          .insert(messageInsert);
 
         if (insertError) {
           this.logger.error(
             `${logPrefix} Failed to store AI response: ${insertError.message}`,
           );
+        }
+
+        // F021: Store backbone_connection_id on conversation if resolved
+        if (backboneConnectionId && !conversation.backbone_connection_id) {
+          await client
+            .from('conversations')
+            .update({ backbone_connection_id: backboneConnectionId })
+            .eq('id', conversationId);
         }
 
         // Auto-generate conversation title if needed
@@ -559,7 +719,7 @@ export class ConversationsService {
         }
 
         // Mirror messages to Notion
-        this.mirrorToNotion(conversation, userContent, aiResponse.response);
+        this.mirrorToNotion(conversation, userContent, aiResponseText);
 
         // Extract structured output from AI response and save to card_data
         if (taskId) {
@@ -567,7 +727,7 @@ export class ConversationsService {
             client,
             taskId,
             accountId,
-            aiResponse.response,
+            aiResponseText,
             logPrefix,
           );
         }
@@ -1196,11 +1356,70 @@ export class ConversationsService {
   }
 
   /**
-   * Build system prompt with task context
+   * Try to resolve a backbone connection for the given context.
+   * Returns null instead of throwing when no backbone is configured,
+   * allowing the caller to fall back to the legacy ai_provider path (F038).
+   */
+  private async tryResolveBackbone(
+    accountId: string,
+    options?: { boardId?: string; stepId?: string; categoryId?: string },
+  ): Promise<import('../backbone/backbone-router.service').ResolveResult | null> {
+    try {
+      return await this.backboneRouter.resolve(accountId, options);
+    } catch (err) {
+      // NotFoundException means no backbone configured — that's fine, use legacy
+      if ((err as any)?.status === 404) {
+        return null;
+      }
+      // Re-throw unexpected errors
+      throw err;
+    }
+  }
+
+  /**
+   * Build system prompt with native skill injection check (F020).
+   * If the resolved backbone adapter supports native skill injection,
+   * build a minimal prompt without inline skills (the adapter will handle them).
+   * Otherwise, build the full prompt with skills embedded.
+   */
+  private async buildSystemPromptWithBackbone(
+    conversation: any,
+    accessToken: string,
+    resolved: import('../backbone/backbone-router.service').ResolveResult,
+    resolvedCategoryId: string | null,
+  ): Promise<string> {
+    const supportsNativeSkills =
+      resolved.adapter.supportsNativeSkillInjection?.() ?? false;
+
+    if (supportsNativeSkills) {
+      this.logger.debug(
+        `Backbone ${resolved.adapter.slug} supports native skill injection — building minimal prompt`,
+      );
+      // Build prompt without inline skills; the adapter passes skills natively
+      return conversation.board_id
+        ? await this.buildBoardSystemPrompt(conversation, accessToken, {
+            skipSkillInjection: true,
+          })
+        : await this.buildSystemPrompt(conversation, accessToken, {
+            skipSkillInjection: true,
+          });
+    }
+
+    // Adapter does not support native skills — build full prompt with embedded skills
+    return conversation.board_id
+      ? await this.buildBoardSystemPrompt(conversation, accessToken)
+      : await this.buildSystemPrompt(conversation, accessToken);
+  }
+
+  /**
+   * Build system prompt with task context.
+   * @param options.skipSkillInjection When true, omit inline skill/knowledge injection
+   *        (used when the backbone adapter handles native skill injection — F020).
    */
   private async buildSystemPrompt(
     conversation: any,
     accessToken: string,
+    options?: { skipSkillInjection?: boolean },
   ): Promise<string> {
     // BASE SYSTEM PROMPT
     let prompt = `You are OpenClaw, an AI assistant integrated into the OTT Platform.
@@ -1214,6 +1433,9 @@ Current Context:
     // ═══════════════════════════════════════════════════════════
     // SKILLS & KNOWLEDGE: Provider-synced or inline injection
     // ═══════════════════════════════════════════════════════════
+    // F020: Skip skill/knowledge injection when backbone handles it natively
+    const skipSkills = options?.skipSkillInjection === true;
+
     // Resolve the effective agent category using 3-tier cascade:
     // Card override → Column linked category → Board default → Task category
     const agentCategoryId = conversation.task_id
@@ -1224,7 +1446,7 @@ Current Context:
     // If synced, skip inline injection — the content is loaded from
     // SKILL.md files on the server, saving thousands of tokens per request.
     let providerSynced = false;
-    if (agentCategoryId) {
+    if (agentCategoryId && !skipSkills) {
       try {
         providerSynced = await this.agentSyncService.isSynced(
           conversation.account_id,
@@ -1235,7 +1457,11 @@ Current Context:
       }
     }
 
-    if (providerSynced) {
+    if (skipSkills) {
+      this.logger.debug(
+        `Backbone native skill injection active — skipping inline skill/knowledge injection`,
+      );
+    } else if (providerSynced) {
       this.logger.debug(
         `Category ${agentCategoryId} skills/knowledge synced to provider — skipping inline injection`,
       );
@@ -1482,10 +1708,12 @@ Current Context:
   /**
    * Build a system prompt for board-level AI chat (task creation mode).
    * Includes board structure, steps, schemas, and orchestrator agent skills.
+   * @param options.skipSkillInjection When true, omit inline skill/knowledge injection (F020).
    */
   private async buildBoardSystemPrompt(
     conversation: any,
     accessToken: string,
+    options?: { skipSkillInjection?: boolean },
   ): Promise<string> {
     const client = this.supabaseAdmin.getClient();
 
@@ -1573,10 +1801,11 @@ Rules:
     // ═══════════════════════════════════════════════════════════
     // ORCHESTRATOR AGENT SKILLS & KNOWLEDGE
     // ═══════════════════════════════════════════════════════════
+    const skipSkills = options?.skipSkillInjection === true;
     const agentCategoryId =
       board.orchestrator_category_id || board.default_category_id;
 
-    if (agentCategoryId) {
+    if (agentCategoryId && !skipSkills) {
       // Check if synced to provider
       let providerSynced = false;
       try {

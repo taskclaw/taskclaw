@@ -54,6 +54,11 @@ export class UpdateBoardDto {
   orchestrator_category_id?: string | null;
 
   @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  default_backbone_connection_id?: string | null;
+
+  @IsOptional()
   @IsObject()
   settings_override?: Record<string, any>;
 }

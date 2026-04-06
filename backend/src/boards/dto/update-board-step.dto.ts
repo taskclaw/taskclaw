@@ -72,4 +72,10 @@ export class UpdateBoardStepDto {
   @IsOptional()
   @IsString()
   system_prompt?: string | null;
+
+  // ─── Backbone override (F023) ─────────────────────────
+
+  @IsOptional()
+  @IsString()
+  backbone_connection_id?: string | null;
 }
