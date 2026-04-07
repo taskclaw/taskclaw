@@ -34,6 +34,8 @@ services:
       REDIS_URL: redis://redis:6379
       # Override .env's localhost URL so the container reaches Kong via Docker network
       SUPABASE_URL: http://kong:8000
+    volumes:
+      - ./backend/dist:/app/dist
     depends_on:
       redis:
         condition: service_healthy
@@ -61,6 +63,21 @@ services:
       - backend
     restart: unless-stopped
     user: "1000:1000"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: taskclaw-ollama-1
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -243,3 +260,4 @@ volumes:
   redis_data:
   db_data:
   storage_data:
+  ollama_data:

@@ -38,6 +38,7 @@ export class ConversationsController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
     @Query('task_id') taskId?: string,
     @Query('board_id') boardId?: string,
+    @Query('pod_id') podId?: string,
   ) {
     return this.conversationsService.findAll(
       req.user.id,
@@ -47,6 +48,7 @@ export class ConversationsController {
       limit,
       taskId,
       boardId,
+      podId,
     );
   }
 

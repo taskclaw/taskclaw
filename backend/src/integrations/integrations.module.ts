@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { IntegrationsService } from './integrations.service';
+import { ToolRegistryService } from './tool-registry.service';
 import {
   IntegrationsController,
   BoardIntegrationRefsController,
@@ -17,7 +18,7 @@ import { AiProviderModule } from '../ai-provider/ai-provider.module';
     BoardIntegrationRefsController,
     OAuthController,
   ],
-  providers: [IntegrationsService, OAuthService],
-  exports: [IntegrationsService],
+  providers: [IntegrationsService, OAuthService, ToolRegistryService],
+  exports: [IntegrationsService, ToolRegistryService],
 })
 export class IntegrationsModule {}

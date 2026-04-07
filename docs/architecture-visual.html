@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TaskClaw Unified Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e2e8f0; overflow: hidden; height: 100vh; }
+
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Navigation */
+  .nav { display: flex; align-items: center; justify-content: space-between; padding: 16px 32px; background: rgba(15,15,25,0.95); border-bottom: 1px solid rgba(99,102,241,0.2); z-index: 10; }
+  .nav-title { font-size: 14px; font-weight: 600; color: #818cf8; letter-spacing: 1px; text-transform: uppercase; }
+  .nav-controls { display: flex; gap: 12px; align-items: center; }
+  .nav-btn { background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3); color: #c7d2fe; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+  .nav-btn:hover { background: rgba(99,102,241,0.3); }
+  .nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .nav-counter { color: #64748b; font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  /* Progress bar */
+  .progress-bar { height: 2px; background: rgba(99,102,241,0.1); }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); transition: width 0.4s ease; }
+
+  /* Slide area */
+  .slide-container { flex: 1; overflow-y: auto; padding: 40px; display: flex; justify-content: center; }
+  .slide { max-width: 1100px; width: 100%; animation: fadeIn 0.4s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Slide typography */
+  .slide h1 { font-size: 32px; font-weight: 700; margin-bottom: 8px; background: linear-gradient(135deg, #c7d2fe, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .slide .subtitle { font-size: 16px; color: #64748b; margin-bottom: 32px; }
+  .slide h2 { font-size: 20px; font-weight: 600; color: #e2e8f0; margin: 24px 0 12px; }
+  .slide h3 { font-size: 16px; font-weight: 600; color: #a5b4fc; margin: 16px 0 8px; }
+  .slide p { font-size: 14px; line-height: 1.7; color: #94a3b8; margin-bottom: 12px; }
+  .slide strong { color: #c7d2fe; }
+
+  /* Diagram boxes */
+  .diagram { background: rgba(15,15,25,0.8); border: 1px solid rgba(99,102,241,0.15); border-radius: 12px; padding: 24px; margin: 16px 0; }
+  .diagram-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #6366f1; margin-bottom: 16px; font-weight: 600; }
+
+  /* Architecture blocks */
+  .arch-row { display: flex; gap: 12px; margin: 8px 0; flex-wrap: wrap; }
+  .arch-block { flex: 1; min-width: 140px; background: rgba(99,102,241,0.08); border: 1px solid rgba(99,102,241,0.2); border-radius: 8px; padding: 12px; text-align: center; }
+  .arch-block.primary { background: rgba(99,102,241,0.15); border-color: rgba(99,102,241,0.4); }
+  .arch-block.green { background: rgba(16,185,129,0.08); border-color: rgba(16,185,129,0.3); }
+  .arch-block.orange { background: rgba(249,115,22,0.08); border-color: rgba(249,115,22,0.3); }
+  .arch-block.purple { background: rgba(139,92,246,0.08); border-color: rgba(139,92,246,0.3); }
+  .arch-block.red { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.3); }
+  .arch-block.wide { flex: 2; }
+  .arch-block .label { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+  .arch-block .sublabel { font-size: 11px; color: #64748b; margin-top: 4px; }
+
+  /* Arrow */
+  .arrow { text-align: center; color: #4f46e5; font-size: 18px; margin: 4px 0; }
+
+  /* Hierarchy */
+  .hierarchy { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .hier-level { display: flex; align-items: center; gap: 12px; width: 100%; }
+  .hier-indent { width: 24px; border-left: 2px solid rgba(99,102,241,0.2); height: 32px; margin-left: 20px; }
+  .hier-box { flex: 1; padding: 10px 16px; border-radius: 8px; display: flex; align-items: center; gap: 10px; }
+  .hier-box .icon { font-size: 18px; }
+  .hier-box .name { font-size: 14px; font-weight: 600; }
+  .hier-box .desc { font-size: 11px; color: #94a3b8; }
+  .hier-box.l0 { background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.3); }
+  .hier-box.l1 { background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.25); margin-left: 40px; }
+  .hier-box.l2 { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.2); margin-left: 80px; }
+  .hier-box.l3 { background: rgba(249,115,22,0.08); border: 1px solid rgba(249,115,22,0.2); margin-left: 120px; }
+  .hier-box.l4 { background: rgba(236,72,153,0.08); border: 1px solid rgba(236,72,153,0.2); margin-left: 160px; }
+  .hier-box.l5 { background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.2); margin-left: 200px; }
+
+  /* Flow diagram */
+  .flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+  .flow-step { background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.25); border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 500; color: #c7d2fe; white-space: nowrap; }
+  .flow-step.active { background: rgba(99,102,241,0.25); border-color: #6366f1; }
+  .flow-arrow { color: #4f46e5; font-size: 16px; }
+
+  /* Cascade */
+  .cascade { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+  .cascade-item { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-radius: 8px; font-size: 13px; }
+  .cascade-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: rgba(99,102,241,0.2); color: #818cf8; flex-shrink: 0; }
+  .cascade-item.new .cascade-num { background: rgba(16,185,129,0.2); color: #34d399; }
+  .cascade-label { color: #e2e8f0; font-weight: 500; }
+  .cascade-desc { color: #64748b; font-size: 11px; }
+  .cascade-item.new { background: rgba(16,185,129,0.05); border: 1px dashed rgba(16,185,129,0.3); }
+  .cascade-tag { font-size: 10px; background: rgba(16,185,129,0.15); color: #34d399; padding: 2px 8px; border-radius: 4px; margin-left: 8px; }
+
+  /* Grid */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 16px 0; }
+  .card { background: rgba(15,15,25,0.6); border: 1px solid rgba(99,102,241,0.15); border-radius: 10px; padding: 16px; }
+  .card-title { font-size: 14px; font-weight: 600; color: #c7d2fe; margin-bottom: 6px; }
+  .card-body { font-size: 12px; color: #94a3b8; line-height: 1.6; }
+
+  /* Pill tags */
+  .tag { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 4px; margin: 2px; font-weight: 500; }
+  .tag-indigo { background: rgba(99,102,241,0.15); color: #a5b4fc; }
+  .tag-green { background: rgba(16,185,129,0.15); color: #6ee7b7; }
+  .tag-orange { background: rgba(249,115,22,0.15); color: #fdba74; }
+  .tag-purple { background: rgba(139,92,246,0.15); color: #c4b5fd; }
+  .tag-red { background: rgba(239,68,68,0.15); color: #fca5a5; }
+
+  /* Separator */
+  .sep { border: none; border-top: 1px solid rgba(99,102,241,0.1); margin: 24px 0; }
+
+  /* Comparison table */
+  .comp-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  .comp-table th { text-align: left; padding: 8px 12px; background: rgba(99,102,241,0.08); color: #a5b4fc; font-weight: 600; border-bottom: 1px solid rgba(99,102,241,0.15); }
+  .comp-table td { padding: 8px 12px; border-bottom: 1px solid rgba(99,102,241,0.08); color: #94a3b8; }
+  .comp-table td:first-child { color: #e2e8f0; font-weight: 500; }
+
+  /* Sandboxvisual */
+  .sandbox-visual { display: flex; gap: 16px; margin: 16px 0; }
+  .sandbox-box { flex: 1; border: 2px dashed rgba(99,102,241,0.3); border-radius: 12px; padding: 16px; position: relative; }
+  .sandbox-box .sandbox-label { position: absolute; top: -10px; left: 16px; background: #0a0a0f; padding: 0 8px; font-size: 11px; color: #818cf8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* Execution log mockup */
+  .exec-log { margin: 12px 0; }
+  .exec-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 8px; margin: 4px 0; background: rgba(15,15,25,0.5); border: 1px solid rgba(99,102,241,0.08); font-size: 12px; }
+  .exec-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .exec-dot.green { background: #10b981; }
+  .exec-dot.red { background: #ef4444; }
+  .exec-dot.yellow { background: #eab308; }
+  .exec-dot.blue { background: #6366f1; }
+  .exec-type { color: #94a3b8; width: 100px; flex-shrink: 0; }
+  .exec-detail { color: #e2e8f0; flex: 1; }
+  .exec-time { color: #64748b; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+  /* Keyboard hint */
+  .kb-hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: rgba(15,15,25,0.9); border: 1px solid rgba(99,102,241,0.15); border-radius: 8px; padding: 8px 16px; font-size: 11px; color: #64748b; z-index: 10; }
+  kbd { background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2); border-radius: 4px; padding: 2px 6px; font-size: 10px; color: #a5b4fc; }
+</style>
+</head>
+<body>
+
+<div class="app" id="app"></div>
+
+<script>
+const slides = [
+  // SLIDE 0: TITLE
+  () => `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;">
+      <div style="font-size:48px;font-weight:800;background:linear-gradient(135deg,#c7d2fe,#818cf8,#6366f1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:12px;">TaskClaw</div>
+      <div style="font-size:24px;color:#94a3b8;margin-bottom:8px;">Unified Architecture</div>
+      <div style="font-size:14px;color:#64748b;margin-bottom:40px;">Merging Multi-Backbone + Autonomous Org + Multi-Agent + Tool Handling</div>
+      <div style="font-size:13px;color:#4f46e5;font-weight:600;letter-spacing:2px;text-transform:uppercase;">Human Pilot, AI Engine</div>
+      <div style="margin-top:48px;font-size:12px;color:#475569;">April 2026 &mdash; Fernando Ott</div>
+    </div>
+  `,
+
+  // SLIDE 1: HIERARCHY
+  () => `
+    <h1>The Hierarchy</h1>
+    <p class="subtitle">Workspace &rarr; Cockpit &rarr; Pod &rarr; Board &rarr; Column &rarr; Task</p>
+
+    <div class="diagram">
+      <div class="diagram-title">Organizational Structure</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="hier-box l0"><span class="icon">🏢</span><div><div class="name">Workspace</div><div class="desc">Tenant boundary. Billing, members, permissions. One per customer.</div></div></div>
+        <div class="hier-box l1"><span class="icon">🎛️</span><div><div class="name">Cockpit <span class="tag tag-purple">VIEW ONLY</span></div><div class="desc">Derived view at Workspace or Pod level. No data model. The human's command surface.</div></div></div>
+        <div class="hier-box l2"><span class="icon">🔷</span><div><div class="name">Pod <span class="tag tag-green">NEW</span></div><div class="desc">Groups Boards by purpose. Has optional AI agent + backbone setting. "Marketing Pod", "Engineering Pod".</div></div></div>
+        <div class="hier-box l3"><span class="icon">📋</span><div><div class="name">Board</div><div class="desc">A single Kanban workflow. Belongs to one Pod. Has sync config, AI config, routes.</div></div></div>
+        <div class="hier-box l4"><span class="icon">📊</span><div><div class="name">Column</div><div class="desc">A stage in the workflow. Where AI behavior is configured. Agent config lives here.</div></div></div>
+        <div class="hier-box l5"><span class="icon">✅</span><div><div class="name">Task</div><div class="desc">A unit of work. Lives in a Column. Can have dependencies and DAG membership.</div></div></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-title">Cockpit &ne; Data Entity</div>
+        <div class="card-body">No <code>cockpits</code> table. No foreign keys. A Cockpit is a UI lens that queries Pods or Boards beneath its scope. Can be renamed with zero migration cost. Exists at two scopes: Workspace (god view) and Pod (operational view).</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Column = Agent Behavior</div>
+        <div class="card-body">The Column is the unit of work-stage + AI-behavior. Categories (agent types) become reusable templates you stamp onto Columns. Each Column can override. No separate "Agent" entity in the data model.</div>
+      </div>
+    </div>
+  `,
+
+  // SLIDE 2: BACKBONE SYSTEM
+  () => `
+    <h1>Layer 0: Backbone System</h1>
+    <p class="subtitle">Multi-provider AI routing &mdash; already merged, extended for the unified architecture</p>
+
+    <div class="diagram">
+      <div class="diagram-title">Resolution Cascade (priority order)</div>
+      <div class="cascade">
+        <div class="cascade-item"><div class="cascade-num">1</div><div><span class="cascade-label">Column</span> <span class="cascade-desc">&mdash; column.backbone_connection_id (most specific)</span></div></div>
+        <div class="cascade-item"><div class="cascade-num">2</div><div><span class="cascade-label">Board</span> <span class="cascade-desc">&mdash; board.default_backbone_connection_id</span></div></div>
+        <div class="cascade-item"><div class="cascade-num">3</div><div><span class="cascade-label">Category</span> <span class="cascade-desc">&mdash; category.preferred_backbone_connection_id (template hint)</span></div></div>
+        <div class="cascade-item new"><div class="cascade-num">4</div><div><span class="cascade-label">Pod</span> <span class="cascade-desc">&mdash; pod.backbone_connection_id</span><span class="cascade-tag">NEW</span></div></div>
+        <div class="cascade-item"><div class="cascade-num">5</div><div><span class="cascade-label">Workspace Default</span> <span class="cascade-desc">&mdash; backbone_connections WHERE is_default = TRUE</span></div></div>
+      </div>
+    </div>
+
+    <div class="diagram">
+      <div class="diagram-title">Adapter Registry</div>
+      <div class="arch-row">
+        <div class="arch-block green"><div class="label">OpenClaw</div><div class="sublabel">WebSocket &bull; Agent &bull; Tools</div></div>
+        <div class="arch-block orange"><div class="label">Anthropic</div><div class="sublabel">HTTP &bull; tool_use &bull; Extended thinking</div></div>
+        <div class="arch-block"><div class="label">OpenRouter</div><div class="sublabel">HTTP &bull; Multi-model</div></div>
+        <div class="arch-block purple"><div class="label">NemoClaw</div><div class="sublabel">WebSocket &bull; Agent</div></div>
+      </div>
+      <div class="arch-row">
+        <div class="arch-block"><div class="label">Codex (OpenAI)</div><div class="sublabel">HTTP &bull; Code interpreter</div></div>
+        <div class="arch-block"><div class="label">Ollama</div><div class="sublabel">HTTP &bull; Local &bull; Privacy</div></div>
+        <div class="arch-block"><div class="label">ZeroClaw</div><div class="sublabel">WebSocket &bull; Lightweight</div></div>
+        <div class="arch-block"><div class="label">Custom HTTP</div><div class="sublabel">OpenAI-compatible</div></div>
+      </div>
+    </div>
+
+    <p>Each adapter implements <code>BackboneAdapter</code>: <code>sendMessage()</code>, <code>healthCheck()</code>, <code>validateConfig()</code>, plus capability flags: <code>supports_tool_use</code>, <code>supports_streaming</code>, <code>supports_agent_mode</code>.</p>
+  `,
+
+  // SLIDE 3: POD SYSTEM
+  () => `
+    <h1>Layer 1: Pod System</h1>
+    <p class="subtitle">Organizational containers with AI coordination</p>
+
+    <div class="diagram">
+      <div class="diagram-title">Pod Architecture</div>
+      <div style="display:flex;gap:16px;">
+        <div style="flex:1;">
+          <div class="arch-block primary" style="margin-bottom:8px;text-align:left;padding:16px;">
+            <div class="label">🔷 Marketing Pod</div>
+            <div class="sublabel" style="margin-top:8px;">Pod AI Agent &bull; backbone: OpenClaw</div>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+              <div class="tag tag-indigo">Content Board</div>
+              <div class="tag tag-indigo">Social Media Board</div>
+              <div class="tag tag-indigo">Analytics Board</div>
+            </div>
+          </div>
+          <div class="arch-block green" style="text-align:left;padding:16px;">
+            <div class="label">🔷 Engineering Pod</div>
+            <div class="sublabel" style="margin-top:8px;">Pod AI Agent &bull; backbone: Anthropic</div>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+              <div class="tag tag-green">Sprint Board</div>
+              <div class="tag tag-green">Bug Triage Board</div>
+              <div class="tag tag-green">DevOps Board</div>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1;">
+          <h3>Pod Capabilities</h3>
+          <p style="font-size:13px;color:#94a3b8;line-height:1.8;">
+            <strong>Coordinate:</strong> Review all boards, route tasks, generate status reports, spot blockers<br>
+            <strong>Decompose:</strong> Accept goals via Pod chat, break them into task DAGs across its boards<br>
+            <strong>Create:</strong> Spin up new Boards, Columns, and Tasks via native SKILLs<br>
+            <strong>Observe:</strong> Pod Cockpit shows aggregate status of all boards
+          </p>
+          <h3>Pod Data Model</h3>
+          <p style="font-size:12px;color:#64748b;font-family:monospace;line-height:1.8;">
+            id: uuid PK<br>
+            workspace_id: uuid FK<br>
+            name, slug, description, icon, color<br>
+            backbone_connection_id: uuid FK (nullable)<br>
+            agent_config: jsonb<br>
+            position: integer
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">Pod Chat = Coordinator Interface</div>
+      <div class="card-body">Every Pod has a chat. The human (or heartbeat) sends a goal: "Launch Q2 campaign for client X." The Pod AI decomposes it into a task DAG across the Pod's Boards. Tasks appear on Boards as real, visible Kanban cards. The Pod AI can also create new Boards on the fly via native SKILLs if the goal requires a workflow that doesn't exist yet.</div>
+    </div>
+  `,
+
+  // SLIDE 4: COCKPIT
+  () => `
+    <h1>The Cockpit</h1>
+    <p class="subtitle">The human's command surface &mdash; a derived view, not a data entity</p>
+
+    <div class="grid-2">
+      <div class="diagram">
+        <div class="diagram-title">Workspace Cockpit</div>
+        <div style="padding:8px;">
+          <p style="font-size:13px;color:#94a3b8;margin-bottom:12px;">Shows ALL Pods. The "god view." For the workspace owner.</p>
+          <div class="arch-row">
+            <div class="arch-block primary"><div class="label">Marketing</div><div class="sublabel">3 boards &bull; 12 active</div></div>
+            <div class="arch-block green"><div class="label">Engineering</div><div class="sublabel">4 boards &bull; 8 active</div></div>
+          </div>
+          <div class="arch-row">
+            <div class="arch-block orange"><div class="label">Sales</div><div class="sublabel">2 boards &bull; 5 active</div></div>
+            <div class="arch-block purple"><div class="label">Operations</div><div class="sublabel">2 boards &bull; 3 active</div></div>
+          </div>
+          <div style="margin-top:12px;padding:10px;background:rgba(99,102,241,0.05);border-radius:8px;border:1px solid rgba(99,102,241,0.1);">
+            <div style="font-size:11px;color:#818cf8;margin-bottom:4px;">WORKSPACE AI CHAT</div>
+            <div style="font-size:12px;color:#94a3b8;">"Onboard new client Acme Corp across Sales, Marketing, and Ops pods"</div>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <div class="diagram-title">Pod Cockpit</div>
+        <div style="padding:8px;">
+          <p style="font-size:13px;color:#94a3b8;margin-bottom:12px;">Shows all Boards in ONE Pod. Operational view for pod managers.</p>
+          <div class="arch-row">
+            <div class="arch-block"><div class="label">Content Pipeline</div><div class="sublabel">4 cols &bull; 6 tasks</div></div>
+            <div class="arch-block"><div class="label">Social Scheduler</div><div class="sublabel">3 cols &bull; 9 tasks</div></div>
+          </div>
+          <div class="arch-row">
+            <div class="arch-block"><div class="label">Analytics</div><div class="sublabel">2 cols &bull; 3 tasks</div></div>
+            <div class="arch-block" style="border-style:dashed;"><div class="label" style="color:#64748b;">+ New Board</div></div>
+          </div>
+          <div style="margin-top:12px;padding:10px;background:rgba(16,185,129,0.05);border-radius:8px;border:1px solid rgba(16,185,129,0.1);">
+            <div style="font-size:11px;color:#34d399;margin-bottom:4px;">POD AI CHAT</div>
+            <div style="font-size:12px;color:#94a3b8;">"Create a blog post series about AI trends, 5 posts, publish weekly"</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Key Design Decision: No CEO Agent</div>
+      <div class="card-body">The Workspace Cockpit has an AI chat, but it's not a named persona. It's "the Workspace AI" &mdash; accessible when the human opens the Cockpit. It can decompose cross-Pod goals, review status, suggest priorities. But it only acts when the human engages it (or via configured heartbeat). <strong>The human is always the pilot.</strong></div>
+    </div>
+  `,
+
+  // SLIDE 5: TASK FLOW & DEPENDENCIES
+  () => `
+    <h1>Layer 2: Task Flow &amp; Dependencies</h1>
+    <p class="subtitle">Unified model for structural pipelines and dynamic decomposition</p>
+
+    <div class="grid-2">
+      <div class="diagram">
+        <div class="diagram-title">Board Routes (Structural Pipelines)</div>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:12px;">Predefined, repeatable. "Every approved draft goes to publishing."</p>
+        <div class="flow">
+          <div class="flow-step">Content Board &rarr; Done</div>
+          <div class="flow-arrow">&rarr;</div>
+          <div class="flow-step active">Distribution Board &rarr; Queue</div>
+        </div>
+        <div style="margin-top:12px;font-size:12px;color:#64748b;">
+          Triggers: <span class="tag tag-green">auto</span> <span class="tag tag-indigo">ai_decision</span> <span class="tag tag-orange">manual</span>
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:#94a3b8;">
+          Transform config maps fields. Cycle detection at creation. Max depth = 5.
+        </div>
+      </div>
+      <div class="diagram">
+        <div class="diagram-title">Task DAGs (Dynamic Decomposition)</div>
+        <p style="font-size:12px;color:#94a3b8;margin-bottom:12px;">Ad-hoc. Coordinator breaks a goal into dependent tasks.</p>
+        <div style="font-family:monospace;font-size:11px;color:#a5b4fc;line-height:1.8;background:rgba(0,0,0,0.3);padding:12px;border-radius:8px;">
+          Goal: "Launch Q2 campaign"<br>
+          <br>
+          [A] Research competitors &nbsp; (no deps)<br>
+          [B] Write copy &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (depends: A)<br>
+          [C] Design assets &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (depends: A)<br>
+          [D] Schedule posts &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (depends: B, C)<br>
+          [E] Setup analytics &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; (depends: D)
+        </div>
+      </div>
+    </div>
+
+    <div class="diagram">
+      <div class="diagram-title">Unified Dependency Model</div>
+      <p style="font-size:13px;color:#94a3b8;margin-bottom:12px;">One table handles BOTH board-route transfers and DAG dependencies. No parallel systems.</p>
+      <table class="comp-table">
+        <tr><th>Table</th><th>Purpose</th><th>Key Columns</th></tr>
+        <tr><td>task_dependencies</td><td>All task-to-task relationships</td><td>source_task_id, target_task_id, dep_type (route | dag | manual), route_id (nullable), dag_id (nullable)</td></tr>
+        <tr><td>task_dags</td><td>Group tasks in an execution graph</td><td>id, pod_id, board_id, workspace_id, goal, status, created_by</td></tr>
+        <tr><td>board_routes</td><td>Define structural pipelines</td><td>source_board + column &rarr; target_board + column, trigger, transform_config</td></tr>
+      </table>
+      <p style="font-size:12px;color:#64748b;margin-top:8px;">When a board route fires, it creates a <code>task_dependency</code> of type "route." When a coordinator decomposes, it creates dependencies of type "dag." One <code>DAGExecutorService</code> resolves both.</p>
+    </div>
+  `,
+
+  // SLIDE 6: TOOL REGISTRY & SANDBOX
+  () => `
+    <h1>Layer 3: Tool Registry &amp; Sandbox</h1>
+    <p class="subtitle">TaskClaw orchestrates. Backbone executes. The backbone IS the sandbox.</p>
+
+    <div class="diagram">
+      <div class="diagram-title">The Three Pillars</div>
+      <div class="arch-row">
+        <div class="arch-block primary">
+          <div class="label">Skills</div>
+          <div class="sublabel">"How to make an avatar video"</div>
+          <div class="sublabel" style="margin-top:4px;">Process steps + consistency rules</div>
+        </div>
+        <div class="arch-block green">
+          <div class="label">Tool Registry</div>
+          <div class="sublabel">"What tools are available"</div>
+          <div class="sublabel" style="margin-top:4px;">integration_tools table</div>
+        </div>
+        <div class="arch-block orange">
+          <div class="label">Credential Context</div>
+          <div class="sublabel">"Here are the keys"</div>
+          <div class="sublabel" style="margin-top:4px;">Decrypted per-session</div>
+        </div>
+      </div>
+      <div class="arrow">&darr; combined into backbone message &darr;</div>
+      <div class="arch-block purple wide" style="max-width:100%;">
+        <div class="label">Backbone Sandbox</div>
+        <div class="sublabel">Receives scoped context. Executes tools in isolation. Returns results via MCP callback.</div>
+      </div>
+    </div>
+
+    <div class="sandbox-visual">
+      <div class="sandbox-box">
+        <div class="sandbox-label">TaskClaw (Orchestrator)</div>
+        <div style="font-size:12px;color:#94a3b8;line-height:1.8;padding-top:8px;">
+          1. Resolve which backbone handles this task<br>
+          2. Read skill's <code>required_tools</code><br>
+          3. Resolve tools from <code>integration_tools</code><br>
+          4. Decrypt credentials for this workspace<br>
+          5. Build <code>tool_context</code> payload<br>
+          6. Send everything to backbone
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;color:#4f46e5;font-size:24px;padding:0 8px;">&rarr;</div>
+      <div class="sandbox-box">
+        <div class="sandbox-label">Backbone (Sandbox)</div>
+        <div style="font-size:12px;color:#94a3b8;line-height:1.8;padding-top:8px;">
+          1. Receive scoped tool_context<br>
+          2. Follow skill process steps<br>
+          3. Call external APIs using provided creds<br>
+          4. Return results via MCP <code>update_task</code><br>
+          5. Isolated per session/task<br>
+          <span style="color:#ef4444;">6. If can't execute tools &rarr; cascade to capable backbone or REFUSE</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Hard Rule: TaskClaw Never Executes External Tools</div>
+      <div class="card-body">If the assigned backbone has <code>supports_tool_use: false</code> and the task requires tools, the cascade falls through to the next backbone that supports tools. If none exist, return an error: "This task requires tools but no connected backbone supports execution." Zero tool execution code in TaskClaw's backend.</div>
+    </div>
+  `,
+
+  // SLIDE 7: AUTONOMY
+  () => `
+    <h1>Layer 4: Autonomy &amp; Execution</h1>
+    <p class="subtitle">Two triggers, one execution engine, full observability</p>
+
+    <div class="grid-2">
+      <div class="diagram">
+        <div class="diagram-title">Heartbeat (Time-Triggered)</div>
+        <div style="font-size:12px;color:#94a3b8;line-height:1.8;">
+          <strong>Board heartbeat:</strong> BullMQ cron job wakes the board AI. Agent scans for pending tasks, processes them, goes back to sleep.<br><br>
+          <strong>Pod heartbeat:</strong> Pod AI reviews all boards, reprioritizes, triggers cross-board transfers, escalates blockers.<br><br>
+          <strong>Safety:</strong> max_tasks_per_run, circuit breaker (3 consecutive failures &rarr; auto-disable), dry-run mode, timeout (5 min default).
+        </div>
+      </div>
+      <div class="diagram">
+        <div class="diagram-title">DAG Executor (Event-Triggered)</div>
+        <div style="font-size:12px;color:#94a3b8;line-height:1.8;">
+          <strong>Dependency resolution:</strong> When Task A completes, check if Task B's dependencies are all met. If yes, dispatch to backbone.<br><br>
+          <strong>Cascade failure:</strong> If Task A fails, all downstream tasks in the DAG fail immediately (BFS over reverse dep graph).<br><br>
+          <strong>Scheduling:</strong> Dependency-first strategy &mdash; prioritize tasks that unblock the most others.
+        </div>
+      </div>
+    </div>
+
+    <div class="diagram">
+      <div class="diagram-title">Execution Log (n8n-style &mdash; Unified Activity Feed)</div>
+      <div class="exec-log">
+        <div class="exec-row"><div class="exec-dot green"></div><div class="exec-type"><span class="tag tag-green">heartbeat</span></div><div class="exec-detail">Marketing Pod &rarr; Content Board: processed 3 tasks, moved 2 to "Review"</div><div class="exec-time">14:00:03</div></div>
+        <div class="exec-row"><div class="exec-dot blue"></div><div class="exec-type"><span class="tag tag-indigo">dag</span></div><div class="exec-detail">DAG "Q2 Campaign" &rarr; Task [B] Write copy completed, unblocked [D] Schedule posts</div><div class="exec-time">14:01:12</div></div>
+        <div class="exec-row"><div class="exec-dot green"></div><div class="exec-type"><span class="tag tag-orange">route</span></div><div class="exec-detail">Content Board &rarr; Distribution Board: transferred "AI Trends Blog #3"</div><div class="exec-time">14:01:15</div></div>
+        <div class="exec-row"><div class="exec-dot red"></div><div class="exec-type"><span class="tag tag-red">heartbeat</span></div><div class="exec-detail">Engineering Pod &rarr; DevOps Board: FAILED &mdash; backbone timeout (consecutive: 2/3)</div><div class="exec-time">14:04:00</div></div>
+        <div class="exec-row"><div class="exec-dot yellow"></div><div class="exec-type"><span class="tag tag-purple">tool</span></div><div class="exec-detail">ElevenLabs TTS &rarr; 429 rate limit, retrying in 30s (task: Avatar #12)</div><div class="exec-time">14:04:22</div></div>
+      </div>
+      <p style="font-size:12px;color:#64748b;">Each row links to the full conversation trace. Filterable by Pod, Board, trigger type, status. Expandable to show tool calls, backbone responses, and error details.</p>
+    </div>
+  `,
+
+  // SLIDE 8: FULL ARCHITECTURE
+  () => `
+    <h1>Full Architecture Overview</h1>
+    <p class="subtitle">All layers composed</p>
+
+    <div class="diagram">
+      <div class="diagram-title">TaskClaw Unified Architecture</div>
+
+      <div style="text-align:center;margin-bottom:8px;">
+        <div class="arch-block primary" style="display:inline-block;width:auto;padding:8px 32px;">
+          <div class="label">🎛️ Cockpit (Workspace / Pod)</div>
+          <div class="sublabel">Human command surface + AI chat</div>
+        </div>
+      </div>
+      <div class="arrow">&darr;</div>
+
+      <div class="arch-row">
+        <div class="arch-block green">
+          <div class="label">Pod System</div>
+          <div class="sublabel">Organization + AI Coordination</div>
+        </div>
+        <div class="arch-block purple">
+          <div class="label">Task Orchestration</div>
+          <div class="sublabel">DAGs + Routes + Dependencies</div>
+        </div>
+        <div class="arch-block orange">
+          <div class="label">Autonomy Engine</div>
+          <div class="sublabel">Heartbeats + DAG Executor</div>
+        </div>
+      </div>
+      <div class="arrow">&darr;</div>
+
+      <div class="arch-row">
+        <div class="arch-block primary wide">
+          <div class="label">Backbone Router</div>
+          <div class="sublabel">Resolution Cascade: Column &rarr; Board &rarr; Category &rarr; Pod &rarr; Workspace</div>
+        </div>
+        <div class="arch-block">
+          <div class="label">Tool Registry</div>
+          <div class="sublabel">integration_tools + credential context</div>
+        </div>
+      </div>
+      <div class="arrow">&darr;</div>
+
+      <div class="arch-row">
+        <div class="arch-block green"><div class="label">OpenClaw</div></div>
+        <div class="arch-block orange"><div class="label">Anthropic</div></div>
+        <div class="arch-block"><div class="label">OpenRouter</div></div>
+        <div class="arch-block purple"><div class="label">NemoClaw</div></div>
+        <div class="arch-block"><div class="label">Ollama</div></div>
+        <div class="arch-block"><div class="label">Custom</div></div>
+      </div>
+      <div class="arrow">&darr;</div>
+
+      <div class="arch-row">
+        <div class="arch-block red wide" style="max-width:100%;">
+          <div class="label">External Services (Sandbox Scope)</div>
+          <div class="sublabel">ElevenLabs &bull; Replicate &bull; Slack &bull; HeyGen &bull; Stripe &bull; SendGrid &bull; ...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arch-row" style="margin-top:16px;">
+      <div class="arch-block" style="text-align:left;">
+        <div class="label" style="font-size:12px;">Cross-Cutting: Observability</div>
+        <div class="sublabel">Execution Log &bull; Langfuse traces &bull; Conversation audit trail &bull; Cockpit status aggregation</div>
+      </div>
+      <div class="arch-block" style="text-align:left;">
+        <div class="label" style="font-size:12px;">Cross-Cutting: Persistence</div>
+        <div class="sublabel">Supabase (Postgres + RLS) &bull; BullMQ (Redis) &bull; All data workspace-scoped</div>
+      </div>
+      <div class="arch-block" style="text-align:left;">
+        <div class="label" style="font-size:12px;">Cross-Cutting: Skills &amp; Knowledge</div>
+        <div class="sublabel">Markdown skills (process + required_tools) &bull; Knowledge docs &bull; Synced to backbones</div>
+      </div>
+    </div>
+  `,
+
+  // SLIDE 9: IMPLEMENTATION PHASES
+  () => `
+    <h1>Implementation Phases</h1>
+    <p class="subtitle">Ordered by dependency chain. Each phase ships independently usable value.</p>
+
+    <table class="comp-table">
+      <tr><th>Phase</th><th>What</th><th>Duration</th><th>Dependencies</th><th>Ships</th></tr>
+      <tr>
+        <td><span class="tag tag-indigo">Phase 1</span></td>
+        <td><strong>Backbone Extensions</strong><br>Add AnthropicAdapter, OllamaAdapter. Add supports_tool_use flag. Add tool_context to backbone message.</td>
+        <td>2&ndash;3 weeks</td>
+        <td>Multi-backbone (merged)</td>
+        <td>More backbone choices + tool passing</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-green">Phase 2</span></td>
+        <td><strong>Pod System</strong><br>pods table, pod_id on boards, Pod Cockpit view, Pod AI agent chat, backbone cascade update.</td>
+        <td>3&ndash;4 weeks</td>
+        <td>Phase 1</td>
+        <td>Organizational grouping + Pod AI</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-orange">Phase 3</span></td>
+        <td><strong>Tool Registry</strong><br>integration_tools table, skill required_tools, buildToolContext(), credential passing to backbone.</td>
+        <td>2&ndash;3 weeks</td>
+        <td>Phase 1</td>
+        <td>No-code tool definitions, sandbox model</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-purple">Phase 4</span></td>
+        <td><strong>Task Dependencies &amp; Routes</strong><br>task_dependencies table, task_dags, board_routes, DAGExecutorService, route builder UI.</td>
+        <td>3&ndash;4 weeks</td>
+        <td>Phase 2</td>
+        <td>Inter-board pipelines + DAG execution</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-red">Phase 5</span></td>
+        <td><strong>Autonomy &amp; Observability</strong><br>Heartbeat system, execution log, n8n-style history panel, circuit breakers, Workspace Cockpit.</td>
+        <td>3&ndash;4 weeks</td>
+        <td>Phases 2, 3, 4</td>
+        <td>Full autonomous operation + debugging</td>
+      </tr>
+    </table>
+
+    <div class="diagram" style="margin-top:16px;">
+      <div class="diagram-title">Dependency Graph</div>
+      <div style="font-family:monospace;font-size:12px;color:#a5b4fc;line-height:2;text-align:center;">
+        <span style="background:rgba(99,102,241,0.15);padding:4px 12px;border-radius:6px;">P1: Backbone Ext</span>
+        <br>
+        <span style="color:#4f46e5;">&swarr; &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &searr;</span>
+        <br>
+        <span style="background:rgba(16,185,129,0.12);padding:4px 12px;border-radius:6px;">P2: Pods</span>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        <span style="background:rgba(249,115,22,0.12);padding:4px 12px;border-radius:6px;">P3: Tools</span>
+        <br>
+        <span style="color:#4f46e5;">&searr; &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; &swarr;</span>
+        <br>
+        <span style="background:rgba(139,92,246,0.12);padding:4px 12px;border-radius:6px;">P4: Tasks &amp; Routes</span>
+        <br>
+        <span style="color:#4f46e5;">&darr;</span>
+        <br>
+        <span style="background:rgba(239,68,68,0.12);padding:4px 12px;border-radius:6px;">P5: Autonomy</span>
+      </div>
+    </div>
+
+    <p style="margin-top:16px;"><strong>Total: 13&ndash;18 weeks.</strong> Phases 2 and 3 can run in parallel. Each phase delivers independently usable functionality. The Workspace Cockpit (god view) ships with Phase 5 as the capstone.</p>
+  `,
+
+  // SLIDE 10: KEY DECISIONS SUMMARY
+  () => `
+    <h1>Key Decisions &mdash; Locked</h1>
+    <p class="subtitle">Summary of architectural decisions from the unification discussion</p>
+
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div class="card">
+        <div class="card-title">1. Naming &amp; Hierarchy</div>
+        <div class="card-body">Workspace &rarr; Cockpit &rarr; Pod &rarr; Board &rarr; Column &rarr; Task. Cockpit is a derived view (no data model). Pod replaces "Department." Column absorbs Agent behavior. No "CEO agent" &mdash; the human pilots from the Cockpit.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">2. Backbone Consolidation</div>
+        <div class="card-body">One adapter interface (from merged Multi-Backbone PRD). All new adapters (Anthropic, Ollama) implement it. Resolution cascade adds Pod level. Capability flags (supports_tool_use, supports_agent_mode) drive fallback behavior.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">3. Dual Flow Model</div>
+        <div class="card-body">Board routes = structural pipelines (repeatable, predefined). Task DAGs = dynamic decomposition (ad-hoc, coordinator-generated). Both create entries in the same task_dependencies table. One DAGExecutorService resolves both.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">4. Tool Execution: Never in TaskClaw</div>
+        <div class="card-body">TaskClaw maintains the tool registry and passes tool_context to backbones. Backbones execute in isolation (sandbox model). If backbone can't execute tools &rarr; cascade to one that can &rarr; or refuse. Zero external API call code in TaskClaw backend.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">5. Autonomy: Two Triggers</div>
+        <div class="card-body">Heartbeats (time-triggered, BullMQ cron) + DAG Executor (event-triggered, dependency resolution). Both feed into a unified execution log with n8n-style history panel for debugging.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">6. Pod Intelligence</div>
+        <div class="card-body">Pods have AI chat for goal decomposition into task DAGs. Pods can create new Boards on the fly via native SKILLs. Pod Cockpit shows aggregate status. Workspace Cockpit chat handles cross-Pod coordination.</div>
+      </div>
+    </div>
+
+    <hr class="sep">
+    <p style="text-align:center;color:#64748b;font-size:13px;">Next step: Write the unified PRD incorporating all decisions above.</p>
+  `
+];
+
+let currentSlide = 0;
+
+function render() {
+  const app = document.getElementById('app');
+  const progress = ((currentSlide + 1) / slides.length) * 100;
+
+  app.innerHTML = `
+    <div class="nav">
+      <div class="nav-title">TaskClaw Unified Architecture</div>
+      <div class="nav-controls">
+        <button class="nav-btn" onclick="prev()" ${currentSlide === 0 ? 'disabled' : ''}>&larr; Previous</button>
+        <span class="nav-counter">${currentSlide + 1} / ${slides.length}</span>
+        <button class="nav-btn" onclick="next()" ${currentSlide === slides.length - 1 ? 'disabled' : ''}>Next &rarr;</button>
+      </div>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
+    <div class="slide-container">
+      <div class="slide" key="${currentSlide}">
+        ${slides[currentSlide]()}
+      </div>
+    </div>
+    <div class="kb-hint">Navigate: <kbd>&larr;</kbd> <kbd>&rarr;</kbd> arrow keys or click buttons</div>
+  `;
+}
+
+function next() { if (currentSlide < slides.length - 1) { currentSlide++; render(); } }
+function prev() { if (currentSlide > 0) { currentSlide--; render(); } }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next(); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+});
+
+render();
+</script>
+</body>
+</html>

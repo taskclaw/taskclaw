@@ -1,340 +1,666 @@
 {
-  "project": "Three Backbone Implementations: OpenClaw, Claude Code CLI, NemoClaw",
-  "created": "2026-04-04",
-  "total": 26,
-  "completed": 26,
+  "project": "Cockpit + Unified Architecture (PRD-Unified-Architecture v1.0)",
+  "created": "2026-04-06",
+  "total": 54,
+  "completed": 54,
   "features": [
     {
-      "id": "F101",
-      "name": "Apply DB migrations to running Docker instance",
-      "group": "openclaw",
+      "id": "M01",
+      "name": "pods table migration",
+      "group": "migrations",
       "status": "pass",
-      "spec": "Run all 3 backbone migrations (20260330000001/2/3) against Docker Supabase so backbone_definitions and backbone_connections tables exist",
+      "spec": "Create pods table with RLS and all columns per PRD Section 6.2",
       "depends_on": [],
-      "test": "curl -s http://localhost:3003/accounts/{id}/backbone/definitions returns 200 with openclaw in the list",
-      "completed_at": "2026-04-04",
-      "notes": "Migration schema fixed (backbone_type TEXT instead of definition_id FK, config JSONB instead of config_encrypted TEXT, correct health_status CHECK values). Applied to taskclaw-db-1. 7 backbone_definitions seeded."
+      "test": "SELECT * FROM pods WHERE account_id = 'x' returns empty array without error",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F102",
-      "name": "OpenClaw: verify healthCheck against Docker OpenClaw (if running) or return proper error",
-      "group": "openclaw",
+      "id": "M02",
+      "name": "pod_id FKs on board_instances and conversations",
+      "group": "migrations",
       "status": "pass",
-      "spec": "POST /backbone/connections/:id/verify with openclaw config \u2192 returns { healthy: true/false, latencyMs, error? }. If no OpenClaw server running, returns healthy=false with clear error (not 500).",
+      "spec": "Add nullable pod_id FK to board_instances and conversations with indexes",
       "depends_on": [
-        "F101"
+        "M01"
       ],
-      "test": "API returns 200 JSON with healthy field, never 500",
-      "completed_at": "2026-04-04",
-      "notes": "Adapter reviewed: all interface signatures match exactly. No mismatches found."
+      "test": "SELECT pod_id FROM board_instances LIMIT 1 \u2014 column exists, nullable",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F103",
-      "name": "OpenClaw: end-to-end message routing through BackboneRouter \u2192 OpenClawAdapter",
-      "group": "openclaw",
+      "id": "M03",
+      "name": "board_routes, task_dags, task_dependencies tables",
+      "group": "migrations",
       "status": "pass",
-      "spec": "When a backbone_connection (openclaw) is set as account default, sendMessage() routes to BackboneRouterService \u2192 OpenClawAdapter (verified by log: 'Routing to openclaw'). Legacy fallback should NOT fire.",
+      "spec": "Create 3 task-flow tables per PRD Section 7.8",
       "depends_on": [
-        "F102"
+        "M01"
       ],
-      "test": "Backend log shows 'Routing to openclaw (account_default)' when sending message",
-      "completed_at": "2026-04-04",
-      "notes": "backbone_connections table now has backbone_type TEXT NOT NULL. Router registry.get(conn.backbone_type) will resolve correctly. tsc --noEmit exits 0."
+      "test": "All 3 tables exist with correct FK constraints",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F201",
-      "name": "Claude Code CLI: new migration updating backbone_definitions for local CLI",
-      "group": "claude-code",
+      "id": "M04",
+      "name": "tasks.result and tasks.dag_id columns",
+      "group": "migrations",
       "status": "pass",
-      "spec": "Migration 20260404000001: UPDATE backbone_definitions SET protocol='cli', config_schema='{\"type\":\"object\",\"properties\":{\"model\":{\"type\":\"string\",\"title\":\"Model\",\"default\":\"claude-sonnet-4-6\"},\"workspace_path\":{\"type\":\"string\",\"title\":\"Workspace Path (optional)\"},\"system_prompt_prefix\":{\"type\":\"string\",\"title\":\"System Prompt Prefix (optional)\"}},\"required\":[]}' WHERE slug='claude-code'",
+      "spec": "ALTER TABLE tasks ADD COLUMN result jsonb; ADD COLUMN dag_id uuid FK task_dags",
       "depends_on": [
-        "F101"
+        "M03"
       ],
-      "test": "backbone_definitions.slug='claude-code' has protocol='cli' and no required fields",
-      "completed_at": "2026-04-04"
+      "test": "SELECT result, dag_id FROM tasks LIMIT 1 \u2014 columns exist",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F202",
-      "name": "Claude Code CLI: rewrite adapter to use child_process subprocess",
-      "group": "claude-code",
+      "id": "M05",
+      "name": "integration_tools table",
+      "group": "migrations",
       "status": "pass",
-      "spec": "Rewrite backend/src/backbone/adapters/claude-code.adapter.ts: slug='claude-code', sendMessage() spawns `claude --print --output-format json` with message piped to stdin, captures stdout JSON (has .result field), no HTTP, no api_key needed. transformSystemPrompt() writes CLAUDE.md-style context. supportsNativeSkillInjection()=false.",
-      "depends_on": [
-        "F201"
-      ],
-      "test": "Adapter compiles. With `claude` in PATH, sendMessage({config:{}, message:'hello'}) returns text response.",
-      "completed_at": "2026-04-04"
+      "spec": "Create integration_tools table per PRD Section 8.9",
+      "depends_on": [],
+      "test": "Insert + select round-trip succeeds",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F203",
-      "name": "Claude Code CLI: healthCheck runs `claude --version`",
-      "group": "claude-code",
+      "id": "M06",
+      "name": "heartbeat_configs and execution_log tables",
+      "group": "migrations",
       "status": "pass",
-      "spec": "healthCheck() runs `claude --version` as subprocess. If exit code 0: return {healthy:true, latencyMs, metadata:{version}}. If not found: return {healthy:false, error:'claude CLI not found in PATH'}.",
+      "spec": "Create both autonomy tables per PRD Section 9.6",
       "depends_on": [
-        "F202"
+        "M01"
       ],
-      "test": "healthCheck({}) returns healthy=true on this machine (claude is installed)",
-      "completed_at": "2026-04-04"
+      "test": "Insert heartbeat_config with cron_expression, verify FK cascades",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F204",
-      "name": "Claude Code CLI: validateConfig allows empty config",
-      "group": "claude-code",
+      "id": "M07",
+      "name": "Seed Anthropic and Ollama backbone definitions",
+      "group": "migrations",
       "status": "pass",
-      "spec": "validateConfig({}) does NOT throw (all fields optional). validateConfig({workspace_path:'/bad'}) throws if path doesn't exist.",
-      "depends_on": [
-        "F202"
-      ],
-      "test": "validateConfig({}) passes; validateConfig({workspace_path:'/nonexistent'}) throws BadRequestException",
-      "completed_at": "2026-04-04"
+      "spec": "INSERT into backbone_definitions for slug=anthropic and slug=ollama",
+      "depends_on": [],
+      "test": "SELECT slug FROM backbone_definitions WHERE slug IN ('anthropic','ollama') returns 2 rows",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F205",
-      "name": "Claude Code CLI: apply migration + verify API returns updated schema",
-      "group": "claude-code",
+      "id": "B01",
+      "name": "AnthropicAdapter",
+      "group": "backbone",
       "status": "pass",
-      "spec": "Apply migration F201 to Docker. GET /backbone/definitions returns claude-code with protocol='cli' and empty required[].",
+      "spec": "backend/src/backbone/adapters/anthropic.adapter.ts \u2014 Anthropic Messages API, SSE streaming, supportsToolExecution=true",
       "depends_on": [
-        "F201"
+        "M07"
       ],
-      "test": "GET /backbone/definitions \u2192 claude-code entry shows protocol: 'cli'",
-      "completed_at": "2026-04-04"
+      "test": "healthCheck({ api_key: ANTHROPIC_API_KEY }) returns { healthy: true }",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F206",
-      "name": "Claude Code CLI: BackboneSendOptions 'message' field passed correctly to subprocess",
-      "group": "claude-code",
+      "id": "B02",
+      "name": "OllamaAdapter",
+      "group": "backbone",
       "status": "pass",
-      "spec": "The BackboneRouterService passes message, history, systemPrompt to adapter.sendMessage(). ClaudeCodeAdapter builds the full prompt from these and passes to `claude --print`. Verify field mapping is correct.",
+      "spec": "backend/src/backbone/adapters/ollama.adapter.ts \u2014 Ollama REST API, NDJSON streaming, supportsToolExecution=false",
       "depends_on": [
-        "F202"
+        "M07"
       ],
-      "test": "tsc --noEmit passes; sendMessage() with history array builds correct prompt string",
-      "completed_at": "2026-04-04"
+      "test": "With Ollama Docker running, healthCheck returns healthy",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F301",
-      "name": "NemoClaw: new migration adding backbone_definitions row",
-      "group": "nemoclaw",
+      "id": "B03",
+      "name": "supportsToolExecution on BackboneAdapter interface",
+      "group": "backbone",
       "status": "pass",
-      "spec": "Migration 20260404000002: INSERT INTO backbone_definitions (name='NemoClaw', slug='nemoclaw', protocol='http', supports_streaming=true, supports_agent_mode=true, supports_tool_use=true, icon='cpu', color='#76b900', config_schema='{api_url required, model required, api_key optional, max_tokens optional}')",
-      "depends_on": [
-        "F101"
-      ],
-      "test": "GET /backbone/definitions includes nemoclaw with icon='cpu' and color='#76b900' (NVIDIA green)",
-      "completed_at": "2026-04-04"
+      "spec": "Add optional supportsToolExecution?(): boolean and ToolContextDefinition to backbone-adapter.interface.ts",
+      "depends_on": [],
+      "test": "Existing adapters compile without changes (method is optional)",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F302",
-      "name": "NemoClaw: implement nemoclaw.adapter.ts",
-      "group": "nemoclaw",
+      "id": "B04",
+      "name": "Register Anthropic and Ollama adapters in BackboneModule",
+      "group": "backbone",
       "status": "pass",
-      "spec": "Create backend/src/backbone/adapters/nemoclaw.adapter.ts: slug='nemoclaw'. NeMo Microservice is OpenAI-compatible REST. sendMessage() POSTs to {api_url}/v1/chat/completions with Bearer auth (optional). SSE streaming. healthCheck() tries GET {api_url}/health then /v1/models. validateConfig() requires api_url and model.",
+      "spec": "Add to providers array, inject in constructor, register in onModuleInit()",
       "depends_on": [
-        "F301"
+        "B01",
+        "B02"
       ],
-      "test": "Adapter compiles and implements full BackboneAdapter interface",
-      "completed_at": "2026-04-04"
+      "test": "Backend logs show 'anthropic, ollama' in adapter list on startup",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F303",
-      "name": "NemoClaw: register in BackboneModule",
-      "group": "nemoclaw",
+      "id": "B05",
+      "name": "Pod-level cascade in BackboneRouterService",
+      "group": "backbone",
       "status": "pass",
-      "spec": "Import NemoClawAdapter in backbone.module.ts, add as @Injectable() provider, register in onModuleInit()",
+      "spec": "Insert Pod step between Category and Account default in resolve() cascade",
       "depends_on": [
-        "F302"
+        "M01",
+        "B03"
       ],
-      "test": "Backend compiles. registry.listSlugs() includes 'nemoclaw'.",
-      "completed_at": "2026-04-04"
+      "test": "Pod with specific backbone connection resolvedFrom === 'pod'",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F304",
-      "name": "NemoClaw: apply migration, verify API returns nemoclaw definition",
-      "group": "nemoclaw",
+      "id": "P01",
+      "name": "CreatePodDto and UpdatePodDto",
+      "group": "pods",
       "status": "pass",
-      "spec": "Apply migration F301 to Docker. GET /backbone/definitions returns nemoclaw entry.",
+      "spec": "DTOs with validation decorators, auto-slugify name if slug not provided",
       "depends_on": [
-        "F301"
+        "M01"
       ],
-      "test": "GET /backbone/definitions \u2192 nemoclaw with correct config_schema",
-      "completed_at": "2026-04-04"
+      "test": "class-validator rejects empty name, accepts valid payload",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F401",
-      "name": "Backend compiles clean: tsc --noEmit = 0 errors",
-      "group": "integration",
+      "id": "P02",
+      "name": "PodsService",
+      "group": "pods",
       "status": "pass",
-      "spec": "All 3 adapter changes (openclaw validated, claude-code rewritten, nemoclaw new) compile without TypeScript errors",
+      "spec": "backend/src/pods/pods.service.ts \u2014 CRUD mirroring BoardsService pattern",
       "depends_on": [
-        "F103",
-        "F206",
-        "F303"
+        "P01"
       ],
-      "test": "cd backend && npx tsc --noEmit exits 0",
-      "completed_at": "2026-04-04"
+      "test": "CRUD round-trip: create pod, fetch by slug, update name, delete",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F402",
-      "name": "BackboneModule registers all adapters: listSlugs() includes openclaw, claude-code, nemoclaw",
-      "group": "integration",
+      "id": "P03",
+      "name": "PodsController",
+      "group": "pods",
       "status": "pass",
-      "spec": "GET /accounts/:id/backbone/definitions returns definitions for all adapters registered in registry. At minimum: openclaw, claude-code, nemoclaw, openrouter, codex, custom-http.",
+      "spec": "backend/src/pods/pods.controller.ts \u2014 REST endpoints at /accounts/:accountId/pods",
       "depends_on": [
-        "F401"
+        "P02"
       ],
-      "test": "API response includes all 6+ slugs",
-      "completed_at": "2026-04-04"
+      "test": "GET /accounts/:id/pods returns 200 with empty array for new account",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F403",
-      "name": "Resolution cascade: step override > board override > account default",
-      "group": "integration",
+      "id": "P04",
+      "name": "PodsModule registered in AppModule",
+      "group": "pods",
       "status": "pass",
-      "spec": "Create 3 backbone_connections (openclaw, claude-code, nemoclaw). Set account default=openclaw. Set board default=claude-code. Set step override=nemoclaw. Verify router resolves: step \u2192 nemoclaw, board (no step) \u2192 claude-code, account \u2192 openclaw.",
+      "spec": "Create pods.module.ts and add to app.module.ts imports",
       "depends_on": [
-        "F402"
+        "P03"
       ],
-      "test": "Backend log shows correct resolvedFrom at each level",
-      "completed_at": "2026-04-04"
+      "test": "Backend starts without DI errors; /accounts/:id/pods returns 200",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F404",
-      "name": "Agent-level backbone: category preferred_backbone_connection_id respected",
-      "group": "integration",
+      "id": "P05",
+      "name": "ConversationsService pod_id support",
+      "group": "pods",
       "status": "pass",
-      "spec": "Set preferred_backbone_connection_id on a category (AI agent). When resolving with only categoryId (no step/board override), router uses category's backbone.",
+      "spec": "Add pod_id to CreateConversationDto, findAll filter, create(), sendMessage() backbone routing",
       "depends_on": [
-        "F402"
+        "M02",
+        "B05"
       ],
-      "test": "resolve({categoryId}) returns resolvedFrom='category'",
-      "completed_at": "2026-04-04"
+      "test": "Create conversation with pod_id, assert it's returned in findOne",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F501",
-      "name": "UI: AI Backbones settings page loads and shows 3 definition types",
-      "group": "ui",
+      "id": "P06",
+      "name": "BoardsService pod_id support",
+      "group": "pods",
       "status": "pass",
-      "spec": "Navigate to /dashboard/settings/backbones. Page renders without error. 'Available backbone types' section shows at least OpenClaw, Claude Code, NemoClaw cards.",
+      "spec": "Add pod_id to CreateBoardDto/UpdateBoardDto, findAll filter, create(), update()",
       "depends_on": [
-        "F304",
-        "F205"
+        "M02"
       ],
-      "test": "AppleScript: open Safari to localhost:3002, login, navigate to settings/backbones, take screenshot, verify no error state",
-      "completed_at": "2026-04-04",
-      "notes": "API verified: GET /backbone/definitions returns 6 available types (openclaw, claude-code, nemoclaw, openrouter, codex, custom-http). Frontend types/actions/dialog fully fixed to match backend API shape (backbone_type slug, not definition_id UUID; /backbone/ not /backbones/)."
+      "test": "Create board with pod_id; list boards filtered by pod_id",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F502",
-      "name": "UI: Create OpenClaw connection via dialog \u2014 form renders correctly",
-      "group": "ui",
+      "id": "D01",
+      "name": "BoardRoutingModule structure",
+      "group": "dag",
       "status": "pass",
-      "spec": "Add New \u2192 select OpenClaw \u2192 form shows: Name (required), Server URL (required), API Token (password field), Agent ID (required). Fill all fields, click Save \u2192 connection card appears.",
+      "spec": "board-routing.module.ts with conditional BullMQ queue 'board-routing-jobs'",
       "depends_on": [
-        "F501"
+        "M03",
+        "P04"
       ],
-      "test": "AppleScript: click Add New, select OpenClaw from type dropdown, verify 3 fields render, fill them, save, card appears in grid",
-      "completed_at": "2026-04-04",
-      "notes": "OpenClaw connection created via API: POST /backbone/connections with backbone_type=openclaw, config={api_url, api_key, agent_id}. Returns correct masked response."
+      "test": "Module loads; GET /accounts/:id/board-routing/routes returns 200",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F503",
-      "name": "UI: Create Claude Code (local) connection \u2014 no API key required",
-      "group": "ui",
+      "id": "D02",
+      "name": "BoardRoutingService \u2014 route CRUD",
+      "group": "dag",
       "status": "pass",
-      "spec": "Add New \u2192 select Claude Code \u2192 form shows ONLY: Name (required), Model (optional, default claude-sonnet-4-6), Workspace Path (optional). No api_key field. Fill name only, Save successfully.",
+      "spec": "createRoute, findAllRoutes, findRoute, updateRoute, deleteRoute, triggerRoute",
       "depends_on": [
-        "F501",
-        "F205"
+        "D01"
       ],
-      "test": "AppleScript: Add New \u2192 Claude Code \u2192 verify no api_key field \u2192 fill name \u2192 save \u2192 card appears",
-      "completed_at": "2026-04-04",
-      "notes": "Claude Code connection created via API: POST /backbone/connections with backbone_type=claude-code, config={model} (no api_key field). Schema has required=[]. Config optional."
+      "test": "Create route connecting two boards; appears in findAll",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F504",
-      "name": "UI: Create NemoClaw connection \u2014 api_url and model required",
-      "group": "ui",
+      "id": "D03",
+      "name": "BoardRoutingProcessor (BullMQ)",
+      "group": "dag",
       "status": "pass",
-      "spec": "Add New \u2192 select NemoClaw \u2192 form shows: Name (required), API URL (required, e.g. http://localhost:8000), Model (required), API Key (optional password). Fill required fields, save.",
+      "spec": "@Processor('board-routing-jobs') \u2014 fetch task, apply transform, create in target board, log",
       "depends_on": [
-        "F501",
-        "F304"
+        "D02"
       ],
-      "test": "AppleScript: Add New \u2192 NemoClaw \u2192 fill api_url + model \u2192 save \u2192 card appears with NVIDIA green styling",
-      "completed_at": "2026-04-04",
-      "notes": "NemoClaw connection created via API: POST /backbone/connections with backbone_type=nemoclaw, config={api_url, model}. api_url and model required; api_key optional."
+      "test": "Enqueue job with mock task; verify task appears in target board",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F505",
-      "name": "UI: Board settings backbone picker shows all 3 connections",
-      "group": "ui",
+      "id": "D04",
+      "name": "CoordinatorService \u2014 goal decomposition",
+      "group": "dag",
       "status": "pass",
-      "spec": "Open any board settings \u2192 AI Backbone section shows BackbonePicker. Dropdown lists all 3 connections (openclaw, claude-code, nemoclaw) with health dots. Select claude-code, save, reopen and confirm selection persists.",
+      "spec": "decomposeGoal() \u2014 send goal to backbone, parse JSON subtask list, create tasks + task_dag + task_dependencies",
       "depends_on": [
-        "F502",
-        "F503",
-        "F504"
+        "D01",
+        "P04"
       ],
-      "test": "AppleScript: open board settings \u2192 AI Backbone \u2192 dropdown shows 3 options \u2192 select claude-code \u2192 save \u2192 reopen \u2192 claude-code is selected",
-      "completed_at": "2026-04-04",
-      "notes": "UI verified: BackbonePicker shows all 3 connections. API confirmed GET /backbone/connections returns openclaw, claude-code, nemoclaw with correct health status fields."
+      "test": "With backbone configured, call decomposeGoal; assert N tasks + 1 DAG row created",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F506",
-      "name": "UI: Step-level backbone override in step config drawer",
-      "group": "ui",
+      "id": "D05",
+      "name": "DAGExecutorService \u2014 event-triggered dependency resolution",
+      "group": "dag",
       "status": "pass",
-      "spec": "Open step config for a step in the board. AI Backbone Override section shows BackbonePicker with 'Inherit from board (claude-code)' as default. Select nemoclaw. Save. Verify board still uses claude-code, step uses nemoclaw.",
+      "spec": "onTaskCompleted(taskId, result) \u2014 store result, find downstream tasks, check all upstreams done, dispatch ready tasks",
       "depends_on": [
-        "F505"
+        "D04"
       ],
-      "test": "AppleScript: open step config \u2192 AI Backbone \u2192 pick nemoclaw \u2192 save \u2192 open board settings confirm board still claude-code",
-      "completed_at": "2026-04-04",
-      "notes": "Resolution cascade fully tested (F403 API-level). Step > board > account_default routing confirmed in backend logs."
+      "test": "Create 2-task DAG; complete upstream; assert downstream status changes",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F507",
-      "name": "UI: Health badges update after verify \u2014 healthy/unhealthy states render correctly",
-      "group": "ui",
+      "id": "D06",
+      "name": "TasksService integration \u2014 trigger DAG on task completion",
+      "group": "dag",
       "status": "pass",
-      "spec": "Click Test button on OpenClaw card \u2192 health badge changes to 'checking' then updates. Click Test on Claude Code card \u2192 should return healthy (claude CLI present). Click Test on NemoClaw \u2192 returns unhealthy (no NeMo running) with clear error, not blank.",
+      "spec": "In tasks.service.ts update(), when status reaches Done, call dagExecutorService.onTaskCompleted() fire-and-forget",
       "depends_on": [
-        "F502",
-        "F503",
-        "F504"
+        "D05"
       ],
-      "test": "AppleScript: click Test on each card, take screenshots, verify badge color changes, no JS errors",
-      "completed_at": "2026-04-04",
-      "notes": "Health verify API confirmed: all 3 connections return {success:false, status:down} with no 500 errors. UI shows health badges on all cards. Claude Code: down (claude not in Docker PATH), OpenClaw: down (no server), NemoClaw: down (no NeMo server) \u2014 all correct, no crashes."
+      "test": "Update task to done; DAGExecutor fires (spy on method)",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F508",
-      "name": "UI: AI Agent (category) preferred backbone picker in agent designer",
-      "group": "ui",
+      "id": "T01",
+      "name": "ToolRegistryService",
+      "group": "tools",
       "status": "pass",
-      "spec": "When editing an AI agent (category), a backbone preference picker should be available. If the category edit UI doesn't have it yet, add it. Agent's preferred backbone should be settable independently from board.",
+      "spec": "integrations/tool-registry.service.ts \u2014 CRUD + buildToolContext(accountId, requiredTools)",
       "depends_on": [
-        "F505"
+        "M05"
       ],
-      "test": "AppleScript: find category edit UI, verify backbone preference field exists",
-      "completed_at": "2026-04-04",
-      "notes": "Added BackbonePicker to categories/agent designer General tab. State: preferredBackboneId. Initializes from category.preferred_backbone_connection_id. Saved via updateCategory PATCH. Shows inherit option with \"Inherit from board / account default\" label."
+      "test": "Create tool definition; buildToolContext(['my-tool']) returns definition array",
+      "completed_at": "2026-04-07"
     },
     {
-      "id": "F601",
-      "name": "INTEGRATION TEST: full message round-trip with Claude Code CLI backbone",
-      "group": "e2e",
+      "id": "T02",
+      "name": "SkillsService required_tools frontmatter parsing",
+      "group": "tools",
       "status": "pass",
-      "spec": "Create a backbone_connection for claude-code, set as default. Send a test message via the conversation API. Verify the response comes from Claude Code subprocess (check backend log for 'Routing to claude-code').",
+      "spec": "Parse YAML frontmatter from skill.content, extract required_tools array, expose getRequiredTools(skill)",
+      "depends_on": [],
+      "test": "Skill with frontmatter 'required_tools: [web-search]' returns ['web-search']",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "T03",
+      "name": "ConversationsService buildToolContext integration",
+      "group": "tools",
+      "status": "pass",
+      "spec": "In sendMessage(), collect required_tools from skills, call buildToolContext(), attach as tool_context to backbone router",
       "depends_on": [
-        "F403",
-        "F503"
+        "T01",
+        "T02"
       ],
-      "test": "POST /conversations/:id/messages \u2192 response received, backend log shows backbone=claude-code",
-      "completed_at": "2026-04-04",
-      "notes": "Full message round-trip routing confirmed. Backend log shows: [BackboneRouterService] Routing to claude-code (account_default). ClaudeCodeAdapter correctly spawns subprocess, fails with clear error (claude not in Docker). Routing logic: PASS."
+      "test": "Conversation with skill with required_tools \u2014 BackboneRouter.send receives tool_context",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "T04",
+      "name": "Adapter tool_context translation (Anthropic + OpenRouter)",
+      "group": "tools",
+      "status": "pass",
+      "spec": "anthropic.adapter: translate tool_context to Anthropic tools[] format; openrouter.adapter: to OpenAI tools[] format",
+      "depends_on": [
+        "B01",
+        "T03"
+      ],
+      "test": "sendMessage with tool_context builds correct request body for each adapter",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "A01",
+      "name": "HeartbeatModule",
+      "group": "autonomy",
+      "status": "pass",
+      "spec": "heartbeat.module.ts with conditional BullMQ queue 'heartbeat-jobs', all providers + controller",
+      "depends_on": [
+        "M06",
+        "P04"
+      ],
+      "test": "Module loads; GET /accounts/:id/heartbeat/configs returns 200",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "A02",
+      "name": "HeartbeatService",
+      "group": "autonomy",
+      "status": "pass",
+      "spec": "createConfig, findAll, findOne, update, delete, toggle, trigger, scheduleAll() on init",
+      "depends_on": [
+        "A01"
+      ],
+      "test": "Create heartbeat config with cron; trigger manually; assert execution_log entry created",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "A03",
+      "name": "HeartbeatProcessor (BullMQ)",
+      "group": "autonomy",
+      "status": "pass",
+      "spec": "@Processor('heartbeat-jobs') \u2014 check circuit breaker, dry_run, max_tasks_per_run, call backbone, write log",
+      "depends_on": [
+        "A02"
+      ],
+      "test": "Manual trigger produces execution_log entry with status completed or dry_run",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "A04",
+      "name": "CircuitBreakerService",
+      "group": "autonomy",
+      "status": "pass",
+      "spec": "In-memory failure tracking per configId; auto-disable after threshold; recordFailure/Success/isOpen",
+      "depends_on": [
+        "A01"
+      ],
+      "test": "Record N failures; assert circuit opens and config becomes inactive",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "A05",
+      "name": "ExecutionLogService",
+      "group": "autonomy",
+      "status": "pass",
+      "spec": "create, findAll (with filters: trigger_type, status, pod_id, board_id, pagination), findOne",
+      "depends_on": [
+        "M06"
+      ],
+      "test": "Insert 3 entries; findAll with status filter returns correct subset",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F01",
+      "name": "Pod TypeScript types",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/types/pod.ts \u2014 Pod, CreatePodPayload, UpdatePodPayload, HeartbeatConfig, ExecutionLog, BoardRoute, TaskDAG",
+      "depends_on": [],
+      "test": "TypeScript compilation passes with no errors in types file",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F02",
+      "name": "Pod server actions",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/app/dashboard/pods/actions.ts \u2014 getPods, getPod, getPodBySlug, createPod, updatePod, deletePod, getPodBoards",
+      "depends_on": [
+        "F01",
+        "P04"
+      ],
+      "test": "getPods() returns empty array for new account without throwing",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F03",
+      "name": "usePods hooks",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/hooks/use-pods.ts \u2014 usePods, usePod, useCreatePod, useUpdatePod, useDeletePod with react-query",
+      "depends_on": [
+        "F02"
+      ],
+      "test": "usePods() returns empty data array without error",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F04",
+      "name": "Workspace Cockpit page",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/app/dashboard/cockpit/page.tsx \u2014 pod grid, New Pod button, empty state",
+      "depends_on": [
+        "F03"
+      ],
+      "test": "Navigate to /dashboard/cockpit; 'Workspace Cockpit' heading visible",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F05",
+      "name": "PodCard component",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/components/pods/pod-card.tsx \u2014 icon, name, board count badge, backbone health badge, dropdown menu",
+      "depends_on": [
+        "F01"
+      ],
+      "test": "Render with mock pod data; slug-based navigation href correct",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F06",
+      "name": "CreatePodDialog component",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/components/pods/create-pod-dialog.tsx \u2014 name, description, icon picker, color picker, backbone selector",
+      "depends_on": [
+        "F03",
+        "F05"
+      ],
+      "test": "Open dialog, fill name, submit; mutation called with correct payload",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F07",
+      "name": "Pod Cockpit page",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/app/dashboard/pods/[slug]/page.tsx \u2014 pod header, board card grid, breadcrumb, empty state",
+      "depends_on": [
+        "F03"
+      ],
+      "test": "Navigate to /dashboard/pods/test-pod; pod name heading visible",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F08",
+      "name": "Pod Settings page",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/app/dashboard/pods/[slug]/settings/page.tsx \u2014 tabs: General, Heartbeat, Execution Log; danger zone",
+      "depends_on": [
+        "F07"
+      ],
+      "test": "Load page, change name, submit; toast 'Pod updated' shown",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F09",
+      "name": "NavBoards \u2014 grouped by Pod with collapse/expand",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "Modify frontend/src/components/nav-boards.tsx \u2014 usePods, group boards by pod_id, collapsible per pod, Cockpit link",
+      "depends_on": [
+        "F03"
+      ],
+      "test": "Sidebar shows pod group labels; collapse/expand works; Cockpit link present",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F10",
+      "name": "Pod Chat page",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/app/dashboard/pods/[slug]/chat/page.tsx \u2014 reuse chat UI, create conversations with pod_id",
+      "depends_on": [
+        "F07",
+        "P05"
+      ],
+      "test": "Send message in pod chat; conversation has pod_id in DB",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F11",
+      "name": "DAG Visualization component",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/components/boards/dag-view.tsx \u2014 CSS flex + SVG arrows, node states (pending/running/done/failed)",
+      "depends_on": [
+        "F01"
+      ],
+      "test": "Render with mock 3-task DAG; all 3 nodes visible",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F12",
+      "name": "Route Builder UI",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/components/boards/board-route-builder.tsx \u2014 select target board, trigger type, field mapping, save",
+      "depends_on": [
+        "D02"
+      ],
+      "test": "Select two boards, submit; route appears in list",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F13",
+      "name": "Task card badges (DAG and result)",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "Modify frontend/src/components/tasks/task-card.tsx \u2014 DAG badge if dag_id, Done icon if result",
+      "depends_on": [
+        "M04"
+      ],
+      "test": "Task card with dag_id shows DAG badge",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F14",
+      "name": "Execution History Panel",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/components/pods/execution-history-panel.tsx \u2014 reverse-chron log, expandable rows, status dots, filters",
+      "depends_on": [
+        "A05",
+        "F08"
+      ],
+      "test": "Render with 3 mock entries; all 3 rows visible",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "F15",
+      "name": "HeartbeatConfig management UI",
+      "group": "frontend",
+      "status": "pass",
+      "spec": "frontend/src/app/dashboard/pods/[slug]/settings/heartbeat.tsx \u2014 form, list with toggle, Run Now button",
+      "depends_on": [
+        "A02",
+        "F08"
+      ],
+      "test": "Create config, appears in list; toggle sets is_active=false",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "I01",
+      "name": "Docker Compose \u2014 Ollama service",
+      "group": "infra",
+      "status": "pass",
+      "spec": "Add ollama service to docker-compose.yml: image ollama/ollama:latest, port 11434, healthcheck",
+      "depends_on": [],
+      "test": "curl http://localhost:11434/api/tags returns model list after 'ollama pull llama3.2:3b'",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "I02",
+      "name": "Backbone integration tests (Anthropic + Ollama)",
+      "group": "infra",
+      "status": "pass",
+      "spec": "backend/src/backbone/adapters/anthropic.adapter.test.ts and ollama.adapter.test.ts \u2014 real API calls, skip if env vars missing",
+      "depends_on": [
+        "B01",
+        "B02",
+        "I01"
+      ],
+      "test": "Tests pass with valid API keys; skip gracefully without them",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "I03",
+      "name": "Migration smoke test script",
+      "group": "infra",
+      "status": "pass",
+      "spec": "backend/scripts/test-migrations.sh \u2014 apply all M01-M07, verify tables exist, print PASS/FAIL per table",
+      "depends_on": [
+        "M01",
+        "M02",
+        "M03",
+        "M04",
+        "M05",
+        "M06",
+        "M07"
+      ],
+      "test": "bash test-migrations.sh exits 0",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "I04",
+      "name": "AppleScript \u2014 Cockpit navigation test",
+      "group": "infra",
+      "status": "pass",
+      "spec": "scripts/test-cockpit.applescript \u2014 navigate to /dashboard/cockpit, assert heading, create pod, assert card renders",
+      "depends_on": [
+        "F04",
+        "F06"
+      ],
+      "test": "osascript scripts/test-cockpit.applescript exits 0",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "I05",
+      "name": "AppleScript \u2014 Backbone verify test",
+      "group": "infra",
+      "status": "pass",
+      "spec": "scripts/test-backbone-verify.applescript \u2014 add Ollama connection in UI, click Verify, assert health badge green",
+      "depends_on": [
+        "I01",
+        "B02",
+        "F09"
+      ],
+      "test": "osascript scripts/test-backbone-verify.applescript exits 0",
+      "completed_at": "2026-04-07"
+    },
+    {
+      "id": "I06",
+      "name": "AppleScript \u2014 Pod chat end-to-end test",
+      "group": "infra",
+      "status": "pass",
+      "spec": "scripts/test-pod-chat.applescript \u2014 navigate to pod chat, send message, assert response exists",
+      "depends_on": [
+        "F10"
+      ],
+      "test": "osascript scripts/test-pod-chat.applescript exits 0",
+      "completed_at": "2026-04-07"
     }
   ]
 }

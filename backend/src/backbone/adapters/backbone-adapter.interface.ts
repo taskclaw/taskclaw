@@ -5,6 +5,15 @@
  * interface so the router can talk to it in a unified way.
  */
 
+export interface ToolContextDefinition {
+  name: string;
+  description: string;
+  endpoint: string;
+  method: string;
+  auth?: { header: string; value: string };
+  input_schema?: Record<string, any>;
+}
+
 export interface BackboneSendOptions {
   /** Decrypted connection config (api_url, api_key, model, etc.) */
   config: Record<string, any>;
@@ -22,6 +31,8 @@ export interface BackboneSendOptions {
   signal?: AbortSignal;
   /** Additional metadata (account_id, conversation_id, etc.) */
   metadata?: Record<string, any>;
+  /** Tool context definitions for adapters that support tool execution */
+  tool_context?: ToolContextDefinition[];
 }
 
 export interface BackboneMessage {
@@ -85,4 +96,10 @@ export interface BackboneAdapter {
    * skill descriptions into the system prompt.
    */
   supportsNativeSkillInjection?(): boolean;
+
+  /**
+   * Optional: whether this backbone supports tool execution via tool_context.
+   * When true the router may pass tool definitions for the adapter to use.
+   */
+  supportsToolExecution?(): boolean;
 }

@@ -15,6 +15,8 @@ import { CustomHttpAdapter } from './adapters/custom-http.adapter';
 import { OpenClawAdapter } from './adapters/openclaw.adapter';
 import { OpenRouterAdapter } from './adapters/openrouter.adapter';
 import { NemoClawAdapter } from './adapters/nemoclaw.adapter';
+import { AnthropicAdapter } from './adapters/anthropic.adapter';
+import { OllamaAdapter } from './adapters/ollama.adapter';
 
 @Module({
   imports: [
@@ -34,6 +36,8 @@ import { NemoClawAdapter } from './adapters/nemoclaw.adapter';
     CodexAdapter,
     CustomHttpAdapter,
     NemoClawAdapter,
+    AnthropicAdapter,
+    OllamaAdapter,
   ],
   exports: [
     BackboneRouterService,
@@ -52,6 +56,8 @@ export class BackboneModule implements OnModuleInit {
     private readonly codexAdapter: CodexAdapter,
     private readonly customHttpAdapter: CustomHttpAdapter,
     private readonly nemoClawAdapter: NemoClawAdapter,
+    private readonly anthropicAdapter: AnthropicAdapter,
+    private readonly ollamaAdapter: OllamaAdapter,
   ) {}
 
   onModuleInit() {
@@ -62,6 +68,8 @@ export class BackboneModule implements OnModuleInit {
     this.registry.register(this.codexAdapter);
     this.registry.register(this.customHttpAdapter);
     this.registry.register(this.nemoClawAdapter);
+    this.registry.register(this.anthropicAdapter);
+    this.registry.register(this.ollamaAdapter);
 
     this.logger.log(
       `BackboneModule initialised with adapters: [${this.registry.listSlugs().join(', ')}]`,

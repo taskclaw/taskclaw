@@ -6,6 +6,7 @@ import { CommonModule } from '../common/common.module';
 import { SyncModule } from '../sync/sync.module';
 import { AdaptersModule } from '../adapters/adapters.module';
 import { ConversationsModule } from '../conversations/conversations.module';
+import { BoardRoutingModule } from '../board-routing/board-routing.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { ConversationsModule } from '../conversations/conversations.module';
     SyncModule,
     AdaptersModule,
     forwardRef(() => ConversationsModule),
+    forwardRef(() => BoardRoutingModule),
   ],
   controllers: [TasksController],
   providers: [TasksService],

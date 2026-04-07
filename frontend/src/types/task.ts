@@ -17,6 +17,8 @@ export interface Task {
   current_step_id?: string
   board_instance_id?: string
   override_category_id?: string | null
+  dag_id?: string | null
+  result?: Record<string, any> | null
   created_at: string
   updated_at: string
   metadata?: Record<string, any>

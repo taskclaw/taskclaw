@@ -13,6 +13,10 @@ export class CreateConversationDto {
   @IsOptional()
   board_id?: string; // Optional: Link conversation to a board (board-level AI chat)
 
+  @IsUUID()
+  @IsOptional()
+  pod_id?: string; // Optional: Link conversation to a pod
+
   @IsArray()
   @IsUUID(4, { each: true })
   @IsOptional()

@@ -70,6 +70,10 @@ export class CreateBoardDto {
   default_backbone_connection_id?: string;
 
   @IsOptional()
+  @IsUUID()
+  pod_id?: string;
+
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => InlineStepDto)

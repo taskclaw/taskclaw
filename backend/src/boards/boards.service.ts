@@ -18,6 +18,7 @@ import {
 interface BoardFilters {
   archived?: boolean;
   favorite?: boolean;
+  pod_id?: string;
 }
 
 @Injectable()
@@ -50,6 +51,10 @@ export class BoardsService {
 
     if (filters?.favorite !== undefined) {
       query = query.eq('is_favorite', filters.favorite);
+    }
+
+    if (filters?.pod_id !== undefined) {
+      query = query.eq('pod_id', filters.pod_id);
     }
 
     query = query
@@ -158,6 +163,7 @@ export class BoardsService {
         default_category_id: dto.default_category_id || null,
         orchestrator_category_id: dto.orchestrator_category_id || null,
         backbone_connection_id: dto.default_backbone_connection_id || null,
+        pod_id: dto.pod_id || null,
       })
       .select()
       .single();

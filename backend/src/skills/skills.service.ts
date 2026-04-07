@@ -59,6 +59,23 @@ export class SkillsService {
   ) {}
 
   /**
+   * Extract required_tools from YAML frontmatter in skill content.
+   * Expects format: required_tools: [tool1, tool2]
+   */
+  getRequiredTools(skill: any): string[] {
+    if (!skill?.content) return [];
+    const match = skill.content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) return [];
+    const frontmatter = match[1];
+    const toolsMatch = frontmatter.match(/required_tools:\s*\[([^\]]*)\]/);
+    if (!toolsMatch) return [];
+    return toolsMatch[1]
+      .split(',')
+      .map((t: string) => t.trim().replace(/['"]/g, ''))
+      .filter(Boolean);
+  }
+
+  /**
    * List all skills for an account (optionally filter by active status).
    * When include_system is true, also returns system-wide skills (account_id IS NULL).
    */

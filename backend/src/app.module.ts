@@ -27,9 +27,12 @@ import { SkillsModule } from './skills/skills.module';
 import { AgentSyncModule } from './agent-sync/agent-sync.module';
 import { BoardsModule } from './boards/boards.module';
 import { BackboneModule } from './backbone/backbone.module';
+import { PodsModule } from './pods/pods.module';
 
 import { IntegrationsModule } from './integrations/integrations.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { BoardRoutingModule } from './board-routing/board-routing.module';
+import { HeartbeatModule } from './heartbeat/heartbeat.module';
 
 // Edition-gated modules (cloud-only)
 import { LangfuseModule } from './ee/langfuse/langfuse.module';
@@ -82,8 +85,11 @@ const editionModules = isCloudEdition
     AgentSyncModule,
     BoardsModule,
     BackboneModule,
+    PodsModule,
     IntegrationsModule,
     WebhooksModule,
+    BoardRoutingModule,
+    HeartbeatModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -41,10 +41,12 @@ export class BoardsController {
     @Param('accountId') accountId: string,
     @Query('archived') archived?: string,
     @Query('favorite') favorite?: string,
+    @Query('pod_id') podId?: string,
   ) {
     const filters: any = {};
     if (archived !== undefined) filters.archived = archived === 'true';
     if (favorite !== undefined) filters.favorite = favorite === 'true';
+    if (podId !== undefined) filters.pod_id = podId;
 
     return this.boardsService.findAll(req.user.id, accountId, filters);
   }
