@@ -9,6 +9,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+
 export class UpdateBoardDto {
   @IsOptional()
   @IsString()
@@ -57,6 +58,11 @@ export class UpdateBoardDto {
   @ValidateIf((_o, v) => v !== null)
   @IsUUID()
   default_backbone_connection_id?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  pod_id?: string | null;
 
   @IsOptional()
   @IsObject()

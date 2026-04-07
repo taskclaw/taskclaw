@@ -2,7 +2,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Calendar, Zap, BrainCircuit, Link2Off } from 'lucide-react'
+import { Calendar, Zap, BrainCircuit, Link2Off, CheckCircle2, GitBranch } from 'lucide-react'
 import type { Task, Category } from '@/types/task'
 import { PRIORITY_COLORS } from '@/types/task'
 import { useTaskStore } from '@/hooks/use-task-store'
@@ -78,6 +78,17 @@ export function TaskCard({ task, isDone, categories = [] }: TaskCardProps) {
                         className="w-1.5 h-1.5 rounded-full"
                         style={{ backgroundColor: priorityColor }}
                     />
+                )}
+                {task.dag_id && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-sm font-bold uppercase tracking-tight text-indigo-500 bg-indigo-500/10 flex items-center gap-0.5">
+                        <GitBranch className="w-2.5 h-2.5" />
+                        DAG
+                    </span>
+                )}
+                {task.result && (
+                    <span title={typeof task.result === 'object' ? JSON.stringify(task.result).slice(0, 100) : 'Completed with result'}>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                    </span>
                 )}
             </div>
 

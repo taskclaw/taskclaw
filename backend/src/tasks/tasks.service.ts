@@ -15,6 +15,7 @@ import { OutboundSyncService } from '../sync/outbound-sync.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { ConversationsService } from '../conversations/conversations.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
+import { DAGExecutorService } from '../board-routing/dag-executor.service';
 
 interface TaskFilters {
   category_id?: string;
@@ -38,6 +39,8 @@ export class TasksService {
     @Inject(forwardRef(() => ConversationsService))
     private readonly conversationsService: ConversationsService,
     private readonly webhookEmitter: WebhookEmitterService,
+    @Inject(forwardRef(() => DAGExecutorService))
+    private readonly dagExecutor: DAGExecutorService,
   ) {}
 
   async findAll(
@@ -413,6 +416,17 @@ export class TasksService {
 
     const webhookEvent = data.completed ? 'task.completed' : 'task.updated';
     this.webhookEmitter.emit(accountId, webhookEvent, { task: data });
+
+    // Fire-and-forget: notify DAG executor when a task is completed
+    if (data.completed && data.dag_id) {
+      this.dagExecutor
+        .onTaskCompleted(id, data.result)
+        .catch((err) =>
+          this.logger.error(
+            `DAG executor failed for task ${id}: ${(err as Error).message}`,
+          ),
+        );
+    }
 
     return data;
   }

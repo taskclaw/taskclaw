@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/.claude/features.json for feature status. Read /Users/macbook/Workspace/Devotts/taskclaw/.claude/progress.md for current state. Read /Users/macbook/Workspace/Devotts/taskclaw/.claude/plans/serene-wobbling-valiant.md for the full plan. Commit after completing each feature.'"
+            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/taskclaw/.claude/features.json for feature status. Read /Users/macbook/Workspace/Devotts/taskclaw/taskclaw/.claude/progress.md for current state. Read /Users/macbook/.claude/plans/harmonic-fluttering-trinket.md for the full plan. Commit after completing each feature.'"
           }
         ]
       }

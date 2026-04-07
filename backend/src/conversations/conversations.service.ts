@@ -18,6 +18,7 @@ import { AgentSyncService } from '../agent-sync/agent-sync.service';
 import { BackboneRouterService } from '../backbone/backbone-router.service';
 
 import { IntegrationsService } from '../integrations/integrations.service';
+import { ToolRegistryService } from '../integrations/tool-registry.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -40,6 +41,7 @@ export class ConversationsService {
     @Inject(forwardRef(() => BackboneRouterService))
     private readonly backboneRouter: BackboneRouterService,
     private readonly integrationsService: IntegrationsService,
+    private readonly toolRegistry: ToolRegistryService,
     private readonly webhookEmitter: WebhookEmitterService,
   ) {}
 
@@ -108,6 +110,7 @@ export class ConversationsService {
         account_id: accountId,
         task_id: dto.task_id,
         board_id: dto.board_id || null,
+        pod_id: dto.pod_id || null,
         title: dto.title || 'New Conversation',
         metadata: Object.keys(metadata).length > 0 ? metadata : null,
       })
@@ -140,6 +143,7 @@ export class ConversationsService {
     limit: number = 20,
     taskId?: string,
     boardId?: string,
+    podId?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
 
@@ -160,6 +164,10 @@ export class ConversationsService {
 
     if (boardId) {
       query = query.eq('board_id', boardId);
+    }
+
+    if (podId) {
+      query = query.eq('pod_id', podId);
     }
 
     const { data, error, count } = await query
@@ -607,7 +615,24 @@ export class ConversationsService {
             resolvedCategoryId,
           );
 
-          // Step 4: Send via backbone router
+          // Step 4: Build tool context from skill required_tools (T03)
+          let toolContext: any[] | undefined;
+          try {
+            const skills = conversation.skills ?? [];
+            const requiredTools: string[] = [];
+            for (const skill of skills) {
+              const tools = this.skillsService.getRequiredTools(skill);
+              requiredTools.push(...tools);
+            }
+            if (requiredTools.length > 0) {
+              toolContext = await this.toolRegistry.buildToolContext(accountId, requiredTools);
+              this.logger.debug(`${logPrefix} Tool context: ${toolContext.length} tools resolved`);
+            }
+          } catch (toolErr) {
+            this.logger.warn(`${logPrefix} Failed to build tool context: ${toolErr.message}`);
+          }
+
+          // Step 5: Send via backbone router
           this.logger.log(
             `${logPrefix} Step 4/5: Sending to backbone ${backboneResolved.adapter.slug}`,
           );
@@ -617,6 +642,7 @@ export class ConversationsService {
             boardId: conversation.board_id || undefined,
             stepId: task?.current_step_id || undefined,
             categoryId: resolvedCategoryId || undefined,
+            podId: conversation.pod_id || undefined,
             sendOptions: {
               systemPrompt,
               message: userContent,
@@ -624,6 +650,7 @@ export class ConversationsService {
                 role: h.role as 'user' | 'assistant' | 'system',
                 content: h.content,
               })),
+              tool_context: toolContext,
               metadata: { userId, accountId, conversationId },
             },
           });

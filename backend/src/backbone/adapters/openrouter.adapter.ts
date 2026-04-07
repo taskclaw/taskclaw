@@ -36,7 +36,7 @@ export class OpenRouterAdapter implements BackboneAdapter {
     }
     messages.push({ role: 'user', content: message });
 
-    return this.executeOpenRouterRequest(config, messages, signal);
+    return this.executeOpenRouterRequest(config, messages, signal, options.tool_context);
   }
 
   // ── BackboneAdapter: healthCheck ──
@@ -91,14 +91,26 @@ export class OpenRouterAdapter implements BackboneAdapter {
     config: Record<string, any>,
     messages: BackboneMessage[],
     signal?: AbortSignal,
+    toolContext?: BackboneSendOptions['tool_context'],
   ): Promise<BackboneSendResult> {
     const apiUrl = (config.api_url as string) || 'https://openrouter.ai/api/v1';
     const model = (config.model as string) || 'openai/gpt-3.5-turbo';
 
-    const requestBody = {
+    const requestBody: any = {
       model,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     };
+
+    if (toolContext?.length) {
+      requestBody.tools = toolContext.map((t) => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.input_schema ?? { type: 'object', properties: {} },
+        },
+      }));
+    }
     const endpoint = `${apiUrl}/chat/completions`;
 
     this.logger.log(`[OpenRouter] Sending ${messages.length} messages`);

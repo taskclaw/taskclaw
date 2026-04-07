@@ -15,6 +15,7 @@ export type ResolvedFrom =
   | 'step'
   | 'board'
   | 'category'
+  | 'pod'
   | 'account_default'
   | 'legacy_fallback';
 
@@ -33,6 +34,8 @@ export interface BackboneRouterSendOptions {
   boardId?: string;
   /** Optional: narrow resolution to a specific category */
   categoryId?: string;
+  /** Optional: narrow resolution to a specific pod */
+  podId?: string;
   /** The send payload (message, history, skills, etc.) */
   sendOptions: Omit<BackboneSendOptions, 'config'>;
 }
@@ -61,7 +64,7 @@ export class BackboneRouterService {
    */
   async resolve(
     accountId: string,
-    options?: { stepId?: string; boardId?: string; categoryId?: string },
+    options?: { stepId?: string; boardId?: string; categoryId?: string; podId?: string },
   ): Promise<ResolveResult> {
     const client = this.supabaseAdmin.getClient();
 
@@ -116,7 +119,23 @@ export class BackboneRouterService {
       }
     }
 
-    // 4. Account default
+    // 4. Pod-level override
+    if (options?.podId) {
+      const { data: pod } = await client
+        .from('pods')
+        .select('backbone_connection_id')
+        .eq('id', options.podId)
+        .maybeSingle();
+      if (pod?.backbone_connection_id) {
+        const result = await this.loadConnection(
+          pod.backbone_connection_id,
+          'pod',
+        );
+        if (result) return result;
+      }
+    }
+
+    // 5. Account default
     const defaultConn = await this.connections.getAccountDefault(accountId);
     if (defaultConn) {
       const adapter = this.registry.get(defaultConn.backbone_type);
@@ -129,7 +148,7 @@ export class BackboneRouterService {
       };
     }
 
-    // 5. Legacy fallback — look for any active connection
+    // 6. Legacy fallback — look for any active connection
     const activeConns = await this.connections.findAllActive(accountId);
     if (activeConns.length > 0) {
       const conn = activeConns[0];
@@ -160,6 +179,7 @@ export class BackboneRouterService {
       stepId: options.stepId,
       boardId: options.boardId,
       categoryId: options.categoryId,
+      podId: options.podId,
     });
 
     this.logger.debug(
