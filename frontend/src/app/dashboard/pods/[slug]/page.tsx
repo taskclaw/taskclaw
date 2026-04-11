@@ -17,6 +17,7 @@ import {
 import { Layers, Plus, MessageCircle, Settings, Loader2, LayoutGrid } from 'lucide-react'
 import { PodBoardCanvas } from '@/components/pods/pod-board-canvas'
 import { AssignBoardsDialog } from '@/components/pods/assign-boards-dialog'
+import { BoardAIChat } from '@/components/boards/board-ai-chat'
 import type { Board } from '@/types/board'
 
 export default function PodCockpitPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -25,6 +26,7 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
     const { data: pod, isLoading: podLoading } = usePod(slug)
     const { data: boards = [], isLoading: boardsLoading } = usePodBoards(pod?.id ?? null)
     const [assignOpen, setAssignOpen] = useState(false)
+    const [chatOpen, setChatOpen] = useState(false)
 
     if (podLoading) {
         return (
@@ -71,7 +73,7 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
                     <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => router.push(`/dashboard/pods/${slug}/chat`)}
+                        onClick={() => setChatOpen(true)}
                     >
                         <MessageCircle className="w-4 h-4 mr-1" />
                         Pod Chat
@@ -93,7 +95,7 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
                     className="w-10 h-10 rounded-lg flex items-center justify-center text-lg shrink-0"
                     style={{ backgroundColor: `${color}20`, color }}
                 >
-                    {pod.icon || <Layers className="w-5 h-5" />}
+                    {pod.icon && pod.icon.length <= 2 ? pod.icon : <Layers className="w-5 h-5" />}
                 </div>
                 <div>
                     <h1 className="text-lg font-bold">{pod.name}</h1>
@@ -114,7 +116,7 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
                 </div>
             </div>
 
-            {/* Canvas / Empty state — explicit height so ReactFlow renders correctly inside overflow-y-auto layout */}
+            {/* Canvas / Empty state */}
             <div className="h-[calc(100dvh-16rem)] min-h-[400px] px-4 pb-4">
                 {boardsLoading ? (
                     <div className="flex items-center justify-center h-full">
@@ -148,6 +150,7 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
                         boards={boardList}
                         podSlug={slug}
                         onAddBoards={() => setAssignOpen(true)}
+                        onOpenChat={() => setChatOpen(true)}
                     />
                 )}
             </div>
@@ -159,6 +162,14 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
                 podId={pod.id}
                 podName={pod.name}
                 existingBoardIds={boardList.map((b) => b.id)}
+            />
+
+            {/* Pod AI Chat Drawer */}
+            <BoardAIChat
+                podId={pod.id}
+                podName={pod.name}
+                open={chatOpen}
+                onOpenChange={setChatOpen}
             />
         </div>
     )

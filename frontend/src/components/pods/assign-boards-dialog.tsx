@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { Search, Check, Loader2, Layers } from 'lucide-react'
+import { BoardIcon } from '@/lib/board-icon'
 import {
     Dialog,
     DialogContent,
@@ -139,7 +140,7 @@ export function AssignBoardsDialog({
                                             border: `1px solid ${board.color || '#6366f1'}40`,
                                         }}
                                     >
-                                        {board.icon || '📋'}
+                                        <BoardIcon name={board.icon} className="w-4 h-4" />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <p className="font-medium truncate">{board.name}</p>

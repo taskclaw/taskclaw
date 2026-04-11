@@ -244,14 +244,13 @@ export function BoardHeader({ board, onNewTask }: BoardHeaderProps) {
                 />
             )}
 
-            {/* Board AI Chat Modal */}
-            {showBoardChat && (
-                <BoardAIChat
-                    boardId={board.id}
-                    boardName={board.name}
-                    onClose={() => setShowBoardChat(false)}
-                />
-            )}
+            {/* Board AI Chat Drawer */}
+            <BoardAIChat
+                boardId={board.id}
+                boardName={board.name}
+                open={showBoardChat}
+                onOpenChange={setShowBoardChat}
+            />
         </>
     )
 }

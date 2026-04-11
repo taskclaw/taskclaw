@@ -383,6 +383,43 @@ export async function getOrCreateBoardConversation(boardId: string, boardName: s
     }
 }
 
+export async function getOrCreatePodConversation(podId: string, podName: string) {
+    const headers = await getAuthHeaders()
+    const accountId = await getCurrentAccountId()
+
+    if (!headers || !accountId) {
+        return { error: 'Not authenticated' }
+    }
+
+    try {
+        // Look for existing pod conversation
+        const listUrl = `${API_URL}/accounts/${accountId}/conversations?pod_id=${podId}&limit=1`
+        const listRes = await fetch(listUrl, { headers, cache: 'no-store' })
+
+        if (listRes.ok) {
+            const listData = await listRes.json()
+            const existing = listData?.data?.[0]
+            if (existing?.id) return existing
+        }
+
+        // Create new pod conversation
+        const res = await fetch(`${API_URL}/accounts/${accountId}/conversations`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ title: `Pod Chat: ${podName}`, pod_id: podId }),
+        })
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ message: 'Unknown error' }))
+            return { error: errorData.message || 'Failed to create pod conversation' }
+        }
+
+        return await res.json()
+    } catch (error: any) {
+        return { error: error.message || 'Failed to get or create pod conversation' }
+    }
+}
+
 export async function updateConversationTitle(conversationId: string, title: string) {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()
