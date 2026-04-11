@@ -1,12 +1,8 @@
 'use client'
 
-import { use } from 'react'
+import { use, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { usePod, usePodBoards } from '@/hooks/use-pods'
-import { BoardCard } from '@/components/boards/board-card'
-import { useUpdateBoard, useDeleteBoard, useDuplicateBoard } from '@/hooks/use-boards'
-import { exportBoard } from '@/app/dashboard/boards/actions'
-import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
@@ -18,16 +14,9 @@ import {
     BreadcrumbPage,
     BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
-import {
-    Layers,
-    Plus,
-    MessageCircle,
-    Settings,
-    Loader2,
-    LayoutGrid,
-} from 'lucide-react'
-import { toast } from 'sonner'
-import { useState } from 'react'
+import { Layers, Plus, MessageCircle, Settings, Loader2, LayoutGrid } from 'lucide-react'
+import { PodBoardCanvas } from '@/components/pods/pod-board-canvas'
+import { AssignBoardsDialog } from '@/components/pods/assign-boards-dialog'
 import type { Board } from '@/types/board'
 
 export default function PodCockpitPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -35,63 +24,7 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
     const router = useRouter()
     const { data: pod, isLoading: podLoading } = usePod(slug)
     const { data: boards = [], isLoading: boardsLoading } = usePodBoards(pod?.id ?? null)
-    const updateBoard = useUpdateBoard()
-    const deleteBoard = useDeleteBoard()
-    const duplicateBoard = useDuplicateBoard()
-    const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
-    const [deleteLoading, setDeleteLoading] = useState(false)
-
-    const isLoading = podLoading || boardsLoading
-
-    const handleFavorite = async (board: Board) => {
-        await updateBoard.mutateAsync({ id: board.id, is_favorite: !board.is_favorite })
-    }
-
-    const handleDuplicate = async (boardId: string) => {
-        const result = await duplicateBoard.mutateAsync(boardId)
-        if (result.success) {
-            toast.success('Board duplicated')
-        } else {
-            toast.error(result.error || 'Failed to duplicate board')
-        }
-    }
-
-    const handleExport = async (boardId: string, boardName: string) => {
-        const manifest = await exportBoard(boardId)
-        if (manifest) {
-            const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' })
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = `${boardName.toLowerCase().replace(/\s+/g, '-')}.json`
-            a.click()
-            URL.revokeObjectURL(url)
-            toast.success('Board exported')
-        }
-    }
-
-    const handleArchive = async (board: Board) => {
-        await updateBoard.mutateAsync({ id: board.id, is_archived: !board.is_archived })
-        toast.success(board.is_archived ? 'Board unarchived' : 'Board archived')
-    }
-
-    const confirmDelete = async () => {
-        if (!deleteTarget) return
-        setDeleteLoading(true)
-        try {
-            const result = await deleteBoard.mutateAsync(deleteTarget.id)
-            if (result.error) {
-                toast.error(result.error)
-            } else {
-                setDeleteTarget(null)
-                toast.success('Board deleted')
-            }
-        } catch (error: any) {
-            toast.error(error.message || 'Failed to delete board')
-        } finally {
-            setDeleteLoading(false)
-        }
-    }
+    const [assignOpen, setAssignOpen] = useState(false)
 
     if (podLoading) {
         return (
@@ -113,11 +46,12 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
     }
 
     const color = pod.color || '#6366f1'
+    const boardList = boards as Board[]
 
     return (
-        <div className="flex flex-col flex-1 min-h-0">
+        <div className="flex flex-col h-full overflow-hidden">
             {/* Header */}
-            <header className="flex h-16 shrink-0 items-center gap-2">
+            <header className="flex h-16 shrink-0 items-center gap-2 px-4">
                 <div className="flex items-center gap-2 flex-1">
                     <SidebarTrigger className="-ml-1" />
                     <Separator orientation="vertical" className="mr-2 h-4" />
@@ -154,7 +88,7 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
             </header>
 
             {/* Pod banner */}
-            <div className="flex items-center gap-3 pb-4">
+            <div className="flex items-center gap-3 pb-4 shrink-0 px-4">
                 <div
                     className="w-10 h-10 rounded-lg flex items-center justify-center text-lg shrink-0"
                     style={{ backgroundColor: `${color}20`, color }}
@@ -167,58 +101,64 @@ export default function PodCockpitPage({ params }: { params: Promise<{ slug: str
                         <p className="text-sm text-muted-foreground">{pod.description}</p>
                     )}
                 </div>
-                <span className="text-xs text-muted-foreground font-medium bg-accent/50 px-2 py-0.5 rounded ml-auto">
-                    {boards.length} board{boards.length !== 1 ? 's' : ''}
-                </span>
+                <div className="ml-auto flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-medium bg-accent/50 px-2 py-0.5 rounded">
+                        {boardList.length} board{boardList.length !== 1 ? 's' : ''}
+                    </span>
+                    {boardList.length > 0 && (
+                        <Button size="sm" onClick={() => setAssignOpen(true)}>
+                            <Plus className="w-4 h-4 mr-1" />
+                            Add board
+                        </Button>
+                    )}
+                </div>
             </div>
 
-            {/* Boards grid */}
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            {/* Canvas / Empty state — explicit height so ReactFlow renders correctly inside overflow-y-auto layout */}
+            <div className="h-[calc(100dvh-16rem)] min-h-[400px] px-4 pb-4">
                 {boardsLoading ? (
-                    <div className="flex items-center justify-center py-20">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+                    <div className="flex items-center justify-center h-full">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                     </div>
-                ) : boards.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                        <div className="w-12 h-12 rounded-xl bg-accent/50 flex items-center justify-center mb-4">
-                            <LayoutGrid className="w-6 h-6 text-muted-foreground" />
+                ) : boardList.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center">
+                        <div className="w-14 h-14 rounded-2xl bg-accent/50 flex items-center justify-center mb-4">
+                            <LayoutGrid className="w-7 h-7 text-muted-foreground" />
                         </div>
                         <h3 className="text-sm font-semibold mb-1">No boards in this pod yet</h3>
                         <p className="text-xs text-muted-foreground max-w-xs mb-4">
-                            Assign boards to this pod from the board settings, or create a new board.
+                            Assign existing boards or create new ones.
                         </p>
-                        <Button
-                            size="sm"
-                            onClick={() => router.push('/dashboard/boards?create=true')}
-                        >
-                            <Plus className="w-4 h-4 mr-1" />
-                            Add a board
-                        </Button>
+                        <div className="flex gap-2">
+                            <Button size="sm" onClick={() => setAssignOpen(true)}>
+                                <Plus className="w-4 h-4 mr-1" />
+                                Add a board
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => router.push('/dashboard/boards?create=true')}
+                            >
+                                Create new board
+                            </Button>
+                        </div>
                     </div>
                 ) : (
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {boards.map((board: Board) => (
-                            <BoardCard
-                                key={board.id}
-                                board={board}
-                                onFavorite={handleFavorite}
-                                onDuplicate={handleDuplicate}
-                                onExport={handleExport}
-                                onArchive={handleArchive}
-                                onDelete={(b) => setDeleteTarget({ id: b.id, name: b.name })}
-                            />
-                        ))}
-                    </div>
+                    <PodBoardCanvas
+                        boards={boardList}
+                        podSlug={slug}
+                        onAddBoards={() => setAssignOpen(true)}
+                    />
                 )}
             </div>
 
-            <ConfirmDeleteDialog
-                open={!!deleteTarget}
-                onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
-                onConfirm={confirmDelete}
-                title="Delete board?"
-                description="This will permanently delete this board and unassign all tasks."
-                loading={deleteLoading}
+            {/* Assign boards dialog */}
+            <AssignBoardsDialog
+                open={assignOpen}
+                onOpenChange={setAssignOpen}
+                podId={pod.id}
+                podName={pod.name}
+                existingBoardIds={boardList.map((b) => b.id)}
             />
         </div>
     )

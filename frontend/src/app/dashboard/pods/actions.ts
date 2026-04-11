@@ -181,6 +181,69 @@ export async function getPodBoards(podId: string): Promise<any[]> {
     }
 }
 
+// ─── Board–Pod Assignment ────────────────────────────────────────────
+
+export async function assignBoardToPod(boardId: string, podId: string): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(`${API_URL}/accounts/${accountId}/boards/${boardId}`, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ pod_id: podId }),
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to assign board to pod' }
+        }
+        revalidatePath(`/dashboard/pods`)
+        return { success: true }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
+export async function removeFromPod(boardId: string): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(`${API_URL}/accounts/${accountId}/boards/${boardId}`, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({ pod_id: null }),
+        })
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to remove board from pod' }
+        }
+        revalidatePath(`/dashboard/pods`)
+        return { success: true }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
+export async function getAllBoards(): Promise<any[]> {
+    const headers = await getAuthHeaders()
+    if (!headers) return []
+    const accountId = await getActiveAccountId()
+    if (!accountId) return []
+    try {
+        const res = await fetch(`${API_URL}/accounts/${accountId}/boards`, {
+            headers,
+            cache: 'no-store',
+        })
+        if (!res.ok) return []
+        return await res.json()
+    } catch {
+        return []
+    }
+}
+
 // ─── Execution Log ──────────────────────────────────────────────────
 
 export async function getExecutionLog(filters?: {

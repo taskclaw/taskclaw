@@ -8,6 +8,9 @@ import {
     updatePod,
     deletePod,
     getPodBoards,
+    assignBoardToPod,
+    removeFromPod,
+    getAllBoards,
 } from '@/app/dashboard/pods/actions'
 import type { CreatePodPayload, UpdatePodPayload } from '@/types/pod'
 
@@ -66,5 +69,36 @@ export function useDeletePod() {
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['pods'] })
         },
+    })
+}
+
+export function useAssignBoardToPod() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: ({ boardId, podId }: { boardId: string; podId: string }) =>
+            assignBoardToPod(boardId, podId),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['podBoards'] })
+            qc.invalidateQueries({ queryKey: ['boards'] })
+        },
+    })
+}
+
+export function useRemoveFromPod() {
+    const qc = useQueryClient()
+    return useMutation({
+        mutationFn: (boardId: string) => removeFromPod(boardId),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['podBoards'] })
+            qc.invalidateQueries({ queryKey: ['boards'] })
+        },
+    })
+}
+
+export function useAllBoards() {
+    return useQuery({
+        queryKey: ['boards', 'all'],
+        queryFn: getAllBoards,
+        staleTime: 30000,
     })
 }

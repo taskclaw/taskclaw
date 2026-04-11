@@ -119,6 +119,7 @@ export async function updateBoard(
         default_category_id: string | null
         default_backbone_connection_id: string | null
         settings_override: Record<string, any>
+        pod_id: string | null
     }>
 ): Promise<{ success?: boolean; board?: Board; error?: string }> {
     const headers = await getAuthHeaders()

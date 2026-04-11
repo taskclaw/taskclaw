@@ -117,7 +117,7 @@ export default function PodChatPage({ params }: { params: Promise<{ slug: string
     const createConversation = async () => {
         if (!pod) return
         try {
-            const result = await createConversationAction(`Pod Chat: ${pod.name}`)
+            const result = await createConversationAction(`Pod Chat: ${pod.name}`, undefined, undefined, pod.id)
             if (result.error) {
                 toast.error(result.error)
                 return

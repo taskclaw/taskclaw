@@ -28,6 +28,7 @@ export interface Board {
     color: string | null
     icon: string | null
   } | null
+  pod_id?: string | null
   board_steps?: BoardStep[]
   task_count?: number
   created_at: string

@@ -99,7 +99,7 @@ export async function getSkills() {
     }
 }
 
-export async function createConversation(title?: string, taskId?: string, skillIds?: string[]) {
+export async function createConversation(title?: string, taskId?: string, skillIds?: string[], podId?: string) {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()
 
@@ -125,6 +125,7 @@ export async function createConversation(title?: string, taskId?: string, skillI
                 title: title || 'New Conversation',
                 task_id: taskId,
                 skill_ids: skillIds || [],
+                pod_id: podId,
             }),
         })
 
