@@ -153,12 +153,12 @@ export function PodPilotSheet({ open, onOpenChange, podId, podName }: PodPilotSh
                             {/* Backbone selector */}
                             <div className="space-y-1.5">
                                 <Label className="text-xs">AI Backbone</Label>
-                                <Select value={backboneId} onValueChange={setBackboneId}>
+                                <Select value={backboneId || '__default__'} onValueChange={(v) => setBackboneId(v === '__default__' ? '' : v)}>
                                     <SelectTrigger className="h-8 text-sm">
                                         <SelectValue placeholder="Use account default" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="">Use account default</SelectItem>
+                                        <SelectItem value="__default__">Use account default</SelectItem>
                                         {(backbones as any[]).map((b: any) => (
                                             <SelectItem key={b.id} value={b.id}>
                                                 {b.name || b.adapter_slug}
