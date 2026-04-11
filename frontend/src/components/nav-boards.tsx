@@ -297,7 +297,7 @@ export function NavBoards() {
                                             className="w-4 h-4 rounded flex items-center justify-center text-[10px] shrink-0"
                                             style={{ backgroundColor: `${podColor}20`, color: podColor }}
                                         >
-                                            {pod.icon || <Layers className="w-3 h-3" />}
+                                            {pod.icon && pod.icon.length <= 2 ? pod.icon : <Layers className="w-3 h-3" />}
                                         </span>
                                         <span className="truncate">{pod.name}</span>
                                     </a>

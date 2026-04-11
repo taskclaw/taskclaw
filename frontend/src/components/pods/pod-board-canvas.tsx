@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
     ReactFlow,
     Background,
@@ -19,6 +19,8 @@ import '@xyflow/react/dist/style.css'
 import { useRouter } from 'next/navigation'
 import { MessageCircle, Settings, ExternalLink, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { BoardIcon } from '@/lib/board-icon'
+import { BoardAIChat } from '@/components/boards/board-ai-chat'
 import { useRemoveFromPod } from '@/hooks/use-pods'
 import { toast } from 'sonner'
 import type { Board } from '@/types/board'
@@ -29,12 +31,13 @@ interface BoardNodeData {
     board: Board
     podSlug: string
     onRemove: (boardId: string, boardName: string) => void
+    onOpenChat: (boardId: string, boardName: string) => void
     [key: string]: unknown
 }
 
 function BoardNode({ data }: { data: BoardNodeData }) {
     const router = useRouter()
-    const { board, podSlug, onRemove } = data
+    const { board, onRemove, onOpenChat } = data
     const color = board.color || '#6366f1'
 
     const stepCount = board.board_steps?.length ?? 0
@@ -54,7 +57,7 @@ function BoardNode({ data }: { data: BoardNodeData }) {
                     className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0"
                     style={{ backgroundColor: `${color}20` }}
                 >
-                    {board.icon || '📋'}
+                    <BoardIcon name={board.icon} className="w-4 h-4" />
                 </div>
                 <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold leading-tight truncate">{board.name}</p>
@@ -62,12 +65,8 @@ function BoardNode({ data }: { data: BoardNodeData }) {
                         <p className="text-[10px] text-muted-foreground truncate">{board.description}</p>
                     )}
                 </div>
-                {/* Remove from pod */}
                 <button
-                    onClick={(e) => {
-                        e.stopPropagation()
-                        onRemove(board.id, board.name)
-                    }}
+                    onClick={(e) => { e.stopPropagation(); onRemove(board.id, board.name) }}
                     className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/10 hover:text-destructive"
                     title="Remove from pod"
                 >
@@ -108,10 +107,7 @@ function BoardNode({ data }: { data: BoardNodeData }) {
                     size="sm"
                     variant="ghost"
                     className="h-6 px-2 text-[10px] flex-1"
-                    onClick={(e) => {
-                        e.stopPropagation()
-                        router.push(`/dashboard/boards/${board.id}`)
-                    }}
+                    onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/boards/${board.id}`) }}
                 >
                     <ExternalLink className="w-3 h-3 mr-1" />
                     Open
@@ -120,10 +116,7 @@ function BoardNode({ data }: { data: BoardNodeData }) {
                     size="sm"
                     variant="ghost"
                     className="h-6 px-2 text-[10px] flex-1"
-                    onClick={(e) => {
-                        e.stopPropagation()
-                        router.push(`/dashboard/chat?board_id=${board.id}`)
-                    }}
+                    onClick={(e) => { e.stopPropagation(); onOpenChat(board.id, board.name) }}
                 >
                     <MessageCircle className="w-3 h-3 mr-1" />
                     Chat
@@ -132,10 +125,7 @@ function BoardNode({ data }: { data: BoardNodeData }) {
                     size="sm"
                     variant="ghost"
                     className="h-6 px-2 text-[10px]"
-                    onClick={(e) => {
-                        e.stopPropagation()
-                        router.push(`/dashboard/boards/${board.id}/settings`)
-                    }}
+                    onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/boards/${board.id}/settings`) }}
                 >
                     <Settings className="w-3 h-3" />
                 </Button>
@@ -152,10 +142,15 @@ interface PodBoardCanvasProps {
     boards: Board[]
     podSlug: string
     onAddBoards: () => void
+    onOpenChat?: () => void
 }
 
-// Auto-layout: place boards in a staggered grid
-function buildInitialNodes(boards: Board[], podSlug: string, onRemove: (id: string, name: string) => void): Node[] {
+function buildInitialNodes(
+    boards: Board[],
+    podSlug: string,
+    onRemove: (id: string, name: string) => void,
+    onOpenChat: (id: string, name: string) => void,
+): Node[] {
     return boards.map((board, i) => {
         const col = i % 3
         const row = Math.floor(i / 3)
@@ -163,12 +158,11 @@ function buildInitialNodes(boards: Board[], podSlug: string, onRemove: (id: stri
             id: board.id,
             type: 'boardNode',
             position: { x: col * 280 + (row % 2 === 0 ? 0 : 20), y: row * 220 },
-            data: { board, podSlug, onRemove } as BoardNodeData,
+            data: { board, podSlug, onRemove, onOpenChat } as BoardNodeData,
         }
     })
 }
 
-// Build edges: chain boards in order (can be customised later)
 function buildInitialEdges(boards: Board[]): Edge[] {
     if (boards.length < 2) return []
     return boards.slice(0, -1).map((b, i) => ({
@@ -181,24 +175,26 @@ function buildInitialEdges(boards: Board[]): Edge[] {
     }))
 }
 
-export function PodBoardCanvas({ boards, podSlug, onAddBoards }: PodBoardCanvasProps) {
+export function PodBoardCanvas({ boards, podSlug, onAddBoards, onOpenChat }: PodBoardCanvasProps) {
     const removeFromPod = useRemoveFromPod()
+    const [chatBoard, setChatBoard] = useState<{ id: string; name: string } | null>(null)
 
     const handleRemove = useCallback(
         async (boardId: string, boardName: string) => {
             const res = await removeFromPod.mutateAsync(boardId)
-            if (res.success) {
-                toast.success(`Removed "${boardName}" from pod`)
-            } else {
-                toast.error(res.error || 'Failed to remove board')
-            }
+            if (res.success) toast.success(`Removed "${boardName}" from pod`)
+            else toast.error(res.error || 'Failed to remove board')
         },
-        [removeFromPod]
+        [removeFromPod],
     )
 
+    const handleOpenBoardChat = useCallback((boardId: string, boardName: string) => {
+        setChatBoard({ id: boardId, name: boardName })
+    }, [])
+
     const initialNodes = useMemo(
-        () => buildInitialNodes(boards, podSlug, handleRemove),
-        [boards, podSlug, handleRemove]
+        () => buildInitialNodes(boards, podSlug, handleRemove, handleOpenBoardChat),
+        [boards, podSlug, handleRemove, handleOpenBoardChat],
     )
     const initialEdges = useMemo(() => buildInitialEdges(boards), [boards])
 
@@ -207,40 +203,56 @@ export function PodBoardCanvas({ boards, podSlug, onAddBoards }: PodBoardCanvasP
 
     const onConnect = useCallback(
         (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true, type: 'smoothstep' }, eds)),
-        [setEdges]
+        [setEdges],
     )
 
     if (boards.length === 0) return null
 
     return (
-        <div className="w-full h-full rounded-xl overflow-hidden border bg-background/50">
-            <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                nodeTypes={nodeTypes}
-                fitView
-                fitViewOptions={{ padding: 0.3 }}
-                proOptions={{ hideAttribution: true }}
-            >
-                <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-30" />
-                <Controls className="!shadow-none !border !border-border rounded-lg overflow-hidden" />
-                <MiniMap
-                    nodeColor={(n) => {
-                        const board = boards.find((b) => b.id === n.id)
-                        return board?.color || '#6366f1'
-                    }}
-                    className="!border !border-border rounded-lg overflow-hidden !bg-card"
-                    maskColor="hsl(var(--background) / 0.7)"
-                />
-                <Panel position="top-right">
-                    <Button size="sm" onClick={onAddBoards} className="shadow-sm text-xs">
-                        + Add board
-                    </Button>
-                </Panel>
-            </ReactFlow>
-        </div>
+        <>
+            <div className="w-full h-full rounded-xl overflow-hidden border bg-background/50">
+                <ReactFlow
+                    nodes={nodes}
+                    edges={edges}
+                    onNodesChange={onNodesChange}
+                    onEdgesChange={onEdgesChange}
+                    onConnect={onConnect}
+                    nodeTypes={nodeTypes}
+                    fitView
+                    fitViewOptions={{ padding: 0.3 }}
+                    proOptions={{ hideAttribution: true }}
+                >
+                    <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-30" />
+                    <Controls className="!shadow-none !border !border-border rounded-lg overflow-hidden" />
+                    <MiniMap
+                        nodeColor={(n) => {
+                            const board = boards.find((b) => b.id === n.id)
+                            return board?.color || '#6366f1'
+                        }}
+                        className="!border !border-border rounded-lg overflow-hidden !bg-card"
+                        maskColor="hsl(var(--background) / 0.7)"
+                    />
+                    <Panel position="top-right" className="flex gap-2">
+                        {onOpenChat && (
+                            <Button size="sm" variant="outline" onClick={onOpenChat} className="shadow-sm text-xs">
+                                <MessageCircle className="w-3 h-3 mr-1" />
+                                Pod Chat
+                            </Button>
+                        )}
+                        <Button size="sm" onClick={onAddBoards} className="shadow-sm text-xs">
+                            + Add board
+                        </Button>
+                    </Panel>
+                </ReactFlow>
+            </div>
+
+            {/* Per-board chat drawer — opened from board nodes */}
+            <BoardAIChat
+                boardId={chatBoard?.id}
+                boardName={chatBoard?.name}
+                open={!!chatBoard}
+                onOpenChange={(open) => { if (!open) setChatBoard(null) }}
+            />
+        </>
     )
 }

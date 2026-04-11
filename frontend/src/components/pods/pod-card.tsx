@@ -48,7 +48,7 @@ export function PodCard({ pod, onDelete }: PodCardProps) {
                                 color: color,
                             }}
                         >
-                            {pod.icon ? (
+                            {pod.icon && pod.icon.length <= 2 ? (
                                 <span className="text-base">{pod.icon}</span>
                             ) : (
                                 <Layers className="w-4 h-4" />
