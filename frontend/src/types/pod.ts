@@ -63,12 +63,15 @@ export interface ExecutionLog {
 export interface BoardRoute {
   id: string
   account_id: string
+  pod_id?: string | null
   source_board_id: string
   source_step_id?: string | null
   target_board_id: string
   target_step_id?: string | null
   trigger: 'auto' | 'ai_decision' | 'manual'
-  transform_config: Record<string, any>
+  trigger_on_step_complete?: boolean
+  label?: string | null
+  transform_config?: Record<string, any>
   is_active: boolean
   created_at: string
 }

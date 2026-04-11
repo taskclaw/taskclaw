@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, useEffect } from 'react'
 import {
     ReactFlow,
     Background,
@@ -24,6 +24,9 @@ import { BoardAIChat } from '@/components/boards/board-ai-chat'
 import { useRemoveFromPod } from '@/hooks/use-pods'
 import { toast } from 'sonner'
 import type { Board } from '@/types/board'
+import { RouteEditorSheet } from '@/components/pods/route-editor-sheet'
+import { getPodRoutesFiltered } from '@/app/dashboard/pods/actions'
+import type { BoardRoute } from '@/types/pod'
 
 // ── Board Node ──────────────────────────────────────────────────────────────
 
@@ -136,11 +139,39 @@ function BoardNode({ data }: { data: BoardNodeData }) {
 
 const nodeTypes = { boardNode: BoardNode }
 
+// ── Route edge colors by trigger type ─────────────────────────────────────
+
+function routeEdgeStyle(trigger: string): { stroke: string; animated: boolean } {
+    switch (trigger) {
+        case 'auto':
+            return { stroke: '#22c55e', animated: true }
+        case 'ai_decision':
+            return { stroke: '#a855f7', animated: true }
+        default:
+            return { stroke: 'hsl(var(--muted-foreground))', animated: false }
+    }
+}
+
+function buildRouteEdge(route: BoardRoute): Edge {
+    const { stroke, animated } = routeEdgeStyle(route.trigger)
+    return {
+        id: `route-${route.id}`,
+        source: route.source_board_id,
+        target: route.target_board_id,
+        type: 'smoothstep',
+        animated,
+        label: route.label || route.trigger,
+        style: { strokeWidth: 2, stroke },
+        data: { route },
+    }
+}
+
 // ── Canvas ─────────────────────────────────────────────────────────────────
 
 interface PodBoardCanvasProps {
     boards: Board[]
     podSlug: string
+    podId?: string
     onAddBoards: () => void
     onOpenChat?: () => void
 }
@@ -164,20 +195,28 @@ function buildInitialNodes(
 }
 
 function buildInitialEdges(boards: Board[]): Edge[] {
-    if (boards.length < 2) return []
-    return boards.slice(0, -1).map((b, i) => ({
-        id: `e-${b.id}-${boards[i + 1].id}`,
-        source: b.id,
-        target: boards[i + 1].id,
-        type: 'smoothstep',
-        animated: true,
-        style: { strokeWidth: 1.5, strokeDasharray: '5 4', stroke: 'hsl(var(--muted-foreground))' },
-    }))
+    // Placeholder dashed edges; replaced by actual routes once loaded
+    return []
 }
 
-export function PodBoardCanvas({ boards, podSlug, onAddBoards, onOpenChat }: PodBoardCanvasProps) {
+export function PodBoardCanvas({ boards, podSlug, podId, onAddBoards, onOpenChat }: PodBoardCanvasProps) {
     const removeFromPod = useRemoveFromPod()
     const [chatBoard, setChatBoard] = useState<{ id: string; name: string } | null>(null)
+    const [routes, setRoutes] = useState<BoardRoute[]>([])
+
+    // Route editor state
+    const [routeSheetOpen, setRouteSheetOpen] = useState(false)
+    const [pendingConnection, setPendingConnection] = useState<Connection | null>(null)
+    const [editingRoute, setEditingRoute] = useState<BoardRoute | null>(null)
+
+    // Load existing routes
+    useEffect(() => {
+        if (podId) {
+            getPodRoutesFiltered(podId)
+                .then(setRoutes)
+                .catch(() => setRoutes([]))
+        }
+    }, [podId])
 
     const handleRemove = useCallback(
         async (boardId: string, boardName: string) => {
@@ -196,15 +235,59 @@ export function PodBoardCanvas({ boards, podSlug, onAddBoards, onOpenChat }: Pod
         () => buildInitialNodes(boards, podSlug, handleRemove, handleOpenBoardChat),
         [boards, podSlug, handleRemove, handleOpenBoardChat],
     )
-    const initialEdges = useMemo(() => buildInitialEdges(boards), [boards])
+
+    const routeEdges = useMemo(() => routes.map(buildRouteEdge), [routes])
 
     const [nodes, , onNodesChange] = useNodesState(initialNodes)
-    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+    const [edges, setEdges, onEdgesChange] = useEdgesState(routeEdges)
+
+    // Sync route edges when routes change
+    useEffect(() => {
+        setEdges(routes.map(buildRouteEdge))
+    }, [routes, setEdges])
 
     const onConnect = useCallback(
-        (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true, type: 'smoothstep' }, eds)),
-        [setEdges],
+        (params: Connection) => {
+            // Open the route editor sheet instead of immediately creating an edge
+            setPendingConnection(params)
+            setEditingRoute(null)
+            setRouteSheetOpen(true)
+        },
+        [],
     )
+
+    const onEdgeClick = useCallback(
+        (_: React.MouseEvent, edge: Edge) => {
+            if (edge.data?.route) {
+                setEditingRoute(edge.data.route as BoardRoute)
+                setPendingConnection(null)
+                setRouteSheetOpen(true)
+            }
+        },
+        [],
+    )
+
+    const handleRouteSaved = useCallback((route: BoardRoute) => {
+        setRoutes((prev) => {
+            const exists = prev.find((r) => r.id === route.id)
+            if (exists) return prev.map((r) => (r.id === route.id ? route : r))
+            return [...prev, route]
+        })
+        setRouteSheetOpen(false)
+        setPendingConnection(null)
+        setEditingRoute(null)
+    }, [])
+
+    const handleRouteDeleted = useCallback((routeId: string) => {
+        setRoutes((prev) => prev.filter((r) => r.id !== routeId))
+        setRouteSheetOpen(false)
+        setEditingRoute(null)
+    }, [])
+
+    const sourceBoardId = pendingConnection?.source ?? editingRoute?.source_board_id ?? null
+    const targetBoardId = pendingConnection?.target ?? editingRoute?.target_board_id ?? null
+    const sourceBoard = boards.find((b) => b.id === sourceBoardId) ?? null
+    const targetBoard = boards.find((b) => b.id === targetBoardId) ?? null
 
     if (boards.length === 0) return null
 
@@ -217,6 +300,7 @@ export function PodBoardCanvas({ boards, podSlug, onAddBoards, onOpenChat }: Pod
                     onNodesChange={onNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
+                    onEdgeClick={onEdgeClick}
                     nodeTypes={nodeTypes}
                     fitView
                     fitViewOptions={{ padding: 0.3 }}
@@ -253,6 +337,26 @@ export function PodBoardCanvas({ boards, podSlug, onAddBoards, onOpenChat }: Pod
                 open={!!chatBoard}
                 onOpenChange={(open) => { if (!open) setChatBoard(null) }}
             />
+
+            {/* Route editor sheet */}
+            {routeSheetOpen && (
+                <RouteEditorSheet
+                    open={routeSheetOpen}
+                    onOpenChange={(open) => {
+                        if (!open) {
+                            setRouteSheetOpen(false)
+                            setPendingConnection(null)
+                            setEditingRoute(null)
+                        }
+                    }}
+                    sourceBoard={sourceBoard}
+                    targetBoard={targetBoard}
+                    podId={podId}
+                    existingRoute={editingRoute}
+                    onSaved={handleRouteSaved}
+                    onDeleted={handleRouteDeleted}
+                />
+            )}
         </>
     )
 }
