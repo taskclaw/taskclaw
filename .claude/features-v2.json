@@ -1,0 +1,370 @@
+{
+  "project": "TaskClaw v2 \u2014 Autonomous Company Platform",
+  "created": "2026-04-11",
+  "total": 38,
+  "completed": 11,
+  "features": [
+    {
+      "id": "DB01",
+      "name": "agent_memories table migration",
+      "group": "migrations",
+      "status": "pass",
+      "spec": "Create agent_memories table with pgvector(1536), type enum (episodic/semantic/procedural/working), source enum (agent/human/sync), salience float DEFAULT 1.0, valid_from/valid_to timestamps, FKs to tasks/board_instances/categories/ai_conversations (all nullable), HNSW index on content_embedding, RLS policies mirroring knowledge_docs pattern",
+      "depends_on": [],
+      "test": "SELECT * FROM agent_memories WHERE account_id = 'x' returns empty array; content_embedding column exists with vector(1536) type",
+      "completed_at": "2026-04-11T13:16:38.168555"
+    },
+    {
+      "id": "DB02",
+      "name": "memory_connections table migration",
+      "group": "migrations",
+      "status": "pass",
+      "spec": "Create memory_connections table: account_id FK accounts, adapter_slug TEXT DEFAULT 'default', name TEXT, config JSONB (encrypted), is_active BOOLEAN, is_account_default BOOLEAN. UNIQUE constraint on (account_id) WHERE is_account_default=TRUE. Seed default row for existing accounts via DO block.",
+      "depends_on": [],
+      "test": "SELECT * FROM memory_connections WHERE account_id = 'x' returns 1 default row after migration",
+      "completed_at": "2026-04-11T13:16:38.168555"
+    },
+    {
+      "id": "DB03",
+      "name": "dag_approvals table + board_routes trigger column",
+      "group": "migrations",
+      "status": "pass",
+      "spec": "CREATE TABLE dag_approvals (id uuid PK, dag_id uuid FK task_dags, status TEXT CHECK IN ('pending','approved','rejected'), reviewer_user_id uuid FK auth.users, reviewed_at TIMESTAMPTZ, notes TEXT, created_at). ALTER TABLE task_dags ADD COLUMN approved_at TIMESTAMPTZ. ALTER TABLE board_routes ADD COLUMN trigger_on_step_complete BOOLEAN DEFAULT TRUE.",
+      "depends_on": [],
+      "test": "INSERT into dag_approvals succeeds. SELECT trigger_on_step_complete FROM board_routes returns column.",
+      "completed_at": "2026-04-11T13:16:38.168555"
+    },
+    {
+      "id": "DB04",
+      "name": "pilot_configs table migration",
+      "group": "migrations",
+      "status": "pass",
+      "spec": "CREATE TABLE pilot_configs (id uuid PK, account_id uuid FK accounts, pod_id uuid FK pods nullable, backbone_connection_id uuid FK backbone_connections nullable, system_prompt TEXT, is_active BOOLEAN DEFAULT FALSE, max_tasks_per_cycle INT DEFAULT 10, approval_required BOOLEAN DEFAULT TRUE, last_run_at TIMESTAMPTZ, last_run_summary TEXT, created_at, updated_at). UNIQUE(account_id, pod_id NULLS NOT DISTINCT). RLS: users can CRUD within their accounts.",
+      "depends_on": [],
+      "test": "INSERT pilot_config with pod_id=NULL (workspace) succeeds. Second insert with pod_id=NULL throws unique violation.",
+      "completed_at": "2026-04-11T13:16:38.168555"
+    },
+    {
+      "id": "BE01",
+      "name": "MemoryAdapter interface + MemoryAdapterRegistry",
+      "group": "backend-memory",
+      "status": "fail",
+      "spec": "Create backend/src/memory/adapters/memory-adapter.interface.ts defining MemoryEntry, MemorySearchOptions, MemoryWriteOptions, MemoryAdapter interface (slug, name, remember, recall, recent, forget, healthCheck, validateConfig, optional buildContextBlock). Create MemoryAdapterRegistry @Injectable with register(adapter)/resolve(slug)/list() \u2014 same pattern as BackboneAdapterRegistry.",
+      "depends_on": [
+        "DB01",
+        "DB02"
+      ],
+      "test": "registry.resolve('default') returns adapter instance. registry.resolve('unknown') throws BadRequestException.",
+      "completed_at": null
+    },
+    {
+      "id": "BE02",
+      "name": "DefaultMemoryAdapter",
+      "group": "backend-memory",
+      "status": "fail",
+      "spec": "Implement DefaultMemoryAdapter (slug='default'): remember() inserts to agent_memories + generates embedding via EmbeddingService (non-blocking, catch errors silently). recall() calls search_memories_vector() Supabase RPC (cosine similarity, threshold 0.3, limit param) with ILIKE fallback. recent() SELECT ORDER BY created_at DESC LIMIT N. forget() DELETE by id+account_id. buildContextBlock() returns '\\n=== AGENT MEMORY ===\\n' + bullet list.",
+      "depends_on": [
+        "BE01"
+      ],
+      "test": "remember({content:'test', type:'episodic', metadata:{account_id}}) inserts row. recall({query:'test', account_id}) returns the row.",
+      "completed_at": null
+    },
+    {
+      "id": "BE03",
+      "name": "ObsidianMemoryAdapter",
+      "group": "backend-memory",
+      "status": "fail",
+      "spec": "Implement ObsidianMemoryAdapter (slug='obsidian'): config={vault_url, api_key, memory_folder='TaskClaw/Memories'}. remember() \u2192 PUT {vault_url}/vault/{memory_folder}/{type}/{Date.now()}.md with Authorization header. recall() \u2192 POST {vault_url}/search/simple with {query} body, map results to MemoryEntry[]. recent() \u2192 GET {vault_url}/vault/{memory_folder}/?list. healthCheck() \u2192 GET {vault_url}/ \u2014 return {healthy: true/false}. All methods catch connection errors and return empty/false gracefully.",
+      "depends_on": [
+        "BE01"
+      ],
+      "test": "healthCheck() with vault_url='http://localhost:1' returns {healthy:false} within 2s (no throw). slug='obsidian'.",
+      "completed_at": null
+    },
+    {
+      "id": "BE04",
+      "name": "MemoryRouterService + MemoryConnectionsService",
+      "group": "backend-memory",
+      "status": "fail",
+      "spec": "MemoryConnectionsService: CRUD for memory_connections table (findActive, create, update, delete). MemoryRouterService: resolveAdapter(accountId) fetches active connection, falls back to 'default'. remember/recall delegates to resolved adapter. buildMemoryContext(accountId, query, taskId?): recall top 10 with 200ms Promise.race timeout, format via buildContextBlock, return '' on timeout/error.",
+      "depends_on": [
+        "BE02",
+        "BE03"
+      ],
+      "test": "buildMemoryContext('no-account', 'query') returns '' within 300ms. With stored memories returns non-empty string.",
+      "completed_at": null
+    },
+    {
+      "id": "BE05",
+      "name": "MemoryModule \u2014 NestJS wiring + REST API",
+      "group": "backend-memory",
+      "status": "fail",
+      "spec": "Create memory.module.ts (imports: SupabaseModule, EmbeddingModule, exports: MemoryRouterService). Register DefaultMemoryAdapter + ObsidianMemoryAdapter in onModuleInit. Create memory.controller.ts: GET|POST /accounts/:accountId/memory/connections, PATCH|DELETE /:id, GET /:id/health, GET /accounts/:accountId/memory/entries?type=&limit=50, DELETE /entries/:memoryId. Import MemoryModule in AppModule.",
+      "depends_on": [
+        "BE04"
+      ],
+      "test": "Backend starts cleanly. GET /accounts/:id/memory/connections returns array. GET /memory/entries returns paginated memories.",
+      "completed_at": null
+    },
+    {
+      "id": "BE06",
+      "name": "Wire memory recall into conversations buildSystemPrompt",
+      "group": "backend-memory",
+      "status": "fail",
+      "spec": "In conversations.service.ts, inject MemoryRouterService. In buildSystemPrompt(): after task context block, add: const memCtx = await this.memoryRouter.buildMemoryContext(accountId, message, task?.id). Append memCtx to prompt if non-empty. Must compile and not break existing behaviour.",
+      "depends_on": [
+        "BE05"
+      ],
+      "test": "Store 1 episodic memory for account+task. Send message in that task conversation. System prompt logged contains '=== AGENT MEMORY ==='.",
+      "completed_at": null
+    },
+    {
+      "id": "BE07",
+      "name": "Async memory extraction after AI response",
+      "group": "backend-memory",
+      "status": "fail",
+      "spec": "In conversations.service.ts sendMessage(), after storing assistant message: fire-and-forget extractAndStoreMemories(accountId, {userMessage, assistantResponse, conversationId, taskId, categoryId}). Method builds extraction prompt ('Extract up to 3 key facts from this exchange as JSON: [{content, type}]'), calls BackboneRouterService, parses JSON array, calls memoryRouter.remember() for each. Errors silently logged. Never blocks response.",
+      "depends_on": [
+        "BE06"
+      ],
+      "test": "After one conversation exchange, agent_memories count for that conversation_id > 0 within 15s.",
+      "completed_at": null
+    },
+    {
+      "id": "BE08",
+      "name": "Memory salience decay cron",
+      "group": "backend-memory",
+      "status": "fail",
+      "spec": "Add @Cron('0 */6 * * *') decaySalience(): UPDATE agent_memories SET salience = GREATEST(0.1, salience * 0.98) WHERE type='episodic' AND valid_to IS NULL AND created_at < NOW() - INTERVAL '1 day'. Add @Cron('0 3 * * *') purgeOldMemories(): DELETE WHERE type='episodic' AND salience < 0.15 AND created_at < NOW() - INTERVAL '30 days'. Log counts.",
+      "depends_on": [
+        "BE05"
+      ],
+      "test": "decaySalience() runs without error on empty table. Memory with salience=0.05 not deleted (floor 0.1). Memory with salience=0.14 + age>30d IS purged.",
+      "completed_at": null
+    },
+    {
+      "id": "BE09",
+      "name": "Heartbeat executes prompt against backbone (Pulse activation)",
+      "group": "backend-autonomy",
+      "status": "pass",
+      "spec": "In heartbeat.service.ts executeHeartbeat(): after fetching pending tasks, if config.prompt is set AND NOT config.dry_run: build taskListContext string (task titles+statuses), call BackboneRouterService.send({accountId, message: config.prompt, history:[{role:'user', content: taskListContext}], podId, boardId}). Store AI response text in summary variable. If dry_run, summary = '[DRY RUN] Would send: ' + taskListContext.",
+      "depends_on": [],
+      "test": "Create heartbeat with prompt='Review tasks'. Trigger manually. execution_log.summary contains non-empty AI-generated text (not just task count).",
+      "completed_at": "2026-04-11T16:22:27.237210"
+    },
+    {
+      "id": "BE10",
+      "name": "Board routes auto-trigger on task completion",
+      "group": "backend-autonomy",
+      "status": "pass",
+      "spec": "In tasks.service.ts updateTask(): after DB update, when completed changes to true OR current_step_id changes to a done-type step: query board_routes WHERE source_board_id=task.board_instance_id AND (source_step_id=task.current_step_id OR source_step_id IS NULL) AND trigger='auto' AND trigger_on_step_complete=TRUE AND is_active=TRUE. For each: fire-and-forget boardRoutingService.triggerRoute(route.id, task.id). Inject BoardRoutingService with forwardRef.",
+      "depends_on": [
+        "DB03"
+      ],
+      "test": "Create auto route Board A done-step \u2192 Board B inbox. Move task to done step. Within 5s new task in Board B exists.",
+      "completed_at": "2026-04-11T16:22:27.237210"
+    },
+    {
+      "id": "BE11",
+      "name": "DAG approval workflow",
+      "group": "backend-autonomy",
+      "status": "pass",
+      "spec": "Create DagApprovalService in board-routing module: requestApproval(dagId)\u2192INSERT dag_approvals(status='pending')+emit webhook. approve(dagId,userId,notes?)\u2192UPDATE status='approved'+task_dags.approved_at+status='running'+call DAGExecutorService.startDag(dagId). reject(dagId,userId,notes?)\u2192UPDATE status='rejected'+task_dags.status='cancelled'. Add to BoardRoutingController: POST /dags/:dagId/approve, /reject, GET /dags/:dagId/approval.",
+      "depends_on": [
+        "DB03"
+      ],
+      "test": "decomposeGoal() creates DAG status='pending_approval'. POST /approve \u2192 task_dags.status='running'. POST /reject \u2192 'cancelled'.",
+      "completed_at": "2026-04-11T16:22:27.237210"
+    },
+    {
+      "id": "BE12",
+      "name": "DAGExecutorService.startDag() \u2014 execute approved DAGs",
+      "group": "backend-autonomy",
+      "status": "pass",
+      "spec": "Add startDag(dagId) to DAGExecutorService: fetch all tasks for dag. Find roots (no upstream deps). For each root, call BackboneRouterService.send({accountId, message: task.title+'\\n\\n'+(task.notes||''), boardId: task.board_instance_id}), store response.text in task.result, update task.completed=TRUE (triggers existing onTaskCompleted() cascade). Max 3 concurrent per batch via Promise.all.",
+      "depends_on": [
+        "BE11"
+      ],
+      "test": "Approve DAG with tasks [A, B, C where C depends A+B]. A and B execute in first batch. C executes after both complete.",
+      "completed_at": "2026-04-11T16:22:27.237210"
+    },
+    {
+      "id": "BE13",
+      "name": "PilotService \u2014 Pod-level coordinator",
+      "group": "backend-pilot",
+      "status": "pass",
+      "spec": "Create backend/src/pilot/pilot.service.ts. runPodPilot(accountId, podId): fetch active pilot_config for pod, fetch all boards+steps+pending tasks in pod (limit 20 tasks). Build org context markdown. Call BackboneRouterService.send() with pilot system_prompt + context. Parse response for JSON action block (```json [{action,params}]```). Execute: create_task\u2192tasksService.create(), move_task\u2192tasksService.update(), decompose_goal\u2192coordinatorService.decomposeGoal(). Log to execution_log trigger_type='coordinator'. Return {summary, actions_taken}.",
+      "depends_on": [
+        "DB04",
+        "BE12"
+      ],
+      "test": "runPodPilot() with active config returns {summary: string, actions_taken: number}. No active config returns null.",
+      "completed_at": "2026-04-11T16:22:27.237210"
+    },
+    {
+      "id": "BE14",
+      "name": "PilotService \u2014 Workspace-level coordinator",
+      "group": "backend-pilot",
+      "status": "pass",
+      "spec": "Extend PilotService: runWorkspacePilot(accountId): fetch pilot_config WHERE pod_id IS NULL AND is_active=TRUE. Fetch all pods+boards+task counts. Build cross-pod summary. Call backbone. Parse+execute actions targeting any pod's boards. Log to execution_log. Add runAll(accountId): runWorkspacePilot then all active pod pilots.",
+      "depends_on": [
+        "BE13"
+      ],
+      "test": "runWorkspacePilot() with workspace-level config returns result. No config returns null. Actions reference boards across multiple pods.",
+      "completed_at": "2026-04-11T16:22:27.237210"
+    },
+    {
+      "id": "BE15",
+      "name": "PilotModule, controller, heartbeat integration",
+      "group": "backend-pilot",
+      "status": "pass",
+      "spec": "Create pilot.module.ts + pilot.controller.ts. Endpoints: GET /accounts/:id/pilot/configs, POST (upsert by pod_id), PATCH /configs/:configId, DELETE /configs/:configId, POST /run?pod_id= (returns {summary, actions_taken}). Import PilotModule in AppModule. Wire into HeartbeatModule: heartbeat_configs with pilot_enabled=TRUE call pilotService.runPodPilot() instead of raw backbone.",
+      "depends_on": [
+        "BE14"
+      ],
+      "test": "POST /pilot/run?pod_id=X returns {status:'completed', summary: string, actions_taken: N}. POST /pilot/run (no pod_id) runs workspace pilot.",
+      "completed_at": "2026-04-11T16:22:27.237210"
+    },
+    {
+      "id": "FE01",
+      "name": "Memory settings page \u2014 adapter cards + Obsidian setup guide",
+      "group": "frontend-memory",
+      "status": "fail",
+      "spec": "Create frontend/src/app/dashboard/settings/memory/page.tsx + actions.ts. Two adapter cards: 'Default (Built-in)' showing memory count; 'Obsidian' with vault_url + api_key form + health check button. Save via memory connection API. Add 'Memory' nav link with Brain icon in Settings sidebar. Obsidian card has collapsible 5-step setup guide (Install Obsidian \u2192 Enable community plugins \u2192 Install Local REST API \u2192 Copy API key \u2192 Enter URL+key).",
+      "depends_on": [
+        "BE05"
+      ],
+      "test": "Navigate /dashboard/settings/memory. Both adapter cards visible. Obsidian form functional. Health check shows green/red indicator.",
+      "completed_at": null
+    },
+    {
+      "id": "FE02",
+      "name": "Memory entries viewer",
+      "group": "frontend-memory",
+      "status": "fail",
+      "spec": "Create /dashboard/settings/memory/entries/page.tsx. Table: type badge (episodic=blue/semantic=green/procedural=amber), content truncated 80 chars with expand tooltip, source badge, salience progress bar, relative timestamp. Filter tabs: All/Episodic/Semantic/Procedural. Delete per row with confirm. Empty state message. 'View memories' link from memory settings page.",
+      "depends_on": [
+        "FE01"
+      ],
+      "test": "Page loads. After conversation exchange memories appear. Delete removes row. Filter tabs show correct subsets.",
+      "completed_at": null
+    },
+    {
+      "id": "FE03",
+      "name": "Memory indicator in task AI chat",
+      "group": "frontend-memory",
+      "status": "fail",
+      "spec": "In task-ai-chat.tsx, below chat header add a memory pill: Brain icon + '{N} memories' count (GET /memory/entries?task_id=X&limit=5). Visible only when count > 0. Click opens popover listing top 5 memory strings (truncated 60 chars each). Styled subtle/muted.",
+      "depends_on": [
+        "FE01",
+        "BE07"
+      ],
+      "test": "After conversation exchange creates memories, reopen task chat. Memory pill shows count. Click shows list.",
+      "completed_at": null
+    },
+    {
+      "id": "FE04",
+      "name": "Pod Cockpit \u2014 Pilot settings sheet",
+      "group": "frontend-pilot",
+      "status": "fail",
+      "spec": "In /dashboard/pods/[slug]/page.tsx add Settings Sheet (gear icon header). 'Pilot Agent' section: enable toggle, backbone selector (useBackboneConnections hook), system_prompt textarea, max_tasks_per_cycle input (1-50), approval_required toggle. Save via pilot config API. Show last run time + truncated summary. 'Run Pilot Now' button (POST /pilot/run?pod_id=) shows toast with summary result.",
+      "depends_on": [
+        "BE15"
+      ],
+      "test": "Pod settings sheet opens. Toggle Pilot. Save persists. Run Pilot shows toast with AI summary.",
+      "completed_at": null
+    },
+    {
+      "id": "FE05",
+      "name": "Workspace Cockpit \u2014 Workspace Pilot card + activity feed",
+      "group": "frontend-pilot",
+      "status": "fail",
+      "spec": "In /dashboard/cockpit/page.tsx, above pods grid add 'Workspace Pilot' card: enable toggle, last run time, last summary (2-line truncate), click expands full config form, 'Run Now' button. Below pods grid add collapsible 'Pilot Activity' section: last 5 execution_log entries (trigger_type='coordinator') showing timestamp, summary truncated 100 chars, actions_taken badge, duration.",
+      "depends_on": [
+        "BE15"
+      ],
+      "test": "Cockpit shows Workspace Pilot card. Toggle and save work. Run shows toast. Activity section updates after run.",
+      "completed_at": null
+    },
+    {
+      "id": "FE06",
+      "name": "DAG approval banner + Pod Cockpit Goals tab",
+      "group": "frontend-pilot",
+      "status": "fail",
+      "spec": "Create components/dag/dag-approval-banner.tsx: yellow banner for pending_approval DAGs showing goal, task count, expandable task list, Approve (green) and Reject (destructive+notes) buttons wired to API. In Pod Cockpit, add 'Goals' tab alongside canvas: list of task_dags for pod with status badges, click expands dependency tree. Pending DAGs render the approval banner inline.",
+      "depends_on": [
+        "BE11"
+      ],
+      "test": "decomposeGoal creates pending DAG. Goals tab shows it with approval banner. Approve changes status. Reject dismisses.",
+      "completed_at": null
+    },
+    {
+      "id": "FE07",
+      "name": "Pod Cockpit canvas \u2014 board route editor",
+      "group": "frontend-routing",
+      "status": "fail",
+      "spec": "Extend PodBoardCanvas ReactFlow (components/pods/pod-board-canvas.tsx). onConnect: open 'Create Route' Sheet with fields: trigger type radio (Auto/Manual/AI Decision), source step selector (board A steps), target step selector (board B steps), label. Save via POST /board-routing/routes. Load existing routes GET /board-routing/routes?pod_id= as labeled edges (auto=green/manual=gray/ai_decision=purple). Click edge \u2192 edit/delete Sheet.",
+      "depends_on": [],
+      "test": "Drag from board A to board B node. Sheet opens. Save creates route. Edge renders with color. Click edge opens edit sheet.",
+      "completed_at": null
+    },
+    {
+      "id": "FE08",
+      "name": "Execution log panel \u2014 Autonomy page",
+      "group": "frontend-autonomy",
+      "status": "fail",
+      "spec": "Create /dashboard/settings/autonomy/page.tsx. Execution log table: trigger_type badge, status badge (color-coded), summary truncated 100 chars (expand on click modal), duration formatted, started_at relative time. Paginated 20/page with Load More. Auto-refresh every 30s via React Query refetchInterval. Add 'Autonomy' link to Settings sidebar.",
+      "depends_on": [],
+      "test": "Page loads. Trigger manual heartbeat. Within 15s new entry appears with correct summary text.",
+      "completed_at": null
+    },
+    {
+      "id": "INT01",
+      "name": "E2E: board route auto-trigger",
+      "group": "integration",
+      "status": "fail",
+      "spec": "backend/test/board-routing/auto-route.e2e-spec.ts: Create Board A (Todo+Done steps) + Board B (Inbox). Create board_route A:Done\u2192B:Inbox trigger='auto'. Create task on Board A. PATCH task current_step_id to Done step. Wait 5s. Assert new task in Board B + task_dependencies row.",
+      "depends_on": [
+        "BE10"
+      ],
+      "test": "npm run test:e2e -- --testPathPattern=auto-route \u2014 PASS",
+      "completed_at": null
+    },
+    {
+      "id": "INT02",
+      "name": "E2E: DAG decompose \u2192 approve \u2192 execute",
+      "group": "integration",
+      "status": "fail",
+      "spec": "backend/test/board-routing/dag-flow.e2e-spec.ts: POST decompose-goal {goal:'Write blog post', podId}. Assert status='pending_approval'. POST /approve. Wait 10s. Assert DAG status='running' or 'completed'. Assert task.result non-null.",
+      "depends_on": [
+        "BE12"
+      ],
+      "test": "npm run test:e2e -- --testPathPattern=dag-flow \u2014 PASS (requires live backbone)",
+      "completed_at": null
+    },
+    {
+      "id": "INT03",
+      "name": "E2E: memory write \u2192 recall \u2192 prompt injection",
+      "group": "integration",
+      "status": "fail",
+      "spec": "backend/test/memory/memory-flow.e2e-spec.ts: Create task. Send 2 conversation messages. Wait 15s. Assert agent_memories WHERE conversation_id > 0. Send 3rd message. Intercept backbone call. Assert system prompt contains '=== AGENT MEMORY ==='.",
+      "depends_on": [
+        "BE07"
+      ],
+      "test": "npm run test:e2e -- --testPathPattern=memory-flow \u2014 PASS",
+      "completed_at": null
+    },
+    {
+      "id": "INT04",
+      "name": "E2E: Pod Pilot manual run",
+      "group": "integration",
+      "status": "fail",
+      "spec": "backend/test/pilot/pod-pilot.e2e-spec.ts: Create pod + 2 boards + 3 tasks. POST pilot_config {pod_id, is_active:true, backbone_connection_id, system_prompt}. POST /pilot/run?pod_id=X. Assert execution_log: trigger_type='coordinator', status='success', summary non-empty.",
+      "depends_on": [
+        "BE15"
+      ],
+      "test": "npm run test:e2e -- --testPathPattern=pod-pilot \u2014 PASS (requires live backbone)",
+      "completed_at": null
+    }
+  ]
+}

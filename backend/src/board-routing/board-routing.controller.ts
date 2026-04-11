@@ -13,7 +13,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { AuthGuard } from '../common/guards/auth.guard';
 import { BoardRoutingService } from './board-routing.service';
 import { CoordinatorService } from './coordinator.service';

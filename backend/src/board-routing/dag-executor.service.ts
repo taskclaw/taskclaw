@@ -79,7 +79,10 @@ export class DAGExecutorService {
             const result = await this.backboneRouter.send({
               accountId: dag.account_id,
               boardId: task.board_instance_id ?? undefined,
-              sendOptions: { message },
+              sendOptions: {
+                message,
+                systemPrompt: 'You are an AI task executor. Complete the task described.',
+              },
             });
 
             const resultText = result.text ?? '';

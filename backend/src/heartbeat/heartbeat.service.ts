@@ -380,6 +380,7 @@ export class HeartbeatService {
             podId: config.pod_id ?? undefined,
             boardId: config.board_id ?? undefined,
             sendOptions: {
+              systemPrompt: 'You are an AI task manager. Review the task list and provide actionable insights.',
               message: config.prompt,
               history: [
                 { role: 'user', content: taskListContext },
