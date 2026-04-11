@@ -16,6 +16,7 @@ import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { ConversationsService } from '../conversations/conversations.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 import { DAGExecutorService } from '../board-routing/dag-executor.service';
+import { BoardRoutingService } from '../board-routing/board-routing.service';
 
 interface TaskFilters {
   category_id?: string;
@@ -41,6 +42,8 @@ export class TasksService {
     private readonly webhookEmitter: WebhookEmitterService,
     @Inject(forwardRef(() => DAGExecutorService))
     private readonly dagExecutor: DAGExecutorService,
+    @Inject(forwardRef(() => BoardRoutingService))
+    private readonly boardRoutingService: BoardRoutingService,
   ) {}
 
   async findAll(
@@ -428,7 +431,58 @@ export class TasksService {
         );
     }
 
+    // BE10: Fire-and-forget board route auto-trigger on completion or step change
+    const completedChanged =
+      updateTaskDto.completed === true && !existingTask.completed;
+    const stepChanged =
+      updateTaskDto.current_step_id &&
+      updateTaskDto.current_step_id !== existingTask.current_step_id;
+
+    if ((completedChanged || stepChanged) && data.board_instance_id) {
+      this.triggerAutoRoutes(data).catch((err) =>
+        this.logger.warn(
+          `Board route auto-trigger failed for task ${id}: ${(err as Error).message}`,
+        ),
+      );
+    }
+
     return data;
+  }
+
+  /**
+   * BE10: Find and trigger all matching auto board routes for a task
+   * after it completes or moves to a done-type step.
+   * This is always called fire-and-forget.
+   */
+  private async triggerAutoRoutes(task: any) {
+    const client = this.supabaseAdmin.getClient();
+
+    const { data: routes } = await client
+      .from('board_routes')
+      .select('id')
+      .eq('source_board_id', task.board_instance_id)
+      .eq('trigger', 'auto')
+      .eq('trigger_on_step_complete', true)
+      .eq('is_active', true)
+      .or(
+        `source_step_id.eq.${task.current_step_id},source_step_id.is.null`,
+      );
+
+    if (!routes?.length) return;
+
+    this.logger.log(
+      `Auto-triggering ${routes.length} board route(s) for task ${task.id}`,
+    );
+
+    for (const route of routes) {
+      this.boardRoutingService
+        .triggerRoute(task.id, route.id)
+        .catch((err) =>
+          this.logger.warn(
+            `Board route ${route.id} trigger failed for task ${task.id}: ${(err as Error).message}`,
+          ),
+        );
+    }
   }
 
   async remove(
