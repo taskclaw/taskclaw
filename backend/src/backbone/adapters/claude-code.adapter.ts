@@ -67,6 +67,8 @@ export class ClaudeCodeAdapter implements BackboneAdapter {
         cwd: workspaceDir,
         env: childEnv,
         timeout: timeoutMs,
+        // Close stdin so --print mode doesn't block waiting for interactive input
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
 
       child.stdout.on('data', (data: Buffer) => {
