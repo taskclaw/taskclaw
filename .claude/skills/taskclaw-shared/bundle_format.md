@@ -128,6 +128,7 @@ Steps are the Kanban columns/pipeline stages.
   "position": 0,
   "color": "#hex6",
   "linked_category_slug": "agent-category-slug",
+  "backbone_slug": null,
   "trigger_type": "manual",
   "ai_first": false,
   "system_prompt": null,
@@ -140,6 +141,19 @@ Steps are the Kanban columns/pipeline stages.
   "schedule_cron": null
 }
 ```
+
+### `backbone_slug`
+Optional. The backbone type to use for this step (e.g., `"claude-code"`, `"anthropic"`, `"openrouter"`). Resolved at import time to the first active backbone connection of that type in the account. If omitted, inherits from board default → account default.
+
+Available backbone types:
+| Slug | Description |
+|------|-------------|
+| `claude-code` | Local Claude Code CLI subprocess — can write files, use tools |
+| `anthropic` | Direct Anthropic API |
+| `openrouter` | Multi-model API routing |
+| `openclaw` | Self-hosted OpenClaw (WebSocket) |
+| `custom-http` | Any REST endpoint |
+| `ollama` | Local open-source models |
 
 ### Step Types
 | Type | Description |
@@ -181,6 +195,13 @@ Define form fields for each step:
 Field types: `text`, `dropdown`, `date`, `number`, `boolean`, `url`
 
 `options` array only needed for `dropdown` type.
+
+**`url` type is special**: renders as a clickable link on the task card. Use it for:
+- Source URLs the AI should research (input)
+- Generated file paths (output) — `file:///tmp/output/report.html` opens directly in the browser
+- External asset links (deployed pages, images, documents)
+
+**Output schema for AI steps**: Every `ai_process` step should define `output_schema` fields for the data the AI produces. The platform automatically appends a structured `output_json` block instruction to the AI's system prompt, telling it to fill these fields. The AI response is parsed and saved as `card_data` on the task, making results visible and traceable on the card.
 
 ### Step Routing
 - `on_success`: step `id` to move to when this step completes successfully

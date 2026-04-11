@@ -87,7 +87,30 @@ For each AI stage, you'll set:
 - `system_prompt` describing what the AI should do
 - `linked_category_slug` pointing to the responsible agent
 
-### Phase 3b: Integration Dependencies
+### Phase 3b: Backbone Selection
+
+Before finalizing AI steps, clarify which backbone will power them. Ask:
+- "Which AI backbone should this board use?" (Claude Code locally, Anthropic API, OpenRouter, etc.)
+- "Does any step need special capabilities like writing files, tool use, or a specific model?"
+
+**Backbone types available in TaskClaw:**
+
+| Type | Use case |
+|------|----------|
+| `claude-code` | Local automation, file I/O, tool-calling (runs `claude` subprocess) |
+| `anthropic` | Direct Claude API, cloud-only |
+| `openrouter` | Multi-model routing via one API key |
+| `openclaw` | Self-hosted OpenClaw instance |
+| `custom-http` | Any REST endpoint |
+| `ollama` | Local open-source models |
+
+**Resolution cascade**: task → step → board → agent category → account default → fallback
+
+For steps needing special capabilities (filesystem, tools), assign backbone at step level. Otherwise inherit from board/account default.
+
+In the bundle JSON: `"backbone_slug": "claude-code"` on the step (resolved to active connection at import time).
+
+### Phase 3c: Integration Dependencies
 
 Ask the user:
 - "What external services or APIs does this board need to function?" (e.g., X API, Slack, SendGrid, image generation, CRM)
@@ -130,6 +153,18 @@ Output fields (what the AI or user produces):
 - "What does this stage produce?"
 
 Use field types: `text`, `dropdown`, `date`, `number`, `boolean`, `url`
+
+**Key design principle — always define output schemas for AI steps:**
+- Every `ai_process` step should produce at least one output field
+- Use `type: "url"` for any generated file path or external URL — it renders as a clickable link on the card
+- Use `type: "text"` for summaries, notes, or findings
+- The platform auto-injects instructions telling the AI to fill these fields via a structured `output_json` block
+
+**URL fields for file outputs:**
+If the AI saves a file locally, set the output field to `file:///absolute/path/to/file` — this makes it directly openable in the browser from the card. Always instruct the AI in the step's `system_prompt` to populate this field with the exact file path.
+
+**Chaining inputs → outputs:**
+Design schemas so each step's outputs flow naturally into the next step's context. Prior step outputs are automatically injected into the AI context as `card_data`, so downstream steps have access to everything produced upstream.
 
 ### Phase 6: Categories & Skills
 
