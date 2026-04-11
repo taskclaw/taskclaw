@@ -83,11 +83,7 @@ export class OpenClawAdapter implements BackboneAdapter {
         'OpenClaw config requires "api_key" (operator token)',
       );
     }
-    if (!config.agent_id) {
-      throw new BadRequestException(
-        'OpenClaw config requires "agent_id" (the agent to route messages to)',
-      );
-    }
+    // agent_id is optional — if omitted, OpenClaw routes to the default agent
   }
 
   // ── BackboneAdapter: supportsNativeSkillInjection ──
