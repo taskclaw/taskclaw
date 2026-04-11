@@ -232,8 +232,8 @@ export default function ChatPage() {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => router.push('/dashboard/settings/ai-provider')}
-              title="AI Provider Settings"
+              onClick={() => router.push('/dashboard/settings/backbones')}
+              title="AI Backbone Settings"
             >
               <Settings className="h-4 w-4" />
             </Button>
@@ -317,8 +317,8 @@ export default function ChatPage() {
             <AlertDescription className="flex items-center justify-between gap-4">
               <span>
                 AI Assistant not configured. Go to{' '}
-                <Link href="/dashboard/settings/ai-provider" className="font-medium underline underline-offset-4 hover:text-amber-900 dark:hover:text-amber-300">
-                  Settings &rarr; AI Provider
+                <Link href="/dashboard/settings/backbones" className="font-medium underline underline-offset-4 hover:text-amber-900 dark:hover:text-amber-300">
+                  Settings &rarr; AI Backbones
                 </Link>{' '}
                 to set up your AI connection.
               </span>

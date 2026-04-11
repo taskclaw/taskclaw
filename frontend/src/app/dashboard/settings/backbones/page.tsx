@@ -80,10 +80,10 @@ export default function BackbonesSettingsPage() {
         setTestingId(connectionId)
         try {
             const result = await verifyMutation.mutateAsync(connectionId)
-            if (result.error) {
-                toast.error(result.error)
-            } else {
+            if (result.success) {
                 toast.success('Connection verified successfully')
+            } else {
+                toast.error(result.error || 'Connection failed — check URL and credentials')
             }
         } finally {
             setTestingId(null)

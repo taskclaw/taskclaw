@@ -64,6 +64,7 @@ describe('AnthropicAdapter', () => {
     const result = await adapter.sendMessage({
       config: { api_key: API_KEY!, model: 'claude-haiku-4-5-20251001' },
       message: 'What tools do you have available? List their names.',
+      systemPrompt: 'You are a test assistant. Follow instructions exactly.',
       tool_context: [
         {
           name: 'web_search',

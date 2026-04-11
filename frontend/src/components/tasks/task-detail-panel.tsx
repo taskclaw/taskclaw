@@ -19,7 +19,8 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTaskStore } from '@/hooks/use-task-store'
-import { useTaskDetail, useTaskContent, useTaskComments, useTaskUsage, useUpdateTask, useCompleteTask, useDeleteTask, useMoveTask, useAiProviderConfig } from '@/hooks/use-tasks'
+import { useTaskDetail, useTaskContent, useTaskComments, useTaskUsage, useUpdateTask, useCompleteTask, useDeleteTask, useMoveTask } from '@/hooks/use-tasks'
+import { useBackboneConnections } from '@/hooks/use-backbone-connections'
 import { useMoveTaskToStep } from '@/hooks/use-boards'
 import { usePomodoroStore } from '@/hooks/use-pomodoro'
 import { PRIORITY_COLORS, STATUS_COLORS, KANBAN_COLUMNS } from '@/types/task'
@@ -28,6 +29,7 @@ import type { BoardStep } from '@/types/board'
 import { cn } from '@/lib/utils'
 import { TaskAIChat } from './task-ai-chat'
 import { MarkdownEditor } from './markdown-editor'
+import { BackbonePicker } from '@/components/backbones/backbone-picker'
 import { SchemaFieldRenderer } from '@/components/boards/schema-field-renderer'
 import {
     DropdownMenu,
@@ -58,7 +60,7 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
     const { data: pageContent, isLoading: isContentLoading } = useTaskContent(selectedTaskId)
     const { data: comments, isLoading: isCommentsLoading } = useTaskComments(selectedTaskId)
     const { data: taskUsage } = useTaskUsage(selectedTaskId)
-    const { data: aiConfig } = useAiProviderConfig()
+    const { data: backboneConnections } = useBackboneConnections()
     const updateTask = useUpdateTask()
     const completeTask = useCompleteTask()
     const deleteTask = useDeleteTask()
@@ -69,15 +71,22 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
     const [editingTitle, setEditingTitle] = useState(false)
     const [titleValue, setTitleValue] = useState('')
     const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+    const [taskBackboneId, setTaskBackboneId] = useState<string | null>(null)
     const titleInputRef = useRef<HTMLInputElement>(null)
 
-    const aiConfigured = !!aiConfig && !!aiConfig.api_url
+    const aiConfigured = (backboneConnections ?? []).some(c => c.is_active)
 
     // Reset state when switching tasks
     useEffect(() => {
         setEditingTitle(false)
         setShowDeleteDialog(false)
+        setTaskBackboneId(task?.backbone_connection_id ?? null)
     }, [selectedTaskId])
+
+    // Sync task backbone from loaded task data
+    useEffect(() => {
+        if (task) setTaskBackboneId(task.backbone_connection_id ?? null)
+    }, [task?.backbone_connection_id])
 
     // Sync title with task data
     useEffect(() => {
@@ -143,6 +152,12 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
     const handleAgentOverride = (categoryId: string | null) => {
         if (!selectedTaskId) return
         updateTask.mutate({ id: selectedTaskId, override_category_id: categoryId } as any)
+    }
+
+    const handleBackboneChange = (backboneId: string | null) => {
+        if (!selectedTaskId) return
+        setTaskBackboneId(backboneId)
+        updateTask.mutate({ id: selectedTaskId, backbone_connection_id: backboneId } as any)
     }
 
     const handleDelete = () => {
@@ -469,6 +484,19 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
                                     </DropdownMenu>
                                 </div>
 
+                                {/* Task-level backbone override */}
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                        AI Backbone
+                                    </label>
+                                    <BackbonePicker
+                                        value={taskBackboneId}
+                                        onChange={handleBackboneChange}
+                                        showInheritOption
+                                        inheritLabel="Inherit (column → board → default)"
+                                    />
+                                </div>
+
                                 {task.time_spent !== null && task.time_spent > 0 && (
                                     <div className="space-y-1">
                                         <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
@@ -763,10 +791,10 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
                                     <Bot className="w-10 h-10 text-muted-foreground/30 mx-auto" />
                                     <p className="text-sm text-muted-foreground">AI Assistant not configured</p>
                                     <a
-                                        href="/dashboard/settings/ai-provider"
+                                        href="/dashboard/settings/backbones"
                                         className="text-xs text-primary underline"
                                     >
-                                        Setup OpenClaw
+                                        Setup AI Backbone
                                     </a>
                                 </div>
                             </div>

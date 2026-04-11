@@ -170,10 +170,10 @@ export async function deleteBackboneConnection(
 
 export async function verifyBackboneConnection(
     connectionId: string
-): Promise<{ success?: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; status?: string }> {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()
-    if (!headers || !accountId) return { error: 'Not authenticated' }
+    if (!headers || !accountId) return { success: false, error: 'Not authenticated' }
 
     try {
         const res = await fetch(
@@ -182,12 +182,14 @@ export async function verifyBackboneConnection(
         )
         if (!res.ok) {
             const err = await res.json().catch(() => ({ message: 'Verification failed' }))
-            return { error: err.message || 'Verification failed' }
+            return { success: false, error: err.message || 'Verification failed' }
         }
+        const data = await res.json()
         revalidatePath('/dashboard/settings/backbones')
-        return { success: true }
+        // Backend returns { success: boolean, status: 'healthy'|'down', verified_at }
+        return { success: data.success === true, status: data.status, error: data.error }
     } catch (e: any) {
-        return { error: e.message || 'Network error' }
+        return { success: false, error: e.message || 'Network error' }
     }
 }
 

@@ -56,16 +56,16 @@ export class ClaudeCodeAdapter implements BackboneAdapter {
         fullPrompt,
       ];
 
-      if (config.workspace_path) {
-        args.push('--cwd', config.workspace_path);
-      }
-
       let stdout = '';
       let stderr = '';
 
+      // Strip CLAUDECODE to allow nested invocation from within Claude Code sessions
+      const childEnv = { ...process.env };
+      delete childEnv['CLAUDECODE'];
+
       const child = spawn('claude', args, {
         cwd: workspaceDir,
-        env: { ...process.env },
+        env: childEnv,
         timeout: timeoutMs,
       });
 

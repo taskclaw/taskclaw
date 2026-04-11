@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-const EMAIL = 'admin@ott.dev';
+const EMAIL = 'super@taskclaw.co';
 const PASSWORD = 'admin123456';
 const ROLE = 'super_admin';
 

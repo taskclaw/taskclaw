@@ -41,7 +41,7 @@ export function OnboardingChecklist() {
     const items = [
         { label: 'Connect Source', done: progress.source_connected, href: '/onboarding' },
         { label: 'Define Categories', done: progress.categories_defined, href: '/dashboard/settings/categories' },
-        { label: 'Setup OpenClaw', done: progress.openclaw_configured, href: '/dashboard/settings/ai-provider' },
+        { label: 'Setup OpenClaw', done: progress.openclaw_configured, href: '/dashboard/settings/backbones' },
     ]
 
     const completedCount = items.filter(i => i.done).length

@@ -12,6 +12,7 @@ import {
  * Where in the resolution cascade the backbone was found.
  */
 export type ResolvedFrom =
+  | 'task'
   | 'step'
   | 'board'
   | 'category'
@@ -28,6 +29,8 @@ export interface ResolveResult {
 
 export interface BackboneRouterSendOptions {
   accountId: string;
+  /** Optional: narrow resolution to a specific task (highest priority) */
+  taskId?: string;
   /** Optional: narrow resolution to a specific board step */
   stepId?: string;
   /** Optional: narrow resolution to a specific board */
@@ -64,9 +67,26 @@ export class BackboneRouterService {
    */
   async resolve(
     accountId: string,
-    options?: { stepId?: string; boardId?: string; categoryId?: string; podId?: string },
+    options?: { taskId?: string; stepId?: string; boardId?: string; categoryId?: string; podId?: string },
   ): Promise<ResolveResult> {
     const client = this.supabaseAdmin.getClient();
+
+    // 0. Task-level override (highest priority)
+    if (options?.taskId) {
+      const { data: task } = await client
+        .from('tasks')
+        .select('backbone_connection_id')
+        .eq('id', options.taskId)
+        .maybeSingle();
+
+      if (task?.backbone_connection_id) {
+        const result = await this.loadConnection(
+          task.backbone_connection_id,
+          'task',
+        );
+        if (result) return result;
+      }
+    }
 
     // 1. Step-level override
     if (options?.stepId) {
@@ -176,6 +196,7 @@ export class BackboneRouterService {
    */
   async send(options: BackboneRouterSendOptions): Promise<BackboneSendResult> {
     const resolved = await this.resolve(options.accountId, {
+      taskId: options.taskId,
       stepId: options.stepId,
       boardId: options.boardId,
       categoryId: options.categoryId,

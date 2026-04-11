@@ -3,7 +3,7 @@
 -- =============================================================================
 -- Run this in Supabase SQL Editor on a FRESH database.
 -- This combines all 27 migrations + updated seed data.
--- Super Admin: ferott@gmail.com / admin$12345$6
+-- Super Admin: super@taskclaw.co / <password set via GoTrue admin API>
 -- =============================================================================
 
 -- =============================================================================
@@ -1091,7 +1091,7 @@ INSERT INTO plans (name, price_cents, currency, interval, features) VALUES
 ('Pro', 2900, 'usd', 'month', '["Unlimited projects", "Advanced analytics", "Priority support", "Team members"]'),
 ('Enterprise', 9900, 'usd', 'month', '["SSO", "Audit logs", "Dedicated account manager", "SLA"]');
 
--- Seed Super Admin: ferott@gmail.com / admin$12345$6
+-- Seed Super Admin: super@taskclaw.co / <password set via GoTrue admin API>
 INSERT INTO auth.users (
     instance_id,
     id,
@@ -1115,13 +1115,13 @@ INSERT INTO auth.users (
     'd0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d',
     'authenticated',
     'authenticated',
-    'ferott@gmail.com',
+    'super@taskclaw.co',
     '$2b$10$2N0zQZZ8GHWC82KKnPacceMznLblh7CoWvT424Vx3iO0XwBiNSa72',
     now(),
     now(),
     now(),
     '{"provider": "email", "providers": ["email"], "role": "super_admin"}'::jsonb,
-    '{"full_name": "Fernando Ott"}'::jsonb,
+    '{"full_name": "TaskClaw Admin"}'::jsonb,
     now(),
     now(),
     '',
@@ -1143,8 +1143,8 @@ INSERT INTO auth.identities (
 ) VALUES (
     'd0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d',
     'd0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d',
-    'ferott@gmail.com',
-    '{"sub": "d0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d", "email": "ferott@gmail.com", "email_verified": true, "phone_verified": false}'::jsonb,
+    'super@taskclaw.co',
+    '{"sub": "d0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d", "email": "super@taskclaw.co", "email_verified": true, "phone_verified": false}'::jsonb,
     'email',
     now(),
     now(),
@@ -1154,11 +1154,11 @@ INSERT INTO auth.identities (
 -- The trigger should fire and create public.users + accounts + account_users.
 -- But in case it doesn't (direct SQL insert may bypass triggers in some Supabase configs):
 INSERT INTO public.users (id, email, name, status)
-VALUES ('d0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d', 'ferott@gmail.com', 'Fernando Ott', 'active')
+VALUES ('d0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d', 'super@taskclaw.co', 'TaskClaw Admin', 'active')
 ON CONFLICT (id) DO UPDATE SET status = 'active';
 
 INSERT INTO public.accounts (id, name, owner_user_id, onboarding_completed)
-VALUES ('a0a8c19c-3b36-4423-8c5d-5d5d5d5d5d5d', 'Fernando Ott''s Team', 'd0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d', true)
+VALUES ('a0a8c19c-3b36-4423-8c5d-5d5d5d5d5d5d', 'TaskClaw Admin''s Team', 'd0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d', true)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO public.account_users (account_id, user_id, role)
@@ -1175,5 +1175,5 @@ ON CONFLICT ("id") DO NOTHING;
 
 -- =============================================================================
 -- DONE! All 27 migrations applied + seed data created.
--- Super Admin: ferott@gmail.com / admin$12345$6
+-- Super Admin: super@taskclaw.co / <password set via GoTrue admin API>
 -- =============================================================================

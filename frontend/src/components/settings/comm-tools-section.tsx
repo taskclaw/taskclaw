@@ -444,10 +444,10 @@ export function CommToolsSection({ openClawConnected }: { openClawConnected: boo
                     <span>
                         Connect OpenClaw first in{' '}
                         <a
-                            href="/dashboard/settings/ai-provider"
+                            href="/dashboard/settings/backbones"
                             className="underline font-medium hover:text-yellow-900 dark:hover:text-yellow-200"
                         >
-                            AI Provider settings
+                            AI Backbone settings
                         </a>{' '}
                         to enable communication tools.
                     </span>

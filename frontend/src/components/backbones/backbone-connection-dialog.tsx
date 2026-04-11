@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { useForm, Controller } from 'react-hook-form'
-import { Loader2, FlaskConical } from 'lucide-react'
+import { Loader2, FlaskConical, Zap, Search, Send, Eye, EyeOff } from 'lucide-react'
 import {
     Dialog,
     DialogContent,
@@ -21,8 +21,10 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 import { toast } from 'sonner'
 import { useBackboneDefinitions } from '@/hooks/use-backbone-definitions'
+import { saveAiProviderConfig, getAiProviderConfig } from '@/app/dashboard/settings/ai-provider/actions'
 import type {
     BackboneDefinition,
     BackboneConfigSchemaField,
@@ -43,6 +45,46 @@ interface BackboneConnectionDialogProps {
     onTest?: (connectionId: string) => Promise<void>
     saving?: boolean
     testing?: boolean
+}
+
+interface OpenClawServices {
+    openrouter_api_key: string
+    brave_search_api_key: string
+    telegram_bot_token: string
+}
+
+function MaskedField({ label, value, onChange, placeholder, icon: Icon }: {
+    label: string
+    value: string
+    onChange: (v: string) => void
+    placeholder: string
+    icon?: React.ComponentType<{ className?: string }>
+}) {
+    const [show, setShow] = useState(false)
+    return (
+        <div className="space-y-1.5">
+            <Label className="text-xs flex items-center gap-1.5">
+                {Icon && <Icon className="w-3 h-3 text-muted-foreground" />}
+                {label}
+            </Label>
+            <div className="relative">
+                <Input
+                    type={show ? 'text' : 'password'}
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    placeholder={placeholder}
+                    className="text-sm pr-9"
+                />
+                <button
+                    type="button"
+                    onClick={() => setShow(!show)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                    {show ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+            </div>
+        </div>
+    )
 }
 
 interface FormValues {
@@ -103,6 +145,12 @@ export function BackboneConnectionDialog({
 }: BackboneConnectionDialogProps) {
     const { data: definitions = [] } = useBackboneDefinitions()
     const isEdit = !!connection
+    const [savingServices, setSavingServices] = useState(false)
+    const [openClawServices, setOpenClawServices] = useState<OpenClawServices>({
+        openrouter_api_key: '',
+        brave_search_api_key: '',
+        telegram_bot_token: '',
+    })
 
     const { control, handleSubmit, watch, setValue, reset } = useForm<FormValues>({
         defaultValues: {
@@ -121,6 +169,8 @@ export function BackboneConnectionDialog({
         () => definitions.find((d) => d.slug === selectedSlug) ?? null,
         [definitions, selectedSlug]
     )
+
+    const isOpenClaw = selectedSlug === 'openclaw'
 
     // Populate form when editing
     useEffect(() => {
@@ -142,6 +192,21 @@ export function BackboneConnectionDialog({
             })
         }
     }, [open, connection, reset])
+
+    // Load existing OpenClaw service keys when dialog opens in openclaw edit mode
+    useEffect(() => {
+        if (open && isOpenClaw) {
+            getAiProviderConfig().then((cfg) => {
+                if (cfg) {
+                    setOpenClawServices({
+                        openrouter_api_key: '',
+                        brave_search_api_key: '',
+                        telegram_bot_token: '',
+                    })
+                }
+            })
+        }
+    }, [open, isOpenClaw])
 
     // When definition changes (create mode), reset config and auto-set name
     useEffect(() => {
@@ -184,6 +249,49 @@ export function BackboneConnectionDialog({
             }
         } catch (err: any) {
             toast.error(err.message || 'Failed to save backbone connection')
+        }
+    }
+
+    const handleSaveServices = async () => {
+        const hasAny = openClawServices.openrouter_api_key || openClawServices.brave_search_api_key || openClawServices.telegram_bot_token
+        if (!hasAny) {
+            toast.info('No service credentials to save')
+            return
+        }
+        setSavingServices(true)
+        try {
+            // The backend merges with existing ai_provider record if api_url/api_key are missing.
+            // Pass the plain api_url from the form (visible, unencrypted) + the api_key from form if set.
+            // The api_url field value is always the raw URL (the schema renderer shows plaintext for this field).
+            const formApiUrl = configValues?.api_url || ''
+            const isRealUrl = formApiUrl.startsWith('http')
+
+            // Attempt to load existing ai_provider_config to supplement missing credentials
+            const existing = await getAiProviderConfig()
+
+            const payload: any = {
+                api_url: isRealUrl ? formApiUrl : (existing?.api_url || ''),
+            }
+            // If we have an existing record, the backend will reuse its encrypted api_key
+            // If not, we need to supply it — use the configValues api_key if it's been entered (not masked)
+            const formApiKey = configValues?.api_key || ''
+            const isMasked = formApiKey.startsWith('****') || formApiKey.startsWith('*')
+            if (!isMasked && formApiKey) {
+                payload.api_key = formApiKey
+            }
+
+            if (openClawServices.openrouter_api_key) payload.openrouter_api_key = openClawServices.openrouter_api_key
+            if (openClawServices.brave_search_api_key) payload.brave_search_api_key = openClawServices.brave_search_api_key
+            if (openClawServices.telegram_bot_token) payload.telegram_bot_token = openClawServices.telegram_bot_token
+            const result = await saveAiProviderConfig(payload)
+            if (result.error) {
+                toast.error(result.error)
+            } else {
+                toast.success('OpenClaw service credentials saved')
+                setOpenClawServices({ openrouter_api_key: '', brave_search_api_key: '', telegram_bot_token: '' })
+            }
+        } finally {
+            setSavingServices(false)
         }
     }
 
@@ -299,6 +407,55 @@ export function BackboneConnectionDialog({
                         <p className="text-xs text-muted-foreground italic">
                             No additional configuration required for this backbone type.
                         </p>
+                    )}
+
+                    {/* OpenClaw-specific: service credentials (OpenRouter, Brave, Telegram) */}
+                    {isOpenClaw && (
+                        <>
+                            <Separator />
+                            <div className="space-y-3">
+                                <div>
+                                    <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                        OpenClaw Service Credentials
+                                    </h4>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                        Optional keys sent to OpenClaw for enhanced capabilities. Leave blank to keep existing.
+                                    </p>
+                                </div>
+                                <MaskedField
+                                    label="OpenRouter API Key"
+                                    value={openClawServices.openrouter_api_key}
+                                    onChange={(v) => setOpenClawServices((s) => ({ ...s, openrouter_api_key: v }))}
+                                    placeholder="sk-or-v1-..."
+                                    icon={Zap}
+                                />
+                                <MaskedField
+                                    label="Brave Search API Key"
+                                    value={openClawServices.brave_search_api_key}
+                                    onChange={(v) => setOpenClawServices((s) => ({ ...s, brave_search_api_key: v }))}
+                                    placeholder="BSA..."
+                                    icon={Search}
+                                />
+                                <MaskedField
+                                    label="Telegram Bot Token"
+                                    value={openClawServices.telegram_bot_token}
+                                    onChange={(v) => setOpenClawServices((s) => ({ ...s, telegram_bot_token: v }))}
+                                    placeholder="1234567890:ABC..."
+                                    icon={Send}
+                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleSaveServices}
+                                    disabled={savingServices}
+                                    className="w-full text-xs"
+                                >
+                                    {savingServices && <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />}
+                                    Save Service Credentials
+                                </Button>
+                            </div>
+                        </>
                     )}
                 </form>
 

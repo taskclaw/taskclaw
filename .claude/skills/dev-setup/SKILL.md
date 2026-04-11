@@ -156,7 +156,7 @@ Options:
 - Run `pnpm run dev` (frontend) + `pnpm --filter taskclaw-backend run start:dev` (backend) — two separate processes
 - Hot-reload, direct debugging, faster iteration
 - Only Docker is used for infrastructure (Supabase, Redis)
-- Ports 3000 and 3001 must be free on the host
+- Ports 3002 and 3003 must be free on the host
 - Note: the backend has `start:dev` not `dev`, so Turborepo doesn't pick it up — it must be started separately
 
 **Option B: Docker containers**
@@ -168,7 +168,7 @@ Options:
 Recommend **Option A** for active development, **Option B** for testing production-like setup.
 
 **IMPORTANT — If the user chooses Option A (local terminal)**:
-- Check if ports 3000 and 3001 are already in use: `lsof -ti:3000` and `lsof -ti:3001`
+- Check if ports 3002 and 3003 are already in use: `lsof -ti:3002` and `lsof -ti:3003`
 - If occupied, inform the user and ask if they want to kill the existing processes
 - The `SUPABASE_URL` in `backend/.env` must be `http://localhost:7431` (NOT `http://kong:8000`, which is for Docker-to-Docker networking)
 - The `REDIS_URL` in `backend/.env` must be `redis://localhost:6379` (NOT `redis://redis:6379`)
@@ -470,8 +470,8 @@ Present the final summary table:
 
 | Service | Port | Status |
 |---------|------|--------|
-| Frontend (Next.js) | 3000 | OK / FAIL |
-| Backend (NestJS) | 3001 | OK / FAIL |
+| Frontend (Next.js) | 3002 | OK / FAIL |
+| Backend (NestJS) | 3003 | OK / FAIL |
 | PostgreSQL | 5432 | OK / FAIL |
 | Kong (API Gateway) | 7431 | OK / FAIL |
 | GoTrue (Auth) | 7431/auth/v1 | OK / FAIL |
@@ -518,7 +518,7 @@ console.log('SERVICE_ROLE_KEY=' + sign({role:'service_role',iss:'supabase',iat:1
 ### Backend .env (Local Supabase + Local Terminal)
 
 ```env
-PORT=3001
+PORT=3003
 SUPABASE_URL=http://localhost:7431
 SUPABASE_ANON_KEY=<generated-anon-jwt>
 SUPABASE_SERVICE_ROLE_KEY=<generated-service-role-jwt>
@@ -533,7 +533,7 @@ OPENROUTER_MODEL=openai/gpt-4o-mini
 ### Backend .env (Local Supabase + Docker Container)
 
 ```env
-PORT=3001
+PORT=3003
 SUPABASE_URL=http://kong:8000
 SUPABASE_ANON_KEY=<generated-anon-jwt>
 SUPABASE_SERVICE_ROLE_KEY=<generated-service-role-jwt>
@@ -567,8 +567,8 @@ APP_THEME_NAME=commercial
 
 | Service | Default Port | Env Var |
 |---------|-------------|---------|
-| Frontend | 3000 | `FRONTEND_PORT` |
-| Backend | 3001 | `PORT` / `BACKEND_PORT` |
+| Frontend | 3002 | `FRONTEND_PORT` |
+| Backend | 3003 | `PORT` / `BACKEND_PORT` |
 | Supabase Studio | 7430 | `SUPABASE_STUDIO_PORT` |
 | Kong (API Gateway) | 7431 | `SUPABASE_API_PORT` |
 | PostgreSQL | 5432 | `POSTGRES_PORT` |
@@ -624,8 +624,8 @@ All containers are prefixed with `taskclaw-*` and use the `taskclaw_default` Doc
 
 | Issue | Fix |
 |-------|-----|
-| `Port 3001 already in use` | `lsof -ti:3001 \| xargs kill -9` |
-| `Port 3000 already in use` | `lsof -ti:3000 \| xargs kill -9` |
+| `Port 3003 already in use` | `lsof -ti:3003 \| xargs kill -9` |
+| `Port 3002 already in use` | `lsof -ti:3002 \| xargs kill -9` |
 | Backend can't connect to Supabase | Local terminal: use `localhost:7431`. Docker: use `kong:8000` |
 | Frontend shows "Failed to fetch" | Verify `NEXT_PUBLIC_API_URL=http://localhost:3003` |
 
@@ -635,7 +635,7 @@ All containers are prefixed with `taskclaw-*` and use the `taskclaw_default` Doc
 |-------|-----|
 | Migrations fail with TLS error | Add `PGSSLMODE=disable` env var before the command |
 | `supabase_functions_admin does not exist` | Non-critical — this role doesn't exist in all Postgres image versions. The `roles.sql` handles it gracefully |
-| Multiple stale NestJS processes | `lsof -ti:3001 \| xargs kill -9` then restart |
+| Multiple stale NestJS processes | `lsof -ti:3003 \| xargs kill -9` then restart |
 
 ### Useful Commands
 

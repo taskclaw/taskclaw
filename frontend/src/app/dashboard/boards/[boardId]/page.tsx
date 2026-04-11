@@ -1,10 +1,12 @@
 'use client'
 
-import { use } from 'react'
+import { use, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { useBoard } from '@/hooks/use-boards'
 import { getCategories } from '@/app/dashboard/tasks/actions'
 import { BoardKanbanView } from '@/components/boards/board-kanban-view'
+import { useTaskStore } from '@/hooks/use-task-store'
 import { Loader2 } from 'lucide-react'
 
 export default function BoardPage({ params }: { params: Promise<{ boardId: string }> }) {
@@ -15,6 +17,18 @@ export default function BoardPage({ params }: { params: Promise<{ boardId: strin
         queryFn: () => getCategories(),
         staleTime: 60000,
     })
+    const searchParams = useSearchParams()
+    const setSelectedTaskId = useTaskStore((s) => s.setSelectedTaskId)
+
+    // On initial mount, restore task from URL ?task= param
+    useEffect(() => {
+        const taskId = searchParams.get('task')
+        if (taskId) {
+            setSelectedTaskId(taskId)
+        }
+        // Only run once on mount — intentionally empty deps would cause re-fires
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     if (boardLoading) {
         return (

@@ -50,8 +50,8 @@ Open **[http://localhost:3000](http://localhost:3000)** and log in:
 
 | | |
 |---|---|
-| **Email** | `super@admin.com` |
-| **Password** | `password123` |
+| **Email** | `super@taskclaw.co` |
+| **Password** | `admin$12345$6` |
 
 That's it! Everything starts automatically: database, auth, API, and frontend — all behind a single port.
 
@@ -120,16 +120,6 @@ cp .env.example .env
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 docker compose --profile supabase up -d
-```
-
-### Local Development
-
-```bash
-# Backend
-cd backend && cp .env.example .env && npm install && npm run start:dev
-
-# Frontend (in another terminal)
-cd frontend && cp .env.example .env && npm install && npm run dev
 ```
 
 See [docs/development.md](./docs/development.md) for the full development setup guide.

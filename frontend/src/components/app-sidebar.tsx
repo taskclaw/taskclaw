@@ -89,10 +89,6 @@ const data = {
                     title: "AI Backbones",
                     url: "/dashboard/settings/backbones",
                 },
-                {
-                    title: "OpenClaw Settings",
-                    url: "/dashboard/settings/ai-provider",
-                },
                 ...(isCloudEdition ? [
                     {
                         title: "AI Usage",

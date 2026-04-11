@@ -54,4 +54,9 @@ export class UpdateTaskDto {
   @IsOptional()
   @IsObject()
   card_data?: Record<string, any>;
+
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  backbone_connection_id?: string | null;
 }

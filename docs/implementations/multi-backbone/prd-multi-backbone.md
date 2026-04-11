@@ -21,7 +21,7 @@ This is the foundational layer for TaskClaw's vision of becoming a **full autono
 | **Backbone Connection** | A user's configured instance of a backbone: encrypted credentials, endpoint URL, health status. One user can have multiple connections of the same type (e.g., two OpenClaw instances). |
 | **Backbone Adapter** | A backend class implementing the `BackboneAdapter` interface for a specific backbone type. Handles protocol translation (WebSocket, HTTP, CLI, MCP). |
 | **Backbone Assignment** | The linkage between a backbone connection and a board, step, or category. Determines which backbone processes a given conversation/task. |
-| **Resolution Cascade** | The priority order for determining which backbone to use: Step → Board → Category → Account default. |
+| **Resolution Cascade** | The priority order for determining which backbone to use: Task → Step → Board → Category → Account default. |
 
 ### 2.2 Backbone Types (Launch Set)
 
@@ -197,6 +197,17 @@ ALTER TABLE board_steps
 -- NULL = use board default → account default.
 COMMENT ON COLUMN board_steps.backbone_connection_id IS
   'Override backbone for this specific step. NULL = inherit from board.';
+
+-- ============================================================
+-- TASKS — add task-level backbone override (ADDED 2026-04-11)
+-- ============================================================
+ALTER TABLE tasks
+  ADD COLUMN backbone_connection_id UUID REFERENCES backbone_connections(id) ON DELETE SET NULL;
+
+-- A task can override all higher-level backbones.
+-- NULL = inherit from step → board → category → account default.
+COMMENT ON COLUMN tasks.backbone_connection_id IS
+  'Task-level backbone override. Takes priority over step/board/category/account. NULL = inherit.';
 
 -- ============================================================
 -- CATEGORIES (AGENTS) — add preferred backbone
@@ -463,6 +474,7 @@ export class BackboneRouterService {
   /**
    * Resolution cascade (highest priority first):
    *
+   * 0. Task-level override    → tasks.backbone_connection_id             ← ADDED 2026-04-11
    * 1. Step-level override    → board_steps.backbone_connection_id
    * 2. Board-level override   → board_instances.default_backbone_connection_id
    * 3. Category preference    → categories.preferred_backbone_connection_id
@@ -473,6 +485,7 @@ export class BackboneRouterService {
    */
   async resolve(context: {
     accountId: string;
+    taskId?: string;
     boardId?: string;
     stepId?: string;
     categoryId?: string;
@@ -481,8 +494,16 @@ export class BackboneRouterService {
     adapter: BackboneAdapter;
     connection: BackboneConnection;
     config: Record<string, any>;
-    resolvedFrom: 'step' | 'board' | 'category' | 'account_default' | 'legacy';
+    resolvedFrom: 'task' | 'step' | 'board' | 'category' | 'account_default' | 'legacy';
   }> {
+    // 0. Task-level (most specific — per-task backbone override)
+    if (context.taskId) {
+      const task = await client.from('tasks').select('backbone_connection_id').eq('id', context.taskId).maybeSingle();
+      if (task?.backbone_connection_id) {
+        return this.buildResult(task.backbone_connection_id, 'task', context.accessToken);
+      }
+    }
+
     // 1. Step-level
     if (context.stepId) {
       const step = await this.getStepBackbone(context.stepId);
@@ -1076,27 +1097,29 @@ When importing a board manifest:
 
 | # | Task | Status | Files |
 |---|------|--------|-------|
-| 2.1 | Create `BackboneDefinitionsService` (read-only CRUD) | ⬜ | `backend/src/backbone/backbone-definitions.service.ts` |
-| 2.2 | Create `BackboneConnectionsService` (full CRUD + encryption) | ⬜ | `backend/src/backbone/backbone-connections.service.ts` |
-| 2.3 | Create `BackboneRouterService` (resolution cascade) | ⬜ | `backend/src/backbone/backbone-router.service.ts` |
-| 2.4 | Create `BackboneHealthService` (cron health checks) | ⬜ | `backend/src/backbone/backbone-health.service.ts` |
-| 2.5 | Create DTOs (create, update, response) | ⬜ | `backend/src/backbone/dto/` |
-| 2.6 | Create `BackboneConnectionsController` (REST endpoints) | ⬜ | `backend/src/backbone/backbone-connections.controller.ts` |
-| 2.7 | Create `BackboneModule` with adapter registration | ⬜ | `backend/src/backbone/backbone.module.ts` |
+| 2.1 | Create `BackboneDefinitionsService` (read-only CRUD) | ✅ | `backend/src/backbone/backbone-definitions.service.ts` |
+| 2.2 | Create `BackboneConnectionsService` (full CRUD + encryption) | ✅ | `backend/src/backbone/backbone-connections.service.ts` |
+| 2.3 | Create `BackboneRouterService` (resolution cascade) | ✅ | `backend/src/backbone/backbone-router.service.ts` |
+| 2.4 | Create `BackboneHealthService` (cron health checks) | ✅ | `backend/src/backbone/backbone-health.service.ts` |
+| 2.5 | Create DTOs (create, update, response) | ✅ | `backend/src/backbone/dto/` |
+| 2.6 | Create `BackboneConnectionsController` (REST endpoints) | ✅ | `backend/src/backbone/backbone-connections.controller.ts` |
+| 2.7 | Create `BackboneModule` with adapter registration | ✅ | `backend/src/backbone/backbone.module.ts` |
 | 2.8 | Write data migration script: `ai_provider_configs` → `backbone_connections` | ⬜ | `backend/src/backbone/migrations/migrate-ai-providers.ts` |
 
 ### Phase 3: Integration (Backend — Wire into Conversations)
 
 | # | Task | Status | Files |
 |---|------|--------|-------|
-| 3.1 | Update `ConversationsModule` to import `BackboneModule` | ⬜ | `backend/src/conversations/conversations.module.ts` |
-| 3.2 | Refactor `ConversationsService.sendMessageBackground()` to use `BackboneRouterService` | ⬜ | `backend/src/conversations/conversations.service.ts` |
-| 3.3 | Refactor `ConversationsService.sendMessage()` (sync) to use `BackboneRouterService` | ⬜ | Same file |
+| 3.1 | Update `ConversationsModule` to import `BackboneModule` | ✅ | `backend/src/conversations/conversations.module.ts` |
+| 3.2 | Refactor `ConversationsService.sendMessageBackground()` to use `BackboneRouterService` | ✅ | `backend/src/conversations/conversations.service.ts` |
+| 3.3 | Refactor `ConversationsService.sendMessage()` (sync) to use `BackboneRouterService` | ✅ | Same file |
 | 3.4 | Update `buildSystemPrompt()` to check `adapter.supportsNativeSkillInjection()` | ⬜ | Same file |
 | 3.5 | Store `backbone_connection_id` on conversation and message creation | ⬜ | Same file |
-| 3.6 | Update `BoardsService` to accept `default_backbone_connection_id` on create/update | ⬜ | `backend/src/boards/boards.service.ts` |
-| 3.7 | Update `BoardStepsService` to accept `backbone_connection_id` on create/update | ⬜ | `backend/src/boards/board-steps.service.ts` |
+| 3.6 | Update `BoardsService` to accept `default_backbone_connection_id` on create/update | ✅ | `backend/src/boards/boards.service.ts` |
+| 3.7 | Update `BoardStepsService` to accept `backbone_connection_id` on create/update | ✅ | `backend/src/boards/board-steps.service.ts` |
 | 3.8 | Update board manifest import to resolve backbone slugs | ⬜ | `backend/src/boards/boards.service.ts` |
+| 3.9 | Add task-level backbone override (`tasks.backbone_connection_id`) | ✅ | `backend/src/tasks/dto/update-task.dto.ts`, migration `20260411000002_add_backbone_to_tasks.sql` |
+| 3.10 | Pass `taskId` from `ConversationsService` into `BackboneRouterService.resolve()` | ✅ | `backend/src/conversations/conversations.service.ts` |
 
 ### Phase 4: New Adapters (Backend)
 
@@ -1111,28 +1134,31 @@ When importing a board manifest:
 
 | # | Task | Status | Files |
 |---|------|--------|-------|
-| 5.1 | Create backbone TypeScript types | ⬜ | `frontend/src/types/backbone.ts` |
-| 5.2 | Create React Query hooks (`use-backbone-definitions`, `use-backbone-connections`) | ⬜ | `frontend/src/hooks/` |
-| 5.3 | Create server actions for backbone CRUD | ⬜ | `frontend/src/app/dashboard/settings/backbones/actions.ts` |
-| 5.4 | Build `BackboneConnectionCard` component | ⬜ | `frontend/src/components/backbones/backbone-connection-card.tsx` |
-| 5.5 | Build `BackboneConnectionDialog` with dynamic JSON Schema form | ⬜ | `frontend/src/components/backbones/backbone-connection-dialog.tsx` |
-| 5.6 | Build `BackbonePicker` dropdown component | ⬜ | `frontend/src/components/backbones/backbone-picker.tsx` |
-| 5.7 | Build `BackboneHealthBadge` component | ⬜ | `frontend/src/components/backbones/backbone-health-badge.tsx` |
-| 5.8 | Create settings page at `/dashboard/settings/backbones` | ⬜ | `frontend/src/app/dashboard/settings/backbones/page.tsx` |
-| 5.9 | Integrate `BackbonePicker` into board settings panel | ⬜ | `frontend/src/components/boards/board-settings-panel.tsx` |
-| 5.10 | Integrate `BackbonePicker` into step settings (per-column config) | ⬜ | `frontend/src/components/boards/step-settings-dialog.tsx` |
-| 5.11 | Update sidebar navigation: "AI Provider" → "AI Backbones" | ⬜ | `frontend/src/components/app-sidebar.tsx` |
+| 5.1 | Create backbone TypeScript types | ✅ | `frontend/src/types/backbone.ts` |
+| 5.2 | Create React Query hooks (`use-backbone-definitions`, `use-backbone-connections`) | ✅ | `frontend/src/hooks/` |
+| 5.3 | Create server actions for backbone CRUD | ✅ | `frontend/src/app/dashboard/settings/backbones/actions.ts` |
+| 5.4 | Build `BackboneConnectionCard` component | ✅ | `frontend/src/components/backbones/backbone-connection-card.tsx` |
+| 5.5 | Build `BackboneConnectionDialog` with dynamic JSON Schema form | ✅ | `frontend/src/components/backbones/backbone-connection-dialog.tsx` |
+| 5.6 | Build `BackbonePicker` dropdown component | ✅ | `frontend/src/components/backbones/backbone-picker.tsx` |
+| 5.7 | Build `BackboneHealthBadge` component | ✅ | `frontend/src/components/backbones/backbone-health-badge.tsx` |
+| 5.8 | Create settings page at `/dashboard/settings/backbones` | ✅ | `frontend/src/app/dashboard/settings/backbones/page.tsx` |
+| 5.9 | Integrate `BackbonePicker` into board settings panel | ✅ | `frontend/src/components/boards/board-settings-form.tsx` |
+| 5.10 | Integrate `BackbonePicker` into step settings (per-column config) | ✅ | `frontend/src/components/boards/step-config-drawer.tsx` |
+| 5.11 | Update sidebar navigation: "AI Provider" → "AI Backbones" | ✅ | Redirect from `/settings/ai-provider` → `/settings/backbones` |
 | 5.12 | Show active backbone badge in board header / step column header | ⬜ | `frontend/src/components/boards/board-kanban-view.tsx` |
+| 5.13 | Add `BackbonePicker` to task detail panel (task-level override) | ✅ | `frontend/src/components/tasks/task-detail-panel.tsx` |
+| 5.14 | Fix "AI Assistant not configured" to use `backbone_connections.is_active` | ✅ | `frontend/src/components/tasks/task-detail-panel.tsx` |
+| 5.15 | Add task URL shareability (`?task=<uuid>` in address bar) | ✅ | `frontend/src/hooks/use-task-store.ts`, `boards/[boardId]/page.tsx` |
 
 ### Phase 6: Migration & Cleanup
 
 | # | Task | Status | Files |
 |---|------|--------|-------|
 | 6.1 | Run data migration: existing `ai_provider_configs` → `backbone_connections` | ⬜ | Migration script |
-| 6.2 | Add backward-compat: if no backbone_connections exist, fall back to ai_provider_configs | ⬜ | `backbone-router.service.ts` |
+| 6.2 | Add backward-compat: if no backbone_connections exist, fall back to ai_provider_configs | ✅ | `backbone-router.service.ts` (legacy fallback as step 5) |
 | 6.3 | Update MCP server to expose backbone info in board/task responses | ⬜ | `backend/src/mcp/` |
 | 6.4 | Update board manifest export to include backbone slugs | ⬜ | `backend/src/boards/boards.service.ts` |
-| 6.5 | Deprecate `ai_provider_configs` table (keep but mark deprecated) | ⬜ | Documentation |
+| 6.5 | Deprecate `ai_provider_configs` table (keep for OpenClaw service credentials) | ✅ | `ai_provider_configs` retained for OpenClaw service keys (OpenRouter, Brave, Telegram) |
 | 6.6 | Update onboarding flow to set up first backbone connection | ⬜ | `frontend/src/app/onboarding/` |
 
 ---
@@ -1141,7 +1167,7 @@ When importing a board manifest:
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Resolution cascade order | Step → Board → Category → Account | Most specific wins. Users configure at the level they need — most won't touch step-level. |
+| Resolution cascade order | Task → Step → Board → Category → Account | Most specific wins. Task-level added 2026-04-11 to allow per-task backbone override without touching the column/board config. |
 | Backbone definitions are system-seeded | Read-only for users | Prevents misconfiguration. New backbone types added via migrations/code, not user input. |
 | One interface for all protocols | `BackboneAdapter` | Simplicity. Protocol details hidden inside each adapter. ConversationsService doesn't care if it's WebSocket or HTTP. |
 | Dynamic form from JSON Schema | `config_schema` on backbone_definitions | Avoids hardcoded forms per backbone type. Adding a new backbone = seed a row + implement adapter. Frontend auto-renders. |

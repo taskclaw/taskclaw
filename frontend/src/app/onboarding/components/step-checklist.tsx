@@ -83,7 +83,7 @@ export function StepChecklist({
                         badge="Automations"
                         badgeVariant="info"
                         actionLabel={openclawConfigured ? undefined : 'Configure'}
-                        onAction={() => router.push('/dashboard/settings/ai-provider')}
+                        onAction={() => router.push('/dashboard/settings/backbones')}
                     />
 
                     <ChecklistItem

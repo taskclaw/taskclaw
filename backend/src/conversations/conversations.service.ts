@@ -333,6 +333,7 @@ export class ConversationsService {
       let backboneConnectionId: string | null = null;
 
       const backboneResolved = await this.tryResolveBackbone(accountId, {
+        taskId: conversation.task_id || undefined,
         boardId: conversation.board_id || undefined,
         stepId: task?.current_step_id || undefined,
         categoryId: resolvedCategoryId || undefined,
@@ -352,6 +353,7 @@ export class ConversationsService {
 
         const result = await this.backboneRouter.send({
           accountId,
+          taskId: conversation.task_id || undefined,
           boardId: conversation.board_id || undefined,
           stepId: task?.current_step_id || undefined,
           categoryId: resolvedCategoryId || undefined,
@@ -584,6 +586,7 @@ export class ConversationsService {
         let backboneConnectionId: string | null = null;
 
         const backboneResolved = await this.tryResolveBackbone(accountId, {
+          taskId: conversation.task_id || undefined,
           boardId: conversation.board_id || undefined,
           stepId: task?.current_step_id || undefined,
           categoryId: resolvedCategoryId || undefined,
@@ -639,6 +642,7 @@ export class ConversationsService {
 
           const result = await this.backboneRouter.send({
             accountId,
+            taskId: conversation.task_id || undefined,
             boardId: conversation.board_id || undefined,
             stepId: task?.current_step_id || undefined,
             categoryId: resolvedCategoryId || undefined,
@@ -1389,7 +1393,7 @@ export class ConversationsService {
    */
   private async tryResolveBackbone(
     accountId: string,
-    options?: { boardId?: string; stepId?: string; categoryId?: string },
+    options?: { taskId?: string; boardId?: string; stepId?: string; categoryId?: string },
   ): Promise<import('../backbone/backbone-router.service').ResolveResult | null> {
     try {
       return await this.backboneRouter.resolve(accountId, options);

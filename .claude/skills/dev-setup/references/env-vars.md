@@ -13,8 +13,8 @@ Used by `docker-compose.yml` for service configuration.
 | `ANON_KEY` | — | Supabase anonymous role JWT |
 | `SERVICE_ROLE_KEY` | — | Supabase service role JWT (admin access) |
 | `DOMAIN` | `localhost` | Domain for cookie/CORS configuration |
-| `BACKEND_PORT` | `3001` | Host port for backend |
-| `FRONTEND_PORT` | `3000` | Host port for frontend |
+| `BACKEND_PORT` | `3003` | Host port for backend |
+| `FRONTEND_PORT` | `3002` | Host port for frontend |
 | `KONG_HTTP_PORT` | `7431` | Host port for Supabase API gateway |
 | `STUDIO_PORT` | `7430` | Host port for Supabase Studio |
 | `POSTGRES_PORT` | `7433` | Host port for PostgreSQL |
