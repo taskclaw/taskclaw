@@ -2,7 +2,7 @@
   "project": "TaskClaw v2 \u2014 Autonomous Company Platform",
   "created": "2026-04-11",
   "total": 38,
-  "completed": 11,
+  "completed": 19,
   "features": [
     {
       "id": "DB01",
@@ -48,99 +48,99 @@
       "id": "BE01",
       "name": "MemoryAdapter interface + MemoryAdapterRegistry",
       "group": "backend-memory",
-      "status": "fail",
+      "status": "pass",
       "spec": "Create backend/src/memory/adapters/memory-adapter.interface.ts defining MemoryEntry, MemorySearchOptions, MemoryWriteOptions, MemoryAdapter interface (slug, name, remember, recall, recent, forget, healthCheck, validateConfig, optional buildContextBlock). Create MemoryAdapterRegistry @Injectable with register(adapter)/resolve(slug)/list() \u2014 same pattern as BackboneAdapterRegistry.",
       "depends_on": [
         "DB01",
         "DB02"
       ],
       "test": "registry.resolve('default') returns adapter instance. registry.resolve('unknown') throws BadRequestException.",
-      "completed_at": null
+      "completed_at": "2026-04-11T13:22:34.120855"
     },
     {
       "id": "BE02",
       "name": "DefaultMemoryAdapter",
       "group": "backend-memory",
-      "status": "fail",
+      "status": "pass",
       "spec": "Implement DefaultMemoryAdapter (slug='default'): remember() inserts to agent_memories + generates embedding via EmbeddingService (non-blocking, catch errors silently). recall() calls search_memories_vector() Supabase RPC (cosine similarity, threshold 0.3, limit param) with ILIKE fallback. recent() SELECT ORDER BY created_at DESC LIMIT N. forget() DELETE by id+account_id. buildContextBlock() returns '\\n=== AGENT MEMORY ===\\n' + bullet list.",
       "depends_on": [
         "BE01"
       ],
       "test": "remember({content:'test', type:'episodic', metadata:{account_id}}) inserts row. recall({query:'test', account_id}) returns the row.",
-      "completed_at": null
+      "completed_at": "2026-04-11T13:22:34.120855"
     },
     {
       "id": "BE03",
       "name": "ObsidianMemoryAdapter",
       "group": "backend-memory",
-      "status": "fail",
+      "status": "pass",
       "spec": "Implement ObsidianMemoryAdapter (slug='obsidian'): config={vault_url, api_key, memory_folder='TaskClaw/Memories'}. remember() \u2192 PUT {vault_url}/vault/{memory_folder}/{type}/{Date.now()}.md with Authorization header. recall() \u2192 POST {vault_url}/search/simple with {query} body, map results to MemoryEntry[]. recent() \u2192 GET {vault_url}/vault/{memory_folder}/?list. healthCheck() \u2192 GET {vault_url}/ \u2014 return {healthy: true/false}. All methods catch connection errors and return empty/false gracefully.",
       "depends_on": [
         "BE01"
       ],
       "test": "healthCheck() with vault_url='http://localhost:1' returns {healthy:false} within 2s (no throw). slug='obsidian'.",
-      "completed_at": null
+      "completed_at": "2026-04-11T13:22:34.120855"
     },
     {
       "id": "BE04",
       "name": "MemoryRouterService + MemoryConnectionsService",
       "group": "backend-memory",
-      "status": "fail",
+      "status": "pass",
       "spec": "MemoryConnectionsService: CRUD for memory_connections table (findActive, create, update, delete). MemoryRouterService: resolveAdapter(accountId) fetches active connection, falls back to 'default'. remember/recall delegates to resolved adapter. buildMemoryContext(accountId, query, taskId?): recall top 10 with 200ms Promise.race timeout, format via buildContextBlock, return '' on timeout/error.",
       "depends_on": [
         "BE02",
         "BE03"
       ],
       "test": "buildMemoryContext('no-account', 'query') returns '' within 300ms. With stored memories returns non-empty string.",
-      "completed_at": null
+      "completed_at": "2026-04-11T13:22:34.120855"
     },
     {
       "id": "BE05",
       "name": "MemoryModule \u2014 NestJS wiring + REST API",
       "group": "backend-memory",
-      "status": "fail",
+      "status": "pass",
       "spec": "Create memory.module.ts (imports: SupabaseModule, EmbeddingModule, exports: MemoryRouterService). Register DefaultMemoryAdapter + ObsidianMemoryAdapter in onModuleInit. Create memory.controller.ts: GET|POST /accounts/:accountId/memory/connections, PATCH|DELETE /:id, GET /:id/health, GET /accounts/:accountId/memory/entries?type=&limit=50, DELETE /entries/:memoryId. Import MemoryModule in AppModule.",
       "depends_on": [
         "BE04"
       ],
       "test": "Backend starts cleanly. GET /accounts/:id/memory/connections returns array. GET /memory/entries returns paginated memories.",
-      "completed_at": null
+      "completed_at": "2026-04-11T13:22:34.120855"
     },
     {
       "id": "BE06",
       "name": "Wire memory recall into conversations buildSystemPrompt",
       "group": "backend-memory",
-      "status": "fail",
+      "status": "pass",
       "spec": "In conversations.service.ts, inject MemoryRouterService. In buildSystemPrompt(): after task context block, add: const memCtx = await this.memoryRouter.buildMemoryContext(accountId, message, task?.id). Append memCtx to prompt if non-empty. Must compile and not break existing behaviour.",
       "depends_on": [
         "BE05"
       ],
       "test": "Store 1 episodic memory for account+task. Send message in that task conversation. System prompt logged contains '=== AGENT MEMORY ==='.",
-      "completed_at": null
+      "completed_at": "2026-04-11T13:22:34.120855"
     },
     {
       "id": "BE07",
       "name": "Async memory extraction after AI response",
       "group": "backend-memory",
-      "status": "fail",
+      "status": "pass",
       "spec": "In conversations.service.ts sendMessage(), after storing assistant message: fire-and-forget extractAndStoreMemories(accountId, {userMessage, assistantResponse, conversationId, taskId, categoryId}). Method builds extraction prompt ('Extract up to 3 key facts from this exchange as JSON: [{content, type}]'), calls BackboneRouterService, parses JSON array, calls memoryRouter.remember() for each. Errors silently logged. Never blocks response.",
       "depends_on": [
         "BE06"
       ],
       "test": "After one conversation exchange, agent_memories count for that conversation_id > 0 within 15s.",
-      "completed_at": null
+      "completed_at": "2026-04-11T13:22:34.120855"
     },
     {
       "id": "BE08",
       "name": "Memory salience decay cron",
       "group": "backend-memory",
-      "status": "fail",
+      "status": "pass",
       "spec": "Add @Cron('0 */6 * * *') decaySalience(): UPDATE agent_memories SET salience = GREATEST(0.1, salience * 0.98) WHERE type='episodic' AND valid_to IS NULL AND created_at < NOW() - INTERVAL '1 day'. Add @Cron('0 3 * * *') purgeOldMemories(): DELETE WHERE type='episodic' AND salience < 0.15 AND created_at < NOW() - INTERVAL '30 days'. Log counts.",
       "depends_on": [
         "BE05"
       ],
       "test": "decaySalience() runs without error on empty table. Memory with salience=0.05 not deleted (floor 0.1). Memory with salience=0.14 + age>30d IS purged.",
-      "completed_at": null
+      "completed_at": "2026-04-11T13:22:34.120855"
     },
     {
       "id": "BE09",
