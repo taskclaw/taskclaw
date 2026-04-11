@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, BrainCircuit, CheckCircle, ListPlus, Layers } from 'lucide-react'
+import { Send, Loader2, BrainCircuit, CheckCircle, ListPlus, Layers, Plug, ArrowRight } from 'lucide-react'
+import Link from 'next/link'
 import {
     getOrCreateBoardConversation,
     getOrCreatePodConversation,
@@ -59,6 +60,10 @@ export function BoardAIChat({
 }: BoardAIChatProps) {
     const isPodMode = !!podId
     const contextName = isPodMode ? (podName ?? 'Pod') : (boardName ?? 'Board')
+
+    // Detect "no backbone configured" vs other errors
+    const isNoBackboneError = (err: string | null) =>
+        !!err && (err.toLowerCase().includes('no backbone') || err.toLowerCase().includes('backbone connection'))
 
     const [conversationId, setConversationId] = useState<string | null>(null)
     const [messages, setMessages] = useState<Message[]>([])
@@ -372,16 +377,38 @@ export function BoardAIChat({
                     )}
 
                     {error && (
-                        <div className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
-                            {error}
-                        </div>
+                        isNoBackboneError(error) ? (
+                            <div className="flex flex-col items-center justify-center py-10 text-center gap-4">
+                                <div className="w-12 h-12 rounded-2xl bg-accent/50 flex items-center justify-center">
+                                    <Plug className="w-6 h-6 text-muted-foreground" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-semibold mb-1">No AI backbone connected</p>
+                                    <p className="text-xs text-muted-foreground max-w-[220px]">
+                                        Connect an AI backbone (OpenClaw, OpenRouter, or Anthropic) to start chatting.
+                                    </p>
+                                </div>
+                                <Link
+                                    href="/dashboard/settings/backbones"
+                                    onClick={() => onOpenChange(false)}
+                                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                                >
+                                    Go to Backbone Settings
+                                    <ArrowRight className="w-3 h-3" />
+                                </Link>
+                            </div>
+                        ) : (
+                            <div className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+                                {error}
+                            </div>
+                        )
                     )}
 
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input */}
-                <div className="p-3 border-t shrink-0">
+                {/* Input — hidden when no backbone is configured */}
+                <div className={cn('p-3 border-t shrink-0', isNoBackboneError(error) && 'hidden')}>
                     <div className="flex items-center gap-2">
                         <input
                             ref={inputRef}
