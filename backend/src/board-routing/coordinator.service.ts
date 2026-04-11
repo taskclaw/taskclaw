@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { BackboneRouterService } from '../backbone/backbone-router.service';
+import { DagApprovalService } from './dag-approval.service';
 
 @Injectable()
 export class CoordinatorService {
@@ -9,6 +10,8 @@ export class CoordinatorService {
   constructor(
     private readonly supabaseAdmin: SupabaseAdminService,
     private readonly backboneRouter: BackboneRouterService,
+    @Inject(forwardRef(() => DagApprovalService))
+    private readonly dagApproval: DagApprovalService,
   ) {}
 
   async decomposeGoal(options: {
@@ -155,6 +158,15 @@ Each depends_on_indexes is an array of 0-based indexes of tasks this task depend
     this.logger.log(
       `Goal decomposed into ${createdTaskIds.length} tasks for DAG ${dag.id}`,
     );
+
+    // 8. Create dag_approvals row so /approve endpoint can find it
+    try {
+      await this.dagApproval.requestApproval(dag.id);
+    } catch (err) {
+      this.logger.warn(
+        `Could not create approval record for DAG ${dag.id}: ${(err as Error).message}`,
+      );
+    }
 
     return { dag, taskIds: createdTaskIds };
   }
