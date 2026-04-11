@@ -662,3 +662,57 @@ export async function deleteBoardRoute(routeId: string): Promise<{ success?: boo
         return { error: e.message }
     }
 }
+
+/**
+ * Fetch manual + ai_decision routes for a board (used by "Send to Board" UI on task cards).
+ */
+export async function getManualRoutesForBoard(boardId: string): Promise<BoardRoute[]> {
+    const headers = await getAuthHeaders()
+    if (!headers) return []
+    const accountId = await getActiveAccountId()
+    if (!accountId) return []
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/board-routing/routes/board/${boardId}/manual`,
+            { headers, cache: 'no-store' }
+        )
+        if (!res.ok) return []
+        return await res.json()
+    } catch {
+        return []
+    }
+}
+
+/**
+ * Manually trigger a board route for a specific task.
+ * Used by "Send to Board" button on task cards.
+ */
+export async function triggerBoardRoute(
+    routeId: string,
+    taskId: string,
+): Promise<{ success?: boolean; task?: any; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/board-routing/routes/${routeId}/trigger`,
+            {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ task_id: taskId }),
+            }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to trigger route' }
+        }
+        const task = await res.json()
+        return { success: true, task }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}

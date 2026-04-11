@@ -30,7 +30,7 @@ interface RouteEditorSheetProps {
     onDeleted: (routeId: string) => void
 }
 
-type TriggerType = 'auto' | 'manual' | 'ai_decision'
+type TriggerType = 'auto' | 'manual' | 'ai_decision' | 'error' | 'fallback'
 
 const TRIGGER_OPTIONS: { value: TriggerType; label: string; description: string; color: string }[] = [
     {
@@ -42,7 +42,7 @@ const TRIGGER_OPTIONS: { value: TriggerType; label: string; description: string;
     {
         value: 'manual',
         label: 'Manual',
-        description: 'Requires a human to trigger the route',
+        description: 'Human clicks "Send to Board" on the task card',
         color: 'text-slate-600 dark:text-slate-400 bg-slate-500/10 border-slate-500/30',
     },
     {
@@ -50,6 +50,18 @@ const TRIGGER_OPTIONS: { value: TriggerType; label: string; description: string;
         label: 'AI Decision',
         description: 'The AI agent decides whether to trigger this route',
         color: 'text-purple-600 dark:text-purple-400 bg-purple-500/10 border-purple-500/30',
+    },
+    {
+        value: 'error',
+        label: 'Error',
+        description: 'Triggers automatically when a task encounters an error or failure',
+        color: 'text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30',
+    },
+    {
+        value: 'fallback',
+        label: 'Fallback',
+        description: 'Fallback route used when no other route matches or succeeds',
+        color: 'text-orange-600 dark:text-orange-400 bg-orange-500/10 border-orange-500/30',
     },
 ]
 

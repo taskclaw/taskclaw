@@ -26,6 +26,9 @@ export class BoardRoutingService {
         trigger: dto.trigger ?? 'auto',
         transform_config: dto.transform_config ?? {},
         is_active: dto.is_active ?? true,
+        label: dto.label ?? null,
+        conditions: dto.conditions ?? {},
+        pod_id: dto.pod_id ?? null,
       })
       .select()
       .single();
@@ -37,13 +40,19 @@ export class BoardRoutingService {
     return data;
   }
 
-  async findAllRoutes(accountId: string) {
+  async findAllRoutes(accountId: string, podId?: string) {
     const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
+    let query = client
       .from('board_routes')
       .select('*')
       .eq('account_id', accountId)
       .order('created_at', { ascending: false });
+
+    if (podId) {
+      query = query.eq('pod_id', podId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       throw new Error(`Failed to fetch board routes: ${error.message}`);
@@ -66,6 +75,27 @@ export class BoardRoutingService {
     }
 
     return data;
+  }
+
+  /**
+   * Get all manual routes available for a given board (for "Send to Board" UI).
+   */
+  async findManualRoutesForBoard(accountId: string, boardId: string) {
+    const client = this.supabaseAdmin.getClient();
+    const { data, error } = await client
+      .from('board_routes')
+      .select('*, target_board:board_instances!target_board_id(id, name), target_step:board_steps!target_step_id(id, name)')
+      .eq('account_id', accountId)
+      .eq('source_board_id', boardId)
+      .in('trigger', ['manual', 'ai_decision'])
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to fetch manual routes: ${error.message}`);
+    }
+
+    return data ?? [];
   }
 
   async updateRoute(
@@ -195,9 +225,41 @@ export class BoardRoutingService {
     });
 
     this.logger.log(
-      `Route ${routeId}: transferred task ${taskId} -> ${newTask.id} to board ${route.target_board_id}`,
+      `Route ${routeId} (${route.trigger}): transferred task ${taskId} -> ${newTask.id} to board ${route.target_board_id}`,
     );
 
     return newTask;
+  }
+
+  /**
+   * Trigger all active error/fallback routes for a task's board.
+   * Called fire-and-forget when a task encounters an error.
+   */
+  async triggerErrorRoutes(taskId: string, boardId: string, stepId?: string | null) {
+    const client = this.supabaseAdmin.getClient();
+
+    const { data: routes } = await client
+      .from('board_routes')
+      .select('id')
+      .eq('source_board_id', boardId)
+      .in('trigger', ['error', 'fallback'])
+      .eq('is_active', true)
+      .or(
+        `source_step_id.eq.${stepId ?? 'null'},source_step_id.is.null`,
+      );
+
+    if (!routes?.length) return;
+
+    this.logger.log(
+      `Triggering ${routes.length} error/fallback route(s) for task ${taskId}`,
+    );
+
+    for (const route of routes) {
+      this.triggerRoute(taskId, route.id).catch((err) =>
+        this.logger.warn(
+          `Error route ${route.id} failed for task ${taskId}: ${(err as Error).message}`,
+        ),
+      );
+    }
   }
 }

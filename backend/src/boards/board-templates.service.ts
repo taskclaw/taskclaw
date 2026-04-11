@@ -336,8 +336,9 @@ export class BoardTemplatesService {
   /**
    * Import a board directly from a manifest JSON (no template_id required).
    * Creates categories, skills, knowledge docs, board instance, and steps.
+   * @param podId Optional pod ID to assign this board to
    */
-  async importManifest(userId: string, accountId: string, manifest: any) {
+  async importManifest(userId: string, accountId: string, manifest: any, podId?: string | null) {
     const client = this.supabaseAdmin.getClient();
     await this.accessControl.verifyAccountAccess(client, accountId, userId);
 
@@ -375,6 +376,7 @@ export class BoardTemplatesService {
         settings_override: manifest.settings || {},
         default_category_id: defaultCategoryId,
         default_backbone_connection_id: backboneSlugMap.boardDefault || null,
+        pod_id: podId || null,
       })
       .select()
       .single();

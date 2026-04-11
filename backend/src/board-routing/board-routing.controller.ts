@@ -34,9 +34,12 @@ export class BoardRoutingController {
   ) {}
 
   @Get('routes')
-  @ApiOperation({ summary: 'List board routes' })
-  findAllRoutes(@Param('accountId') accountId: string) {
-    return this.routingService.findAllRoutes(accountId);
+  @ApiOperation({ summary: 'List board routes (optionally filtered by pod_id)' })
+  findAllRoutes(
+    @Param('accountId') accountId: string,
+    @Query('pod_id') podId?: string,
+  ) {
+    return this.routingService.findAllRoutes(accountId, podId);
   }
 
   @Post('routes')
@@ -47,6 +50,15 @@ export class BoardRoutingController {
     @Body() dto: CreateBoardRouteDto,
   ) {
     return this.routingService.createRoute(accountId, dto);
+  }
+
+  @Get('routes/board/:boardId/manual')
+  @ApiOperation({ summary: 'List manual + ai_decision routes for a board (for Send-to-Board UI)' })
+  findManualRoutes(
+    @Param('accountId') accountId: string,
+    @Param('boardId') boardId: string,
+  ) {
+    return this.routingService.findManualRoutesForBoard(accountId, boardId);
   }
 
   @Get('routes/:routeId')
@@ -78,6 +90,21 @@ export class BoardRoutingController {
     return this.routingService.deleteRoute(accountId, routeId);
   }
 
+  /**
+   * Manual route trigger: human or frontend explicitly sends a task through a route.
+   * Works for trigger='manual', 'ai_decision', or any trigger type.
+   */
+  @Post('routes/:routeId/trigger')
+  @ApiOperation({ summary: 'Manually trigger a board route for a specific task' })
+  @HttpCode(HttpStatus.OK)
+  triggerRoute(
+    @Param('accountId') accountId: string,
+    @Param('routeId') routeId: string,
+    @Body() body: { task_id: string },
+  ) {
+    return this.routingService.triggerRoute(body.task_id, routeId);
+  }
+
   @Post('decompose-goal')
   @ApiOperation({ summary: 'Decompose a high-level goal into tasks via AI' })
   async decomposeGoal(
@@ -97,6 +124,7 @@ export class BoardRoutingController {
   async getDags(
     @Param('accountId') accountId: string,
     @Query('status') status?: string,
+    @Query('pod_id') podId?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
     let query = client
@@ -107,6 +135,9 @@ export class BoardRoutingController {
 
     if (status) {
       query = query.eq('status', status);
+    }
+    if (podId) {
+      query = query.eq('pod_id', podId);
     }
 
     const { data, error } = await query;

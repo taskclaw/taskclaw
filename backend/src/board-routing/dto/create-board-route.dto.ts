@@ -1,5 +1,7 @@
 import { IsString, IsOptional, IsBoolean, IsObject, IsIn } from 'class-validator';
 
+export type TriggerType = 'auto' | 'ai_decision' | 'manual' | 'error' | 'fallback';
+
 export class CreateBoardRouteDto {
   @IsString()
   source_board_id: string;
@@ -16,8 +18,8 @@ export class CreateBoardRouteDto {
   target_step_id?: string;
 
   @IsOptional()
-  @IsIn(['auto', 'ai_decision', 'manual'])
-  trigger?: 'auto' | 'ai_decision' | 'manual';
+  @IsIn(['auto', 'ai_decision', 'manual', 'error', 'fallback'])
+  trigger?: TriggerType;
 
   @IsOptional()
   @IsObject()
@@ -26,4 +28,16 @@ export class CreateBoardRouteDto {
   @IsOptional()
   @IsBoolean()
   is_active?: boolean;
+
+  @IsOptional()
+  @IsString()
+  label?: string;
+
+  @IsOptional()
+  @IsObject()
+  conditions?: Record<string, any>;
+
+  @IsOptional()
+  @IsString()
+  pod_id?: string;
 }

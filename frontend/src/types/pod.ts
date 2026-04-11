@@ -68,12 +68,16 @@ export interface BoardRoute {
   source_step_id?: string | null
   target_board_id: string
   target_step_id?: string | null
-  trigger: 'auto' | 'ai_decision' | 'manual'
+  trigger: 'auto' | 'ai_decision' | 'manual' | 'error' | 'fallback'
   trigger_on_step_complete?: boolean
   label?: string | null
+  conditions?: Record<string, any>
   transform_config?: Record<string, any>
   is_active: boolean
   created_at: string
+  // Joined fields (from findManualRoutesForBoard)
+  target_board?: { id: string; name: string } | null
+  target_step?: { id: string; name: string } | null
 }
 
 export interface TaskDAG {

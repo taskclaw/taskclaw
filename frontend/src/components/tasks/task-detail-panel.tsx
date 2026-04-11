@@ -16,9 +16,11 @@ import {
     Trash2,
     ChevronDown,
     ChevronRight,
+    ArrowRightLeft,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTaskStore } from '@/hooks/use-task-store'
+import { getManualRoutesForBoard, triggerBoardRoute } from '@/app/dashboard/pods/actions'
 import { useTaskDetail, useTaskContent, useTaskComments, useTaskUsage, useUpdateTask, useCompleteTask, useDeleteTask, useMoveTask } from '@/hooks/use-tasks'
 import { useBackboneConnections } from '@/hooks/use-backbone-connections'
 import { useMoveTaskToStep } from '@/hooks/use-boards'
@@ -73,6 +75,9 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
     const [showDeleteDialog, setShowDeleteDialog] = useState(false)
     const [taskBackboneId, setTaskBackboneId] = useState<string | null>(null)
     const titleInputRef = useRef<HTMLInputElement>(null)
+    const [manualRoutes, setManualRoutes] = useState<any[]>([])
+    const [routesLoading, setRoutesLoading] = useState(false)
+    const [sendingRoute, setSendingRoute] = useState<string | null>(null)
 
     const aiConfigured = (backboneConnections ?? []).some(c => c.is_active)
 
@@ -174,6 +179,33 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
         setShowDeleteDialog(false)
     }
 
+    const handleLoadRoutes = async () => {
+        if (!task?.board_instance_id || routesLoading) return
+        setRoutesLoading(true)
+        try {
+            const routes = await getManualRoutesForBoard(task.board_instance_id)
+            setManualRoutes(routes)
+        } finally {
+            setRoutesLoading(false)
+        }
+    }
+
+    const handleSendToBoard = async (routeId: string) => {
+        if (!selectedTaskId) return
+        setSendingRoute(routeId)
+        try {
+            const result = await triggerBoardRoute(routeId, selectedTaskId)
+            if (result.error) {
+                toast.error(result.error)
+            } else {
+                const route = manualRoutes.find((r) => r.id === routeId)
+                toast.success(`Task sent to ${route?.target_board?.name || 'target board'}`)
+            }
+        } finally {
+            setSendingRoute(null)
+        }
+    }
+
     const handleCardDataChange = (stepKey: string, fieldKey: string, value: any) => {
         if (!selectedTaskId || !task) return
         const existingStepData = task.card_data?.[stepKey] || {}
@@ -223,6 +255,52 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
                     </div>
                 </div>
                 <div className="flex items-center gap-1">
+                    {/* Send to Board — only for board tasks */}
+                    {task?.board_instance_id && (
+                        <DropdownMenu onOpenChange={(open) => { if (open) handleLoadRoutes() }}>
+                            <DropdownMenuTrigger asChild>
+                                <button
+                                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-accent/60 hover:bg-accent border border-border rounded transition-colors text-foreground"
+                                    title="Send to Board"
+                                >
+                                    <ArrowRightLeft className="w-3.5 h-3.5" />
+                                    Send to Board
+                                </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="min-w-[200px]">
+                                {routesLoading ? (
+                                    <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        Loading routes...
+                                    </div>
+                                ) : manualRoutes.length === 0 ? (
+                                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                                        No manual routes configured for this board.
+                                    </div>
+                                ) : (
+                                    manualRoutes.map((route) => (
+                                        <DropdownMenuItem
+                                            key={route.id}
+                                            onClick={() => handleSendToBoard(route.id)}
+                                            disabled={!!sendingRoute}
+                                            className="flex items-center gap-2 text-xs cursor-pointer"
+                                        >
+                                            {sendingRoute === route.id
+                                                ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                                                : <ArrowRightLeft className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                                            }
+                                            <span>
+                                                {route.label || route.target_board?.name || 'Target board'}
+                                                {route.target_step?.name && (
+                                                    <span className="text-muted-foreground ml-1">→ {route.target_step.name}</span>
+                                                )}
+                                            </span>
+                                        </DropdownMenuItem>
+                                    ))
+                                )}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
                     <button
                         onClick={() => setShowDeleteDialog(true)}
                         className="p-1.5 hover:bg-destructive/10 rounded text-muted-foreground hover:text-destructive transition-colors"
