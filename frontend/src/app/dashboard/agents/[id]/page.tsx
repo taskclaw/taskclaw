@@ -3,7 +3,7 @@
 import { use, useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-    ArrowLeft, Bot, Brain, BookOpen, Link2, Settings2,
+    Bot, Brain, BookOpen, Link2, Settings2,
     Plus, X, Zap, RefreshCw, Loader2, Save, ChevronRight,
     FileText, ExternalLink, Check, AlertTriangle,
 } from 'lucide-react'
@@ -11,8 +11,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
-import { SidebarTrigger } from '@/components/ui/sidebar'
 import {
     Sheet,
     SheetContent,
@@ -34,6 +32,7 @@ import { toast } from 'sonner'
 import { BoardIcon } from '@/lib/board-icon'
 import { BackbonePicker } from '@/components/backbones/backbone-picker'
 import { getCategories, updateCategory } from '@/app/dashboard/settings/categories/actions'
+import { PageLayout, PageHeader, PageSidebar, PageContent } from '@/components/page-layout'
 import {
     getSkills,
     getSkillsForCategory,
@@ -638,11 +637,13 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
     const { id } = use(params)
     const router = useRouter()
     const [agent, setAgent] = useState<(Category & { preferred_backbone_connection_id?: string | null }) | null>(null)
+    const [allAgents, setAllAgents] = useState<Category[]>([])
     const [loading, setLoading] = useState(true)
     const [tab, setTab] = useState<Tab>('general')
 
     useEffect(() => {
         getCategories().then((cats) => {
+            setAllAgents(cats || [])
             const found = cats.find((c: Category) => c.id === id)
             setAgent(found ?? null)
             setLoading(false)
@@ -651,25 +652,31 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
 
     if (loading) {
         return (
-            <div className="flex flex-col flex-1 min-h-0">
-                <header className="flex h-16 shrink-0 items-center gap-2 px-2">
-                    <SidebarTrigger className="-ml-1" />
-                    <Separator orientation="vertical" className="mr-2 h-4" />
-                </header>
+            <PageLayout
+                header={
+                    <PageHeader
+                        icon={<Bot className="w-4 h-4 text-primary" />}
+                        title="Agents"
+                    />
+                }
+            >
                 <div className="flex items-center justify-center flex-1">
                     <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                 </div>
-            </div>
+            </PageLayout>
         )
     }
 
     if (!agent) {
         return (
-            <div className="flex flex-col flex-1 min-h-0">
-                <header className="flex h-16 shrink-0 items-center gap-2 px-2">
-                    <SidebarTrigger className="-ml-1" />
-                    <Separator orientation="vertical" className="mr-2 h-4" />
-                </header>
+            <PageLayout
+                header={
+                    <PageHeader
+                        icon={<Bot className="w-4 h-4 text-primary" />}
+                        title="Agents"
+                    />
+                }
+            >
                 <div className="flex flex-col items-center justify-center flex-1 text-muted-foreground">
                     <Bot className="w-10 h-10 mb-3 opacity-30" />
                     <p className="text-sm">Agent not found</p>
@@ -677,28 +684,61 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                         Back to Agents
                     </Button>
                 </div>
-            </div>
+            </PageLayout>
         )
     }
 
     const color = agent.color || '#6366f1'
 
     return (
-        <div className="flex flex-col flex-1 min-h-0">
-            {/* Header */}
-            <header className="flex h-16 shrink-0 items-center gap-2 px-2 border-b border-border">
-                <SidebarTrigger className="-ml-1" />
-                <Separator orientation="vertical" className="mr-2 h-4" />
-                <nav className="flex items-center gap-1 text-sm">
-                    <a href="/dashboard/agents" className="text-muted-foreground hover:text-foreground transition-colors">
-                        Agents
-                    </a>
-                    <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="font-semibold">{agent.name}</span>
-                </nav>
-            </header>
-
-            <div className="flex-1 min-h-0 overflow-y-auto">
+        <PageLayout
+            header={
+                <PageHeader
+                    icon={<Bot className="w-4 h-4 text-primary" />}
+                    title={
+                        <nav className="flex items-center gap-1">
+                            <a href="/dashboard/agents" className="text-muted-foreground hover:text-foreground transition-colors font-normal">
+                                Agents
+                            </a>
+                            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span>{agent.name}</span>
+                        </nav>
+                    }
+                />
+            }
+            sidebar={
+                <PageSidebar>
+                    <div className="px-3 pt-4 pb-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-2 mb-2">All Agents</p>
+                        {allAgents.map((a) => {
+                            const aColor = a.color || '#6366f1'
+                            const isActive = a.id === id
+                            return (
+                                <a
+                                    key={a.id}
+                                    href={`/dashboard/agents/${a.id}`}
+                                    className={cn(
+                                        'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors',
+                                        isActive
+                                            ? 'bg-accent text-foreground font-medium'
+                                            : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                                    )}
+                                >
+                                    <div
+                                        className="w-5 h-5 rounded-md flex items-center justify-center shrink-0"
+                                        style={{ backgroundColor: `${aColor}25`, color: aColor }}
+                                    >
+                                        <BoardIcon name={a.icon} className="w-3 h-3" />
+                                    </div>
+                                    <span className="truncate text-xs">{a.name}</span>
+                                </a>
+                            )
+                        })}
+                    </div>
+                </PageSidebar>
+            }
+        >
+            <PageContent className="overflow-y-auto">
                 <div className="max-w-2xl mx-auto px-6 py-8">
                     {/* Agent Identity */}
                     <div className="flex items-center gap-4 mb-8">
@@ -752,7 +792,7 @@ export default function AgentDetailPage({ params }: { params: Promise<{ id: stri
                         <TabKnowledge categoryId={agent.id} />
                     )}
                 </div>
-            </div>
-        </div>
+            </PageContent>
+        </PageLayout>
     )
 }
