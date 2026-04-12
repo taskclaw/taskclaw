@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, BrainCircuit, CheckCircle, ListPlus, Layers, Plug, ArrowRight } from 'lucide-react'
+import { Send, Loader2, BrainCircuit, CheckCircle, ListPlus, Layers, Plug, ArrowRight, Globe } from 'lucide-react'
 import Link from 'next/link'
 import {
     getOrCreateBoardConversation,
     getOrCreatePodConversation,
+    getOrCreateWorkspaceConversation,
     sendMessageBackground,
     getMessages,
 } from '@/app/dashboard/chat/actions'
@@ -42,6 +43,8 @@ interface BoardAIChatProps {
     // Pod mode
     podId?: string
     podName?: string
+    // Workspace mode (cockpit chat — sees all pods/boards)
+    isWorkspace?: boolean
     // Sheet control
     open: boolean
     onOpenChange: (open: boolean) => void
@@ -54,12 +57,14 @@ export function BoardAIChat({
     boardName,
     podId,
     podName,
+    isWorkspace,
     open,
     onOpenChange,
     onClose,
 }: BoardAIChatProps) {
-    const isPodMode = !!podId
-    const contextName = isPodMode ? (podName ?? 'Pod') : (boardName ?? 'Board')
+    const isPodMode = !!podId && !isWorkspace
+    const isWorkspaceMode = !!isWorkspace
+    const contextName = isWorkspaceMode ? 'Workspace' : isPodMode ? (podName ?? 'Pod') : (boardName ?? 'Board')
 
     // Detect "no backbone configured" vs other errors
     const isNoBackboneError = (err: string | null) =>
@@ -135,7 +140,9 @@ export function BoardAIChat({
             setMessages([])
 
             try {
-                const result = isPodMode
+                const result = isWorkspaceMode
+                    ? await getOrCreateWorkspaceConversation()
+                    : isPodMode
                     ? await getOrCreatePodConversation(podId!, contextName)
                     : await getOrCreateBoardConversation(boardId!, contextName)
 
@@ -159,7 +166,7 @@ export function BoardAIChat({
         init()
         return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, boardId, podId])
+    }, [open, boardId, podId, isWorkspace])
 
     useEffect(() => {
         if (isProcessing && conversationId) startPolling(conversationId)
@@ -216,7 +223,9 @@ export function BoardAIChat({
         }
     }
 
-    const placeholder = isPodMode
+    const placeholder = isWorkspaceMode
+        ? (isProcessing ? 'Wait for AI to respond...' : 'Ask anything — run pilots, trigger routes, review pods...')
+        : isPodMode
         ? (isProcessing ? 'Wait for AI to respond...' : `Ask the ${contextName} AI anything...`)
         : (isProcessing ? 'Wait for AI to respond...' : 'Describe the tasks you want to create...')
 
@@ -230,14 +239,16 @@ export function BoardAIChat({
                 {/* Header */}
                 <SheetHeader className="px-4 py-3 border-b bg-primary/5 shrink-0">
                     <div className="flex items-center gap-2.5 pr-6">
-                        {isPodMode
+                        {isWorkspaceMode
+                            ? <Globe className={cn('w-4 h-4', isProcessing ? 'text-amber-500 animate-pulse' : 'text-primary')} />
+                            : isPodMode
                             ? <Layers className={cn('w-4 h-4', isProcessing ? 'text-amber-500 animate-pulse' : 'text-primary')} />
                             : <BrainCircuit className={cn('w-4 h-4', isProcessing ? 'text-amber-500 animate-pulse' : 'text-primary')} />
                         }
                         <div className="flex-1 min-w-0">
                             <SheetTitle className="text-sm leading-tight">{contextName}</SheetTitle>
                             <SheetDescription className="text-[11px] leading-tight">
-                                {isPodMode ? 'Pod AI Chat' : 'Board AI Chat'}
+                                {isWorkspaceMode ? 'Workspace AI · Can trigger pods, boards & routes' : isPodMode ? 'Pod AI Chat' : 'Board AI Chat'}
                             </SheetDescription>
                         </div>
                         {isProcessing && (
@@ -259,18 +270,27 @@ export function BoardAIChat({
 
                     {!isInitializing && messages.length === 0 && !isProcessing && !error && (
                         <div className="text-center py-8 space-y-3">
-                            {isPodMode
+                            {isWorkspaceMode
+                                ? <Globe className="w-10 h-10 mx-auto text-muted-foreground/20" />
+                                : isPodMode
                                 ? <Layers className="w-10 h-10 mx-auto text-muted-foreground/20" />
                                 : <BrainCircuit className="w-10 h-10 mx-auto text-muted-foreground/20" />
                             }
                             <div>
                                 <p className="text-sm text-muted-foreground">
-                                    {isPodMode
+                                    {isWorkspaceMode
+                                        ? 'Your Workspace AI. Ask it to review pods, trigger pilots, route tasks, or coordinate across departments.'
+                                        : isPodMode
                                         ? `Chat with the ${contextName} AI assistant.`
                                         : 'Describe the tasks you want to create on this board.'
                                     }
                                 </p>
-                                {!isPodMode && (
+                                {isWorkspaceMode && (
+                                    <p className="text-xs text-muted-foreground/60 mt-1">
+                                        Example: &quot;Review all pending tasks and suggest next steps&quot;
+                                    </p>
+                                )}
+                                {!isPodMode && !isWorkspaceMode && (
                                     <p className="text-xs text-muted-foreground/60 mt-1">
                                         Example: &quot;Create 10 posts about AI in different markets&quot;
                                     </p>

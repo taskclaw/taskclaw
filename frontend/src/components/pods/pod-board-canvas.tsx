@@ -6,7 +6,6 @@ import {
     Background,
     Controls,
     MiniMap,
-    addEdge,
     useNodesState,
     useEdgesState,
     type Node,
@@ -14,6 +13,9 @@ import {
     type Connection,
     BackgroundVariant,
     Panel,
+    MarkerType,
+    Handle,
+    Position,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useRouter } from 'next/navigation'
@@ -47,43 +49,45 @@ function BoardNode({ data }: { data: BoardNodeData }) {
     const taskCount = board.task_count ?? 0
 
     return (
-        <div
-            className="bg-card border rounded-xl shadow-sm min-w-[200px] overflow-hidden group"
-            style={{ borderColor: `${color}40`, borderWidth: '1.5px' }}
-        >
-            {/* Color strip */}
-            <div className="h-1 w-full" style={{ backgroundColor: color }} />
+        <>
+            {/* ReactFlow connection handles */}
+            <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-border !border-border" />
+            <Handle type="source" position={Position.Right} className="!w-2 !h-2 !bg-border !border-border" />
 
-            {/* Header */}
-            <div className="flex items-center gap-2 p-3 pb-2">
-                <div
-                    className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0"
-                    style={{ backgroundColor: `${color}20` }}
-                >
-                    <BoardIcon name={board.icon} className="w-4 h-4" />
-                </div>
-                <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold leading-tight truncate">{board.name}</p>
-                    {board.description && (
-                        <p className="text-[10px] text-muted-foreground truncate">{board.description}</p>
-                    )}
-                </div>
-                <button
-                    onClick={(e) => { e.stopPropagation(); onRemove(board.id, board.name) }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/10 hover:text-destructive"
-                    title="Remove from pod"
-                >
-                    <X className="w-3.5 h-3.5" />
-                </button>
-            </div>
+            <div
+                className="bg-card border rounded-xl shadow-sm w-[220px] overflow-hidden group"
+                style={{ borderColor: `${color}40`, borderWidth: '1.5px' }}
+            >
+                {/* Color strip */}
+                <div className="h-1 w-full" style={{ backgroundColor: color }} />
 
-            {/* Stats */}
-            <div className="flex items-center gap-3 px-3 pb-2 text-[10px] text-muted-foreground">
-                {stepCount > 0 && <span>{stepCount} step{stepCount !== 1 ? 's' : ''}</span>}
-                {taskCount > 0 && <span>{taskCount} task{taskCount !== 1 ? 's' : ''}</span>}
+                {/* Header */}
+                <div className="flex items-center gap-2 p-3 pb-2">
+                    <div
+                        className="w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0"
+                        style={{ backgroundColor: `${color}20` }}
+                    >
+                        <BoardIcon name={board.icon} className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold leading-tight truncate">{board.name}</p>
+                        {board.description && (
+                            <p className="text-[10px] text-muted-foreground truncate max-w-[120px]">{board.description}</p>
+                        )}
+                    </div>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onRemove(board.id, board.name) }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/10 hover:text-destructive shrink-0"
+                        title="Remove from pod"
+                    >
+                        <X className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+
+                {/* Step pills */}
                 {board.board_steps && board.board_steps.length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
-                        {board.board_steps.slice(0, 4).map((step) => (
+                    <div className="flex gap-1 flex-wrap px-3 pb-2">
+                        {board.board_steps.slice(0, 3).map((step) => (
                             <span
                                 key={step.id}
                                 className="px-1.5 py-0.5 rounded text-[9px] font-medium"
@@ -95,65 +99,76 @@ function BoardNode({ data }: { data: BoardNodeData }) {
                                 {step.name}
                             </span>
                         ))}
-                        {board.board_steps.length > 4 && (
-                            <span className="text-[9px] text-muted-foreground">
-                                +{board.board_steps.length - 4}
+                        {board.board_steps.length > 3 && (
+                            <span className="text-[9px] text-muted-foreground self-center">
+                                +{board.board_steps.length - 3}
                             </span>
                         )}
                     </div>
                 )}
-            </div>
 
-            {/* Actions */}
-            <div className="flex items-center gap-1 px-2 pb-2 border-t pt-2 mt-1">
-                <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-6 px-2 text-[10px] flex-1"
-                    onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/boards/${board.id}`) }}
-                >
-                    <ExternalLink className="w-3 h-3 mr-1" />
-                    Open
-                </Button>
-                <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-6 px-2 text-[10px] flex-1"
-                    onClick={(e) => { e.stopPropagation(); onOpenChat(board.id, board.name) }}
-                >
-                    <MessageCircle className="w-3 h-3 mr-1" />
-                    Chat
-                </Button>
-                <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-6 px-2 text-[10px]"
-                    onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/boards/${board.id}/settings`) }}
-                >
-                    <Settings className="w-3 h-3" />
-                </Button>
+                {/* Stats row */}
+                <div className="flex items-center gap-3 px-3 pb-2 text-[10px] text-muted-foreground">
+                    {stepCount > 0 && <span>{stepCount} step{stepCount !== 1 ? 's' : ''}</span>}
+                    {taskCount > 0 && <span className="font-medium" style={{ color }}>{taskCount} task{taskCount !== 1 ? 's' : ''}</span>}
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-1 px-2 pb-2 border-t pt-2 mt-1">
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-[10px] flex-1"
+                        onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/boards/${board.id}`) }}
+                    >
+                        <ExternalLink className="w-3 h-3 mr-1" />
+                        Open
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-[10px] flex-1"
+                        onClick={(e) => { e.stopPropagation(); onOpenChat(board.id, board.name) }}
+                    >
+                        <MessageCircle className="w-3 h-3 mr-1" />
+                        Chat
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-[10px]"
+                        onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/boards/${board.id}/settings`) }}
+                    >
+                        <Settings className="w-3 h-3" />
+                    </Button>
+                </div>
             </div>
-        </div>
+        </>
     )
 }
 
 const nodeTypes = { boardNode: BoardNode }
 
-// ── Route edge colors by trigger type ─────────────────────────────────────
+// ── Route edge colors + markers by trigger type ────────────────────────────
 
-function routeEdgeStyle(trigger: string): { stroke: string; animated: boolean } {
+function routeEdgeProps(trigger: string): { stroke: string; animated: boolean; dashArray?: string } {
     switch (trigger) {
         case 'auto':
             return { stroke: '#22c55e', animated: true }
         case 'ai_decision':
             return { stroke: '#a855f7', animated: true }
+        case 'error':
+            return { stroke: '#ef4444', animated: false, dashArray: '6 3' }
+        case 'fallback':
+            return { stroke: '#f97316', animated: false, dashArray: '4 4' }
+        case 'manual':
         default:
-            return { stroke: 'hsl(var(--muted-foreground))', animated: false }
+            return { stroke: '#94a3b8', animated: false }
     }
 }
 
 function buildRouteEdge(route: BoardRoute): Edge {
-    const { stroke, animated } = routeEdgeStyle(route.trigger)
+    const { stroke, animated, dashArray } = routeEdgeProps(route.trigger)
     return {
         id: `route-${route.id}`,
         source: route.source_board_id,
@@ -161,7 +176,19 @@ function buildRouteEdge(route: BoardRoute): Edge {
         type: 'smoothstep',
         animated,
         label: route.label || route.trigger,
-        style: { strokeWidth: 2, stroke },
+        labelStyle: { fontSize: 10, fill: stroke, fontWeight: 600 },
+        labelBgStyle: { fill: 'hsl(var(--card))', fillOpacity: 0.85 },
+        style: {
+            strokeWidth: 2,
+            stroke,
+            ...(dashArray ? { strokeDasharray: dashArray } : {}),
+        },
+        markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 16,
+            height: 16,
+            color: stroke,
+        },
         data: { route },
     }
 }
@@ -188,15 +215,10 @@ function buildInitialNodes(
         return {
             id: board.id,
             type: 'boardNode',
-            position: { x: col * 280 + (row % 2 === 0 ? 0 : 20), y: row * 220 },
+            position: { x: col * 280 + (row % 2 === 0 ? 0 : 20), y: row * 230 },
             data: { board, podSlug, onRemove, onOpenChat } as BoardNodeData,
         }
     })
-}
-
-function buildInitialEdges(boards: Board[]): Edge[] {
-    // Placeholder dashed edges; replaced by actual routes once loaded
-    return []
 }
 
 export function PodBoardCanvas({ boards, podSlug, podId, onAddBoards, onOpenChat }: PodBoardCanvasProps) {
@@ -305,6 +327,9 @@ export function PodBoardCanvas({ boards, podSlug, podId, onAddBoards, onOpenChat
                     fitView
                     fitViewOptions={{ padding: 0.3 }}
                     proOptions={{ hideAttribution: true }}
+                    defaultEdgeOptions={{
+                        markerEnd: { type: MarkerType.ArrowClosed },
+                    }}
                 >
                     <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-30" />
                     <Controls className="!shadow-none !border !border-border rounded-lg overflow-hidden" />
@@ -327,6 +352,36 @@ export function PodBoardCanvas({ boards, podSlug, podId, onAddBoards, onOpenChat
                             + Add board
                         </Button>
                     </Panel>
+
+                    {/* Route legend */}
+                    {routes.length > 0 && (
+                        <Panel position="bottom-left" className="bg-card/80 border border-border rounded-lg p-2 text-[10px] space-y-1 backdrop-blur-sm">
+                            <p className="font-semibold text-muted-foreground mb-1">Route types</p>
+                            {[
+                                { trigger: 'auto', label: 'Auto (on completion)' },
+                                { trigger: 'manual', label: 'Manual (Send to Board)' },
+                                { trigger: 'ai_decision', label: 'AI Decision' },
+                                { trigger: 'error', label: 'Error / Fallback' },
+                            ].map(({ trigger, label }) => {
+                                const { stroke, dashArray, animated } = routeEdgeProps(trigger)
+                                if (!routes.some((r) => r.trigger === trigger || (trigger === 'error' && (r.trigger === 'error' || r.trigger === 'fallback')))) return null
+                                return (
+                                    <div key={trigger} className="flex items-center gap-1.5">
+                                        <svg width="20" height="8">
+                                            <line
+                                                x1="0" y1="4" x2="16" y2="4"
+                                                stroke={stroke}
+                                                strokeWidth="2"
+                                                strokeDasharray={dashArray}
+                                            />
+                                            <polygon points="14,1 20,4 14,7" fill={stroke} />
+                                        </svg>
+                                        <span style={{ color: stroke }}>{label}</span>
+                                    </div>
+                                )
+                            })}
+                        </Panel>
+                    )}
                 </ReactFlow>
             </div>
 

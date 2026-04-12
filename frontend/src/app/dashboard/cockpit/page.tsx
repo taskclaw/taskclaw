@@ -5,6 +5,7 @@ import { usePods, useDeletePod } from '@/hooks/use-pods'
 import { PodCard } from '@/components/pods/pod-card'
 import { CreatePodDialog } from '@/components/pods/create-pod-dialog'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
+import { BoardAIChat } from '@/components/boards/board-ai-chat'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
@@ -24,7 +25,6 @@ import {
     Layers,
     Bot,
     Play,
-    Clock,
     ChevronDown,
     ChevronRight,
     Loader2,
@@ -32,6 +32,7 @@ import {
     CheckCircle2,
     XCircle,
     AlertCircle,
+    MessageCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useBackboneConnections } from '@/hooks/use-backbone-connections'
@@ -45,6 +46,7 @@ import {
 import type { ExecutionLog, Pod } from '@/types/pod'
 import { formatDistanceToNow } from 'date-fns'
 import { cn } from '@/lib/utils'
+import { renderMarkdown } from '@/lib/markdown'
 
 export default function CockpitPage() {
     const { data: pods, isLoading } = usePods()
@@ -52,6 +54,7 @@ export default function CockpitPage() {
     const [showCreate, setShowCreate] = useState(false)
     const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
     const [deleteLoading, setDeleteLoading] = useState(false)
+    const [chatOpen, setChatOpen] = useState(false)
 
     const handleDelete = (pod: Pod) => {
         setDeleteTarget({ id: pod.id, name: pod.name })
@@ -89,10 +92,16 @@ export default function CockpitPage() {
                         </span>
                     )}
                 </div>
-                <Button size="sm" onClick={() => setShowCreate(true)}>
-                    <Plus className="w-4 h-4 mr-1" />
-                    New Pod
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setChatOpen(true)}>
+                        <MessageCircle className="w-4 h-4 mr-1" />
+                        Workspace Chat
+                    </Button>
+                    <Button size="sm" onClick={() => setShowCreate(true)}>
+                        <Plus className="w-4 h-4 mr-1" />
+                        New Pod
+                    </Button>
+                </div>
             </header>
 
             <p className="text-sm text-muted-foreground pb-4">
@@ -146,6 +155,13 @@ export default function CockpitPage() {
                 description="This will permanently delete this pod. Boards will become unassigned."
                 loading={deleteLoading}
             />
+
+            {/* Workspace AI Chat */}
+            <BoardAIChat
+                isWorkspace
+                open={chatOpen}
+                onOpenChange={setChatOpen}
+            />
         </div>
     )
 }
@@ -162,7 +178,7 @@ function WorkspacePilotCard() {
 
     // Form fields
     const [isActive, setIsActive] = useState(false)
-    const [backboneId, setBackboneId] = useState<string>('')
+    const [backboneId, setBackboneId] = useState<string>('__default__')
     const [systemPrompt, setSystemPrompt] = useState('')
     const [maxTasks, setMaxTasks] = useState(10)
     const [approvalRequired, setApprovalRequired] = useState(true)
@@ -174,12 +190,11 @@ function WorkspacePilotCard() {
     async function loadConfig() {
         setLoading(true)
         try {
-            // NOTE: Depends on BE15. Returns null until API is ready.
-            const cfg = await getPilotConfig(null) // null = workspace level
+            const cfg = await getPilotConfig(null)
             if (cfg) {
                 setConfig(cfg)
                 setIsActive(cfg.is_active)
-                setBackboneId(cfg.backbone_connection_id || '')
+                setBackboneId(cfg.backbone_connection_id || '__default__')
                 setSystemPrompt(cfg.system_prompt || '')
                 setMaxTasks(cfg.max_tasks_per_cycle || 10)
                 setApprovalRequired(cfg.approval_required ?? true)
@@ -197,7 +212,7 @@ function WorkspacePilotCard() {
             const result = await upsertPilotConfig({
                 pod_id: null,
                 is_active: isActive,
-                backbone_connection_id: backboneId || null,
+                backbone_connection_id: backboneId === '__default__' ? null : backboneId,
                 system_prompt: systemPrompt,
                 max_tasks_per_cycle: maxTasks,
                 approval_required: approvalRequired,
@@ -257,9 +272,9 @@ function WorkspacePilotCard() {
                     {loading ? (
                         <p className="text-xs text-muted-foreground mt-0.5 animate-pulse">Loading...</p>
                     ) : config?.last_run_at ? (
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate">
                             Last run {formatDistanceToNow(new Date(config.last_run_at), { addSuffix: true })}
-                            {config.last_run_summary && ` — ${config.last_run_summary}`}
+                            {config.last_run_summary && ` — ${config.last_run_summary.slice(0, 80)}…`}
                         </p>
                     ) : (
                         <p className="text-xs text-muted-foreground mt-0.5">
@@ -306,12 +321,15 @@ function WorkspacePilotCard() {
 
                     <div className="space-y-1.5">
                         <Label className="text-xs">AI Backbone</Label>
-                        <Select value={backboneId} onValueChange={setBackboneId}>
+                        <Select
+                            value={backboneId}
+                            onValueChange={(v) => setBackboneId(v)}
+                        >
                             <SelectTrigger className="h-8 text-sm">
                                 <SelectValue placeholder="Use account default" />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="">Use account default</SelectItem>
+                                <SelectItem value="__default__">Use account default</SelectItem>
                                 {(backbones as any[]).map((b: any) => (
                                     <SelectItem key={b.id} value={b.id}>
                                         {b.name || b.adapter_slug}
@@ -347,6 +365,7 @@ function PilotActivityFeed() {
     const [logs, setLogs] = useState<ExecutionLog[]>([])
     const [loading, setLoading] = useState(true)
     const [open, setOpen] = useState(false)
+    const [expandedLog, setExpandedLog] = useState<string | null>(null)
 
     useEffect(() => {
         loadLogs()
@@ -355,9 +374,8 @@ function PilotActivityFeed() {
     async function loadLogs() {
         setLoading(true)
         try {
-            // NOTE: Depends on BE15. Returns empty until API is ready.
             const data = await getExecutionLog({ trigger_type: 'coordinator' })
-            setLogs((data || []).slice(0, 5))
+            setLogs((data || []).slice(0, 10))
         } catch {
             setLogs([])
         } finally {
@@ -389,39 +407,57 @@ function PilotActivityFeed() {
 
             {open && (
                 <div className="border-t divide-y">
-                    {logs.map((log) => (
-                        <div key={log.id} className="flex items-start gap-3 p-3">
-                            <StatusIcon status={log.status} />
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <TriggerBadge type={log.trigger_type} />
-                                    <StatusBadge status={log.status} />
-                                    {log.metadata && (log.metadata as any).actions_taken != null && (
-                                        <span className="text-[10px] bg-accent px-1.5 py-0.5 rounded">
-                                            {(log.metadata as any).actions_taken} actions
-                                        </span>
-                                    )}
-                                </div>
-                                {log.summary && (
-                                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                                        {log.summary}
-                                    </p>
-                                )}
-                                <div className="flex items-center gap-3 mt-1">
-                                    <span className="text-[10px] text-muted-foreground">
-                                        {formatDistanceToNow(new Date(log.started_at), { addSuffix: true })}
-                                    </span>
-                                    {log.duration_ms != null && (
-                                        <span className="text-[10px] text-muted-foreground">
-                                            {log.duration_ms < 1000
-                                                ? `${log.duration_ms}ms`
-                                                : `${(log.duration_ms / 1000).toFixed(1)}s`}
-                                        </span>
-                                    )}
+                    {logs.map((log) => {
+                        const isExpanded = expandedLog === log.id
+                        return (
+                            <div key={log.id} className="p-3">
+                                <div className="flex items-start gap-3">
+                                    <StatusIcon status={log.status} />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <TriggerBadge type={log.trigger_type} />
+                                            <StatusBadge status={log.status} />
+                                            {log.metadata && (log.metadata as any).actions_taken != null && (
+                                                <span className="text-[10px] bg-accent px-1.5 py-0.5 rounded">
+                                                    {(log.metadata as any).actions_taken} actions
+                                                </span>
+                                            )}
+                                        </div>
+                                        {log.summary && (
+                                            <div className="mt-1.5">
+                                                {isExpanded ? (
+                                                    <div
+                                                        className="prose-chat text-xs leading-relaxed [&_strong]:font-semibold [&_em]:italic [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-xs [&_h4]:text-xs [&_li]:text-xs [&_code]:text-[11px] [&_p]:mb-1 [&_ul]:mb-1 [&_ol]:mb-1"
+                                                        dangerouslySetInnerHTML={{ __html: renderMarkdown(log.summary) }}
+                                                    />
+                                                ) : (
+                                                    <p className="text-xs text-muted-foreground line-clamp-2">{log.summary}</p>
+                                                )}
+                                                <button
+                                                    onClick={() => setExpandedLog(isExpanded ? null : log.id)}
+                                                    className="text-[10px] text-primary hover:underline mt-0.5"
+                                                >
+                                                    {isExpanded ? 'Show less' : 'Show full output'}
+                                                </button>
+                                            </div>
+                                        )}
+                                        <div className="flex items-center gap-3 mt-1">
+                                            <span className="text-[10px] text-muted-foreground">
+                                                {formatDistanceToNow(new Date(log.started_at), { addSuffix: true })}
+                                            </span>
+                                            {log.duration_ms != null && (
+                                                <span className="text-[10px] text-muted-foreground">
+                                                    {log.duration_ms < 1000
+                                                        ? `${log.duration_ms}ms`
+                                                        : `${(log.duration_ms / 1000).toFixed(1)}s`}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        )
+                    })}
                 </div>
             )}
         </div>

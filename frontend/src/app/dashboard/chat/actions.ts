@@ -420,6 +420,43 @@ export async function getOrCreatePodConversation(podId: string, podName: string)
     }
 }
 
+export async function getOrCreateWorkspaceConversation() {
+    const headers = await getAuthHeaders()
+    const accountId = await getCurrentAccountId()
+
+    if (!headers || !accountId) {
+        return { error: 'Not authenticated' }
+    }
+
+    try {
+        // Look for existing workspace-level conversation (no board_id, no pod_id, no task_id)
+        const listUrl = `${API_URL}/accounts/${accountId}/conversations?workspace=true&limit=1`
+        const listRes = await fetch(listUrl, { headers, cache: 'no-store' })
+
+        if (listRes.ok) {
+            const listData = await listRes.json()
+            const existing = listData?.data?.[0]
+            if (existing?.id) return existing
+        }
+
+        // Create new workspace conversation
+        const res = await fetch(`${API_URL}/accounts/${accountId}/conversations`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ title: 'Workspace Chat', is_workspace: true }),
+        })
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ message: 'Unknown error' }))
+            return { error: errorData.message || 'Failed to create workspace conversation' }
+        }
+
+        return await res.json()
+    } catch (error: any) {
+        return { error: error.message || 'Failed to get or create workspace conversation' }
+    }
+}
+
 export async function updateConversationTitle(conversationId: string, title: string) {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()
