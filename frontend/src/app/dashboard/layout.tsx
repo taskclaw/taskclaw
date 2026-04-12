@@ -38,7 +38,7 @@ export default async function DashboardLayout({
     let activeAccountId = cookieStore.get('current_account_id')?.value
 
     // Transform accounts to match TeamSwitcher expected format
-    const teams = accounts.map(account => ({
+    const teams = accounts.map((account: any) => ({
         id: account.id,
         name: account.name,
         plan: account.plan,
