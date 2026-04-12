@@ -138,6 +138,36 @@ export class KnowledgeService {
   }
 
   /**
+   * F05/F07: Get the master doc for an agent (via agent_id FK)
+   */
+  async findMasterForAgent(
+    accessToken: string,
+    accountId: string,
+    agentId: string,
+  ) {
+    try {
+      const client = this.supabaseAdmin.getClient();
+      const { data, error } = await client
+        .from('knowledge_docs')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('agent_id', agentId)
+        .eq('is_master', true)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        this.logger.error(`Failed to fetch agent master doc: ${error.message}`);
+        throw new Error(error.message);
+      }
+
+      return data || null;
+    } catch (error) {
+      this.logger.error('Error fetching agent master doc:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Create a new knowledge doc
    */
   async create(

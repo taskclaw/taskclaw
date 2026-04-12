@@ -22,25 +22,45 @@ export class CoordinatorService {
     // 1. Fetch available boards (filtered by podId if provided)
     let boardsQuery = client
       .from('board_instances')
-      .select('id, name, board_steps(id, name, position)')
+      .select('id, name, board_steps(id, name, position, default_agent_id)')
       .eq('account_id', options.accountId);
     if (options.podId) {
       boardsQuery = boardsQuery.eq('pod_id', options.podId);
     }
     const { data: boards } = await boardsQuery;
 
-    // 2. Build system prompt describing available boards
+    // 1b. Fetch available agents for this account (F11)
+    const { data: agents } = await client
+      .from('agents')
+      .select('id, name, description, agent_type, status')
+      .eq('account_id', options.accountId)
+      .eq('is_active', true);
+
+    // 2. Build system prompt describing available boards and agents
     const boardDescriptions =
       boards
         ?.map(
           (b: any) =>
-            `Board: "${b.name}" (id: ${b.id})\n  Columns: ${b.board_steps?.map((s: any) => `"${s.name}" (id: ${s.id})`).join(', ')}`,
+            `Board: "${b.name}" (id: ${b.id})\n  Columns: ${b.board_steps?.map((s: any) => `"${s.name}" (id: ${s.id})${s.default_agent_id ? ` [agent: ${s.default_agent_id}]` : ''}`).join(', ')}`,
         )
         .join('\n') ?? 'No boards available';
+
+    const agentDescriptions =
+      agents && agents.length > 0
+        ? agents
+            .map(
+              (a: any) =>
+                `### ${a.name} (ID: ${a.id})\nType: ${a.agent_type}\nStatus: ${a.status}\nDescription: ${a.description || 'General purpose agent'}`,
+            )
+            .join('\n\n')
+        : 'No agents configured';
 
     const systemPrompt = `You are a task coordinator. Given a high-level goal, decompose it into specific tasks assigned to boards and columns.
 Available boards and columns:
 ${boardDescriptions}
+
+Available Agents:
+${agentDescriptions}
 
 Respond with ONLY valid JSON in this format:
 {
@@ -50,11 +70,14 @@ Respond with ONLY valid JSON in this format:
       "description": "Task description",
       "board_id": "uuid",
       "step_id": "uuid",
+      "assignee_agent_id": "uuid or null",
       "depends_on_indexes": []
     }
   ]
 }
 
+For each task, set "assignee_agent_id" to the agent best suited for the work based on their description.
+If unsure or the column has a default agent, set "assignee_agent_id" to null — the system will auto-assign.
 Each depends_on_indexes is an array of 0-based indexes of tasks this task depends on.`;
 
     // 3. Send to backbone
@@ -113,6 +136,26 @@ Each depends_on_indexes is an array of 0-based indexes of tasks this task depend
     // 6. Create tasks
     const createdTaskIds: string[] = [];
     for (const taskSpec of parsed.tasks) {
+      // F11: Resolve assignee — explicit from decomposition, else check column default
+      let assigneeType = 'none';
+      let assigneeId: string | null = null;
+
+      if (taskSpec.assignee_agent_id) {
+        assigneeType = 'agent';
+        assigneeId = taskSpec.assignee_agent_id;
+      } else if (taskSpec.step_id) {
+        // Check if the column has a default agent
+        const { data: step } = await client
+          .from('board_steps')
+          .select('default_agent_id')
+          .eq('id', taskSpec.step_id)
+          .single();
+        if (step?.default_agent_id) {
+          assigneeType = 'agent';
+          assigneeId = step.default_agent_id;
+        }
+      }
+
       const { data: task, error: taskError } = await client
         .from('tasks')
         .insert({
@@ -123,6 +166,8 @@ Each depends_on_indexes is an array of 0-based indexes of tasks this task depend
           notes: taskSpec.description ?? '',
           dag_id: dag.id,
           status: 'To-Do',
+          assignee_type: assigneeType,
+          assignee_id: assigneeId,
         })
         .select()
         .single();

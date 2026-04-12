@@ -15,6 +15,7 @@ export type ResolvedFrom =
   | 'task'
   | 'step'
   | 'board'
+  | 'agent'
   | 'category'
   | 'pod'
   | 'account_default'
@@ -35,7 +36,9 @@ export interface BackboneRouterSendOptions {
   stepId?: string;
   /** Optional: narrow resolution to a specific board */
   boardId?: string;
-  /** Optional: narrow resolution to a specific category */
+  /** Optional: narrow resolution to a specific agent */
+  agentId?: string;
+  /** Optional: narrow resolution to a specific category (legacy) */
   categoryId?: string;
   /** Optional: narrow resolution to a specific pod */
   podId?: string;
@@ -67,7 +70,7 @@ export class BackboneRouterService {
    */
   async resolve(
     accountId: string,
-    options?: { taskId?: string; stepId?: string; boardId?: string; categoryId?: string; podId?: string },
+    options?: { taskId?: string; stepId?: string; boardId?: string; categoryId?: string; agentId?: string; podId?: string },
   ): Promise<ResolveResult> {
     const client = this.supabaseAdmin.getClient();
 
@@ -122,7 +125,24 @@ export class BackboneRouterService {
       }
     }
 
-    // 3. Category-level override
+    // 3. Agent-level override (new — replaces category level for assigned tasks)
+    if (options?.agentId) {
+      const { data: agent } = await client
+        .from('agents')
+        .select('backbone_connection_id')
+        .eq('id', options.agentId)
+        .maybeSingle();
+
+      if (agent?.backbone_connection_id) {
+        const result = await this.loadConnection(
+          agent.backbone_connection_id,
+          'agent',
+        );
+        if (result) return result;
+      }
+    }
+
+    // 3b. Category-level override (legacy — kept for backward compat during migration)
     if (options?.categoryId) {
       const { data: category } = await client
         .from('categories')
@@ -199,6 +219,7 @@ export class BackboneRouterService {
       taskId: options.taskId,
       stepId: options.stepId,
       boardId: options.boardId,
+      agentId: options.agentId,
       categoryId: options.categoryId,
       podId: options.podId,
     });

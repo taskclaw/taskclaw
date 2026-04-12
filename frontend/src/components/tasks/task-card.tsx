@@ -2,7 +2,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Calendar, Zap, BrainCircuit, Link2Off, CheckCircle2, GitBranch } from 'lucide-react'
+import { Calendar, Zap, BrainCircuit, Link2Off, CheckCircle2, GitBranch, Bot } from 'lucide-react'
 import type { Task, Category } from '@/types/task'
 import { PRIORITY_COLORS } from '@/types/task'
 import { useTaskStore } from '@/hooks/use-task-store'
@@ -143,6 +143,11 @@ export function TaskCard({ task, isDone, categories = [] }: TaskCardProps) {
                     )}
                 </div>
 
+                {/* Agent assignee avatar */}
+                {task.assignee_type === 'agent' && task.assignee_agent && (
+                    <AgentMiniAvatar agent={task.assignee_agent} />
+                )}
+
                 {/* Source badge */}
                 {task.source_id && task.sources?.provider ? (
                     <span
@@ -175,5 +180,33 @@ export function TaskCard({ task, isDone, categories = [] }: TaskCardProps) {
                 )}
             </div>
         </div>
+    )
+}
+
+function AgentMiniAvatar({ agent }: { agent: { id: string; name: string; color: string | null; avatar_url: string | null } }) {
+    const initials = agent.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+    const color = agent.color ?? '#6366f1'
+
+    if (agent.avatar_url) {
+        return (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+                src={agent.avatar_url}
+                alt={agent.name}
+                title={agent.name}
+                className="w-4 h-4 rounded object-cover"
+                style={{ border: `1px solid ${color}40` }}
+            />
+        )
+    }
+
+    return (
+        <span
+            title={agent.name}
+            className="w-4 h-4 rounded flex items-center justify-center text-[7px] font-bold shrink-0"
+            style={{ backgroundColor: `${color}25`, color }}
+        >
+            {initials || <Bot className="w-2.5 h-2.5" />}
+        </span>
     )
 }

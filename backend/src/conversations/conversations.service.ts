@@ -103,6 +103,24 @@ export class ConversationsService {
       metadata.skill_ids = dto.skill_ids;
     }
 
+    // F06: Verify agent exists if agent_id provided
+    if (dto.agent_id) {
+      const { data: agent, error: agentError } = await client
+        .from('agents')
+        .select('id, name')
+        .eq('id', dto.agent_id)
+        .eq('account_id', accountId)
+        .single();
+
+      if (agentError || !agent) {
+        throw new NotFoundException(`Agent with ID ${dto.agent_id} not found`);
+      }
+
+      if (!dto.title) {
+        dto.title = `Chat with ${agent.name}`;
+      }
+    }
+
     const { data, error } = await client
       .from('conversations')
       .insert({
@@ -111,6 +129,7 @@ export class ConversationsService {
         task_id: dto.task_id,
         board_id: dto.board_id || null,
         pod_id: dto.pod_id || null,
+        agent_id: dto.agent_id || null,
         title: dto.title || 'New Conversation',
         metadata: Object.keys(metadata).length > 0 ? metadata : null,
       })
@@ -144,6 +163,7 @@ export class ConversationsService {
     taskId?: string,
     boardId?: string,
     podId?: string,
+    agentId?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
 
@@ -168,6 +188,10 @@ export class ConversationsService {
 
     if (podId) {
       query = query.eq('pod_id', podId);
+    }
+
+    if (agentId) {
+      query = query.eq('agent_id', agentId);
     }
 
     const { data, error, count } = await query

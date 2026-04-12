@@ -274,6 +274,56 @@ export class SkillsService {
   }
 
   /**
+   * F04/F07: Get skills for an agent via agent_skills junction table
+   */
+  async findDefaultForAgent(
+    accessToken: string,
+    accountId: string,
+    agentId: string,
+  ) {
+    try {
+      const client = this.supabaseAdmin.getClient();
+
+      const { data, error } = await client
+        .from('agent_skills')
+        .select(
+          `
+          skill_id,
+          is_active,
+          skills (
+            id,
+            account_id,
+            name,
+            description,
+            instructions,
+            is_active,
+            file_attachments
+          )
+        `,
+        )
+        .eq('agent_id', agentId)
+        .eq('is_active', true);
+
+      if (error) {
+        this.logger.error(`Failed to fetch agent skills: ${error.message}`);
+        throw new Error(error.message);
+      }
+
+      const skills = (data || [])
+        .map((as: any) => as.skills)
+        .filter(
+          (skill: any) =>
+            skill && skill.is_active && skill.account_id === accountId,
+        );
+
+      return skills;
+    } catch (error) {
+      this.logger.error('Error fetching agent skills:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Create a new skill
    */
   async create(

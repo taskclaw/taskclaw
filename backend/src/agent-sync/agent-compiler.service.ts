@@ -12,6 +12,8 @@ export interface CompiledAgent {
   knowledgeDocId: string | null;
   categorySlug: string;
   categoryName: string;
+  /** Set when compiled from an agent (F07) */
+  agentId?: string;
 }
 
 /**
@@ -103,6 +105,156 @@ export class AgentCompilerService {
       categorySlug,
       categoryName: category.name,
     };
+  }
+
+  /**
+   * F07: Compile the SKILL.md content for an agent (via agent_skills + agent knowledge).
+   * Falls back to compileForCategory when agent has migrated_from_category_id.
+   */
+  async compileForAgent(
+    accountId: string,
+    agentId: string,
+  ): Promise<CompiledAgent | null> {
+    const client = this.supabaseAdmin.getClient();
+
+    // 1. Fetch agent details
+    const { data: agent, error: agentError } = await client
+      .from('agents')
+      .select('id, name, slug, persona')
+      .eq('id', agentId)
+      .eq('account_id', accountId)
+      .single();
+
+    if (agentError || !agent) {
+      this.logger.warn(`Agent ${agentId} not found for account ${accountId}`);
+      return null;
+    }
+
+    // 2. Fetch skills via agent_skills junction
+    const skills = await this.skillsService.findDefaultForAgent(
+      'admin-bypass',
+      accountId,
+      agentId,
+    );
+
+    // 3. Fetch master knowledge doc for this agent
+    let masterDoc: any = null;
+    try {
+      masterDoc = await this.knowledgeService.findMasterForAgent(
+        'admin-bypass',
+        accountId,
+        agentId,
+      );
+    } catch {
+      // No master doc — fine
+    }
+
+    // 4. If nothing to compile, return null
+    if ((!skills || skills.length === 0) && !masterDoc && !agent.persona) {
+      this.logger.debug(
+        `Agent "${agent.name}" has no skills, knowledge, or persona — skipping`,
+      );
+      return null;
+    }
+
+    // 5. Build content — use persona as the header if present
+    const agentSlug = agent.slug ?? this.slugify(agent.name);
+    const content = await this.buildAgentSkillMd(
+      accountId,
+      agent.name,
+      agentSlug,
+      agent.persona,
+      skills,
+      masterDoc,
+    );
+    const hash = this.computeHash(content);
+    const skillIds = skills.map((s: any) => s.id);
+
+    return {
+      content,
+      hash,
+      skillIds,
+      knowledgeDocId: masterDoc?.id || null,
+      categorySlug: agentSlug,
+      categoryName: agent.name,
+      agentId,
+    };
+  }
+
+  /**
+   * Build SKILL.md for an agent (includes persona section).
+   */
+  private async buildAgentSkillMd(
+    accountId: string,
+    agentName: string,
+    agentSlug: string,
+    persona: string | null,
+    skills: any[],
+    masterDoc: any | null,
+  ): Promise<string> {
+    const lines: string[] = [];
+
+    lines.push('---');
+    lines.push(`name: taskclaw-${agentSlug}`);
+    lines.push(`description: Skills and knowledge for ${agentName}`);
+    lines.push('user-invocable: false');
+    lines.push('---');
+    lines.push('');
+
+    if (persona) {
+      lines.push('## Persona');
+      lines.push('');
+      lines.push(persona);
+      lines.push('');
+    }
+
+    if (skills && skills.length > 0) {
+      lines.push('## Skills');
+      lines.push('');
+
+      for (const skill of skills) {
+        lines.push(`### ${skill.name}`);
+        if (skill.description) {
+          lines.push(skill.description);
+          lines.push('');
+        }
+        if (skill.instructions) {
+          lines.push(skill.instructions);
+        }
+        lines.push('');
+
+        const attachments = skill.file_attachments || [];
+        const textAttachments = attachments.filter((a: any) =>
+          /\.(md|txt|csv|json)$/i.test(a.name),
+        );
+
+        for (const att of textAttachments) {
+          const content = await this.fetchAttachmentContent(
+            accountId,
+            skill.id,
+            att.name,
+          );
+          if (content) {
+            const refName = att.name.replace(/\.[^.]+$/, '');
+            lines.push(`#### Reference: ${refName}`);
+            lines.push('');
+            lines.push(content);
+            lines.push('');
+          }
+        }
+      }
+    }
+
+    if (masterDoc) {
+      lines.push('## Knowledge Base');
+      lines.push('');
+      lines.push(`### ${masterDoc.title}`);
+      lines.push('');
+      lines.push(masterDoc.content);
+      lines.push('');
+    }
+
+    return lines.join('\n');
   }
 
   /**

@@ -33,6 +33,7 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { BoardRoutingModule } from './board-routing/board-routing.module';
 import { HeartbeatModule } from './heartbeat/heartbeat.module';
+import { AgentsModule } from './agents/agents.module';
 
 // Edition-gated modules (cloud-only)
 import { LangfuseModule } from './ee/langfuse/langfuse.module';
@@ -90,6 +91,7 @@ const editionModules = isCloudEdition
     WebhooksModule,
     BoardRoutingModule,
     HeartbeatModule,
+    AgentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

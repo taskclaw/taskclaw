@@ -56,7 +56,7 @@ export class TasksService {
     let query = client
       .from('tasks')
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .eq('account_id', accountId);
 
@@ -107,7 +107,7 @@ export class TasksService {
     const { data, error } = await client
       .from('tasks')
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .eq('id', id)
       .eq('account_id', accountId)
@@ -158,16 +158,18 @@ export class TasksService {
       }
     }
 
-    // Resolve status from board step if board context provided
+    // Resolve status and default agent from board step if board context provided
     let status = createTaskDto.status || 'To-Do';
+    let defaultAgentId: string | null = null;
     if (createTaskDto.current_step_id) {
       const { data: step } = await client
         .from('board_steps')
-        .select('name')
+        .select('name, default_agent_id')
         .eq('id', createTaskDto.current_step_id)
         .single();
       if (step) {
         status = step.name;
+        defaultAgentId = step.default_agent_id ?? null;
       }
     }
 
@@ -186,9 +188,12 @@ export class TasksService {
         board_instance_id: createTaskDto.board_instance_id || null,
         current_step_id: createTaskDto.current_step_id || null,
         card_data: createTaskDto.card_data || {},
+        // F02: auto-assign to column's default agent if one exists
+        assignee_type: defaultAgentId ? 'agent' : 'none',
+        assignee_id: defaultAgentId,
       })
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .single();
 
@@ -262,7 +267,7 @@ export class TasksService {
       .from('tasks')
       .insert(rows)
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       );
 
     if (error) {
@@ -376,7 +381,7 @@ export class TasksService {
     ) {
       const { data: step } = await client
         .from('board_steps')
-        .select('name, step_type')
+        .select('name, step_type, default_agent_id')
         .eq('id', updateTaskDto.current_step_id)
         .single();
       if (step) {
@@ -385,6 +390,11 @@ export class TasksService {
         if (step.step_type === 'done' && !existingTask.completed) {
           updateData.completed = true;
           updateData.completed_at = new Date().toISOString();
+        }
+        // F02: auto-assign to new column's default agent if task is currently unassigned
+        if (step.default_agent_id && existingTask.assignee_type === 'none') {
+          updateData.assignee_type = 'agent';
+          updateData.assignee_id = step.default_agent_id;
         }
       }
     }
@@ -395,7 +405,7 @@ export class TasksService {
       .eq('id', id)
       .eq('account_id', accountId)
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .single();
 
@@ -605,7 +615,7 @@ export class TasksService {
       .eq('id', taskId)
       .eq('account_id', accountId)
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .single();
 
@@ -686,7 +696,7 @@ export class TasksService {
     const { data, error } = await client
       .from('tasks')
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .eq('account_id', accountId)
       .or(`title.ilike.${searchTerm},notes.ilike.${searchTerm}`)

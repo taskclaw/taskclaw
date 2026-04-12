@@ -39,6 +39,7 @@ export class ConversationsController {
     @Query('task_id') taskId?: string,
     @Query('board_id') boardId?: string,
     @Query('pod_id') podId?: string,
+    @Query('agent_id') agentId?: string,
   ) {
     return this.conversationsService.findAll(
       req.user.id,
@@ -49,6 +50,7 @@ export class ConversationsController {
       taskId,
       boardId,
       podId,
+      agentId,
     );
   }
 

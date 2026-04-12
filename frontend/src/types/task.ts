@@ -29,6 +29,16 @@ export interface Task {
     id: string
     provider: string
   } | null
+  // Task agent assignment (F02)
+  assignee_type?: 'none' | 'agent' | 'human'
+  assignee_id?: string | null
+  // Joined from agents table
+  assignee_agent?: {
+    id: string
+    name: string
+    color: string | null
+    avatar_url: string | null
+  } | null
   // Joined from categories table
   categories?: {
     id: string

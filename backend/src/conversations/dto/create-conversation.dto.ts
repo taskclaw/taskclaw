@@ -17,6 +17,10 @@ export class CreateConversationDto {
   @IsOptional()
   pod_id?: string; // Optional: Link conversation to a pod
 
+  @IsUUID()
+  @IsOptional()
+  agent_id?: string; // Optional: Link conversation directly to an agent (F06)
+
   @IsArray()
   @IsUUID(4, { each: true })
   @IsOptional()

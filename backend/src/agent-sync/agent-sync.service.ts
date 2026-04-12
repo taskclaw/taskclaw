@@ -16,6 +16,13 @@ export interface SyncResult {
   error?: string;
 }
 
+export interface AgentSyncResult {
+  agentId: string;
+  agentName: string;
+  action: 'created' | 'updated' | 'skipped' | 'deleted' | 'error';
+  error?: string;
+}
+
 @Injectable()
 export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AgentSyncService.name);
@@ -261,6 +268,134 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // F07: Sync a single agent to the provider (via agent_skills + knowledge)
+  // ═══════════════════════════════════════════════════════════
+
+  async syncAgent(
+    accountId: string,
+    agentId: string,
+  ): Promise<AgentSyncResult> {
+    const lockKey = `agent:${accountId}:${agentId}`;
+    if (this.syncLocks.get(lockKey)) {
+      return { agentId, agentName: '', action: 'skipped' };
+    }
+
+    this.syncLocks.set(lockKey, true);
+    const startTime = Date.now();
+    const client = this.supabaseAdmin.getClient();
+
+    try {
+      const aiConfig = await this.getAiConfig(accountId);
+      if (!aiConfig) {
+        return { agentId, agentName: '', action: 'skipped', error: 'No AI provider configured' };
+      }
+
+      const compiled = await this.compiler.compileForAgent(accountId, agentId);
+
+      // Get or create provider_agents row keyed by agent_id
+      let { data: agentRow } = await client
+        .from('provider_agents')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('agent_id', agentId)
+        .single();
+
+      if (!compiled) {
+        if (agentRow?.remote_skill_path) {
+          await this.rpc.deleteSkill(aiConfig, agentRow.remote_skill_path);
+          await client.from('provider_agents').delete().eq('id', agentRow.id);
+        }
+        return { agentId, agentName: '', action: 'deleted' };
+      }
+
+      // Skip if hash unchanged
+      if (agentRow?.instructions_hash === compiled.hash && agentRow?.sync_status === 'synced') {
+        return { agentId, agentName: compiled.categoryName, action: 'skipped' };
+      }
+
+      const isNew = !agentRow;
+      if (isNew) {
+        const { data: newRow, error: insertErr } = await client
+          .from('provider_agents')
+          .insert({
+            account_id: accountId,
+            agent_id: agentId,
+            provider_type: 'openclaw',
+            remote_skill_path: compiled.categorySlug,
+            sync_status: 'syncing',
+          })
+          .select()
+          .single();
+        if (insertErr) throw new Error(`Failed to create provider_agents row: ${insertErr.message}`);
+        agentRow = newRow;
+      } else {
+        await client.from('provider_agents').update({ sync_status: 'syncing' }).eq('id', agentRow.id);
+      }
+
+      const result = await this.rpc.syncSkill(aiConfig, compiled.categorySlug, compiled.content, compiled.hash);
+      if (!result.ok) throw new Error(`RPC syncSkill failed: ${result.error}`);
+
+      await client.from('provider_agents').update({
+        instructions_hash: compiled.hash,
+        compiled_instructions: compiled.content,
+        skill_ids_snapshot: compiled.skillIds,
+        knowledge_doc_id: compiled.knowledgeDocId,
+        remote_skill_path: compiled.categorySlug,
+        sync_status: 'synced',
+        last_synced_at: new Date().toISOString(),
+        last_sync_error: null,
+        retry_count: 0,
+        next_retry_at: null,
+      }).eq('id', agentRow.id);
+
+      this.logger.log(`Synced agent "${compiled.categoryName}" (${isNew ? 'created' : 'updated'}, ${Date.now() - startTime}ms)`);
+      return { agentId, agentName: compiled.categoryName, action: isNew ? 'created' : 'updated' };
+
+    } catch (err: any) {
+      this.logger.error(`Sync failed for agent ${agentId}: ${err.message}`);
+      return { agentId, agentName: '', action: 'error', error: err.message };
+    } finally {
+      this.syncLocks.delete(lockKey);
+    }
+  }
+
+  /**
+   * Mark an agent as stale and trigger immediate sync.
+   */
+  async markAgentStale(accountId: string, agentId: string): Promise<void> {
+    const client = this.supabaseAdmin.getClient();
+
+    const { data: existing } = await client
+      .from('provider_agents')
+      .select('id, sync_status')
+      .eq('account_id', accountId)
+      .eq('agent_id', agentId)
+      .single();
+
+    if (existing?.sync_status === 'synced') {
+      await client.from('provider_agents').update({ sync_status: 'stale' }).eq('id', existing.id);
+    }
+
+    this.syncAgent(accountId, agentId).catch((err) => {
+      this.logger.warn(`Immediate agent sync failed (cron will retry): ${err.message}`);
+    });
+  }
+
+  /**
+   * Check if an agent is synced to the provider.
+   */
+  async isAgentSynced(accountId: string, agentId: string): Promise<boolean> {
+    const client = this.supabaseAdmin.getClient();
+    const { data } = await client
+      .from('provider_agents')
+      .select('sync_status')
+      .eq('account_id', accountId)
+      .eq('agent_id', agentId)
+      .single();
+    return data?.sync_status === 'synced';
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // BATCH: Sync all categories for an account
   // ═══════════════════════════════════════════════════════════
 
@@ -284,6 +419,19 @@ export class AgentSyncService implements OnModuleInit, OnModuleDestroy {
     for (const cat of categories) {
       const result = await this.syncCategory(accountId, cat.id);
       results.push(result);
+    }
+
+    // Also sync all agents (F07 — dual sync during migration period)
+    const { data: agents } = await client
+      .from('agents')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('is_active', true);
+
+    if (agents) {
+      for (const agent of agents) {
+        await this.syncAgent(accountId, agent.id);
+      }
     }
 
     return results;
