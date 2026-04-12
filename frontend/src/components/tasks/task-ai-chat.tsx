@@ -1,13 +1,15 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, X, Loader2, FileDown, CheckCircle, ExternalLink, BrainCircuit, Play, Brain } from 'lucide-react'
+import { Send, X, Loader2, FileDown, CheckCircle, ExternalLink, BrainCircuit, Play, Brain, Zap } from 'lucide-react'
 import { useMemo } from 'react'
 import { getOrCreateConversation, sendMessageBackground, getMessages, saveAiToTask } from '@/app/dashboard/chat/actions'
+import { getBackboneConnections } from '@/app/dashboard/settings/backbones/actions'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
 import { getMemoryEntries } from '@/app/dashboard/settings/memory/actions'
+import type { BackboneConnection } from '@/types/backbone'
 import {
     Popover,
     PopoverContent,
@@ -43,6 +45,7 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
     const [savedMessages, setSavedMessages] = useState<Set<string>>(new Set())
     const [syncFeedback, setSyncFeedback] = useState<Record<string, string>>({})
     const [taskMemories, setTaskMemories] = useState<{ id: string; content: string }[]>([])
+    const [activeBackbone, setActiveBackbone] = useState<BackboneConnection | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLInputElement>(null)
     const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -113,6 +116,16 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
     useEffect(() => {
         return () => stopPolling()
     }, [stopPolling])
+
+    // Fetch active backbone for badge
+    useEffect(() => {
+        getBackboneConnections().then((connections) => {
+            if (!Array.isArray(connections)) return
+            const active = connections.filter((b) => b.is_active)
+            const def = active.find((b) => b.is_default) ?? active[0] ?? null
+            setActiveBackbone(def)
+        }).catch(() => {})
+    }, [])
 
     // Load task-specific memories (top 5)
     // NOTE: Depends on BE07 (async memory extraction). Shows pill once memories exist.
@@ -331,6 +344,16 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-muted-foreground capitalize">
                             <ExternalLink className="w-2.5 h-2.5 inline mr-0.5" />
                             {sourceProvider}
+                        </span>
+                    )}
+                    {/* Backbone badge */}
+                    {activeBackbone && (
+                        <span
+                            className="flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20"
+                            title={`Using backbone: ${activeBackbone.name || activeBackbone.backbone_type}`}
+                        >
+                            <Zap className="w-2.5 h-2.5" />
+                            {activeBackbone.name || activeBackbone.backbone_type}
                         </span>
                     )}
                     {/* Memory indicator pill — shown only when memories exist */}

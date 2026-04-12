@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, Loader2, Wifi, WifiOff } from 'lucide-react'
+import { RefreshCw, Loader2, Wifi, WifiOff, Zap } from 'lucide-react'
 import { getSyncStatus, triggerSync } from '@/app/dashboard/settings/integrations/actions'
-import { getAiProviderConfig, verifyAiProviderConnection } from '@/app/dashboard/settings/ai-provider/actions'
+import { getBackboneConnections } from '@/app/dashboard/settings/backbones/actions'
+import type { BackboneConnection } from '@/types/backbone'
 
 interface SourceStatus {
     id: string
@@ -27,11 +28,23 @@ function timeAgo(dateStr: string): string {
     return `${days}d ago`
 }
 
+/** Human-readable label for a backbone type slug */
+function backboneLabel(backbone: BackboneConnection): string {
+    const typeLabels: Record<string, string> = {
+        'claude-code': 'Claude Code',
+        'openclaw': 'OpenClaw',
+        'openrouter': 'OpenRouter',
+        'anthropic': 'Anthropic',
+        'openai': 'OpenAI',
+    }
+    return backbone.name || typeLabels[backbone.backbone_type] || backbone.backbone_type
+}
+
 export function SystemStatusBar() {
     const [sources, setSources] = useState<SourceStatus[]>([])
-    const [aiStatus, setAiStatus] = useState<'unknown' | 'connected' | 'disconnected'>('unknown')
+    const [backbones, setBackbones] = useState<BackboneConnection[]>([])
     const [syncing, setSyncing] = useState(false)
-    const [pinging, setPinging] = useState(false)
+    const [loadingBackbones, setLoadingBackbones] = useState(false)
 
     const fetchSyncStatus = useCallback(async () => {
         const result = await getSyncStatus()
@@ -40,35 +53,28 @@ export function SystemStatusBar() {
         }
     }, [])
 
-    const checkAiHealth = useCallback(async () => {
-        const config = await getAiProviderConfig()
-        if (!config?.api_url) {
-            setAiStatus('disconnected')
-            return
-        }
-        setPinging(true)
+    const fetchBackbones = useCallback(async () => {
+        setLoadingBackbones(true)
         try {
-            const result = await verifyAiProviderConnection({
-                api_url: config.api_url,
-                api_key: config.api_key,
-                agent_id: config.agent_id,
-            })
-            setAiStatus(result?.success ? 'connected' : 'disconnected')
+            const result = await getBackboneConnections()
+            setBackbones(Array.isArray(result) ? result : [])
         } catch {
-            setAiStatus('disconnected')
+            setBackbones([])
         } finally {
-            setPinging(false)
+            setLoadingBackbones(false)
         }
     }, [])
 
-    // Initial load + poll every 30s
     useEffect(() => {
         fetchSyncStatus()
-        checkAiHealth()
+        fetchBackbones()
 
-        const interval = setInterval(fetchSyncStatus, 30000)
+        const interval = setInterval(() => {
+            fetchSyncStatus()
+            fetchBackbones()
+        }, 30000)
         return () => clearInterval(interval)
-    }, [fetchSyncStatus, checkAiHealth])
+    }, [fetchSyncStatus, fetchBackbones])
 
     const handleSyncAll = async () => {
         if (syncing) return
@@ -83,32 +89,40 @@ export function SystemStatusBar() {
         }
     }
 
-    const handlePingAi = () => {
-        if (pinging) return
-        checkAiHealth()
-    }
-
     const statusDotColor = (status: string) => {
         switch (status) {
-            case 'idle':
-                return 'bg-emerald-500'
-            case 'syncing':
-                return 'bg-yellow-500 animate-pulse'
-            case 'error':
-                return 'bg-red-500'
-            case 'disabled':
-                return 'bg-zinc-600'
-            default:
-                return 'bg-zinc-600'
+            case 'idle': return 'bg-emerald-500'
+            case 'syncing': return 'bg-yellow-500 animate-pulse'
+            case 'error': return 'bg-red-500'
+            case 'disabled': return 'bg-zinc-600'
+            default: return 'bg-zinc-600'
         }
     }
 
-    const aiDotColor =
-        aiStatus === 'connected'
-            ? 'bg-emerald-500'
-            : aiStatus === 'disconnected'
-              ? 'bg-red-500'
-              : 'bg-zinc-600'
+    // Determine AI status from backbone connections
+    const activeBackbones = backbones.filter((b) => b.is_active)
+    const defaultBackbone = activeBackbones.find((b) => b.is_default) ?? activeBackbones[0] ?? null
+    const healthyBackbone = activeBackbones.find((b) => b.health_status === 'healthy')
+    const displayBackbone = defaultBackbone ?? healthyBackbone ?? null
+
+    const aiOnline = activeBackbones.length > 0
+    const aiDotColor = loadingBackbones
+        ? 'bg-zinc-600'
+        : aiOnline
+        ? 'bg-emerald-500'
+        : 'bg-red-500'
+
+    const aiLabel = loadingBackbones
+        ? 'AI...'
+        : aiOnline && displayBackbone
+        ? `AI Online · ${backboneLabel(displayBackbone)}`
+        : 'AI Offline'
+
+    const aiTitle = aiOnline && activeBackbones.length > 1
+        ? `${activeBackbones.length} backbones active — Default: ${displayBackbone ? backboneLabel(displayBackbone) : 'none'}`
+        : aiOnline && displayBackbone
+        ? `AI backbone: ${backboneLabel(displayBackbone)}`
+        : 'No active AI backbone — click to configure'
 
     return (
         <footer className="relative z-20 h-10 border-t border-border flex items-center justify-between px-6 bg-background/50 text-[10px] text-muted-foreground font-medium shrink-0">
@@ -153,22 +167,28 @@ export function SystemStatusBar() {
             </div>
 
             <div className="flex gap-4 items-center">
-                {/* AI health */}
+                {/* AI backbone status */}
                 <button
-                    onClick={handlePingAi}
-                    disabled={pinging}
+                    onClick={fetchBackbones}
+                    disabled={loadingBackbones}
                     className="flex items-center gap-1.5 hover:text-foreground transition-colors disabled:opacity-50"
-                    title={aiStatus === 'connected' ? 'AI Connected' : 'AI Disconnected — Click to retry'}
+                    title={aiTitle}
                 >
                     <span className={`w-1.5 h-1.5 rounded-full ${aiDotColor}`} />
-                    {pinging ? (
+                    {loadingBackbones ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : aiStatus === 'connected' ? (
-                        <Wifi className="w-3 h-3" />
+                    ) : aiOnline ? (
+                        <Zap className="w-3 h-3 text-emerald-500" />
                     ) : (
                         <WifiOff className="w-3 h-3" />
                     )}
-                    <span>{aiStatus === 'connected' ? 'AI Connected' : aiStatus === 'disconnected' ? 'AI Offline' : 'AI...'}</span>
+                    <span className={aiOnline ? 'text-emerald-600 dark:text-emerald-400' : ''}>{aiLabel}</span>
+                    {/* Show count badge if multiple active backbones */}
+                    {aiOnline && activeBackbones.length > 1 && (
+                        <span className="bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-1 rounded">
+                            {activeBackbones.length}
+                        </span>
+                    )}
                 </button>
             </div>
         </footer>

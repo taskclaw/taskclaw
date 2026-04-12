@@ -52,6 +52,7 @@ export interface ExecutionLog {
   status: 'success' | 'error' | 'skipped' | 'running' | 'timeout' | 'dry_run'
   pod_id?: string | null
   board_id?: string | null
+  conversation_id?: string | null
   summary?: string | null
   error_details?: string | null
   duration_ms?: number | null

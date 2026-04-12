@@ -55,6 +55,7 @@ export default function CockpitPage() {
     const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
     const [deleteLoading, setDeleteLoading] = useState(false)
     const [chatOpen, setChatOpen] = useState(false)
+    const [chatConversationId, setChatConversationId] = useState<string | null>(null)
 
     const handleDelete = (pod: Pod) => {
         setDeleteTarget({ id: pod.id, name: pod.name })
@@ -93,7 +94,12 @@ export default function CockpitPage() {
                     )}
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setChatOpen(true)}>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setChatConversationId(null); setChatOpen(true) }}
+                        title="Talk to AI interactively — ask questions, give instructions, chat back and forth"
+                    >
                         <MessageCircle className="w-4 h-4 mr-1" />
                         Workspace Chat
                     </Button>
@@ -111,8 +117,16 @@ export default function CockpitPage() {
             {/* Workspace Pilot Card */}
             <WorkspacePilotCard />
 
-            {/* Content */}
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            {/* Pilot Activity feed — top of content, below pilot config */}
+            <PilotActivityFeed
+                onContinueSession={(conversationId) => {
+                    setChatConversationId(conversationId ?? null)
+                    setChatOpen(true)
+                }}
+            />
+
+            {/* Pods grid */}
+            <div className="flex-1 min-h-0 overflow-y-auto mt-4">
                 {isLoading ? (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         {[1, 2, 3].map((i) => (
@@ -142,9 +156,6 @@ export default function CockpitPage() {
                 )}
             </div>
 
-            {/* Pilot Activity feed */}
-            <PilotActivityFeed />
-
             <CreatePodDialog open={showCreate} onOpenChange={setShowCreate} />
 
             <ConfirmDeleteDialog
@@ -159,8 +170,9 @@ export default function CockpitPage() {
             {/* Workspace AI Chat */}
             <BoardAIChat
                 isWorkspace
+                initialConversationId={chatConversationId}
                 open={chatOpen}
-                onOpenChange={setChatOpen}
+                onOpenChange={(open) => { if (!open) setChatConversationId(null); setChatOpen(open) }}
             />
         </div>
     )
@@ -289,7 +301,7 @@ function WorkspacePilotCard() {
                         onClick={handleRun}
                         disabled={running || !config?.is_active}
                         className="h-7 text-xs"
-                        title={!config?.is_active ? 'Enable pilot first' : undefined}
+                        title={!config?.is_active ? 'Enable pilot first in settings' : 'Run one automated cycle — AI will review all pods and take actions autonomously'}
                     >
                         {running ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
@@ -361,7 +373,11 @@ function WorkspacePilotCard() {
 
 // ── Pilot Activity Feed ────────────────────────────────────────────────────
 
-function PilotActivityFeed() {
+interface PilotActivityFeedProps {
+    onContinueSession: (conversationId?: string | null) => void
+}
+
+function PilotActivityFeed({ onContinueSession }: PilotActivityFeedProps) {
     const [logs, setLogs] = useState<ExecutionLog[]>([])
     const [loading, setLoading] = useState(true)
     const [open, setOpen] = useState(false)
@@ -375,7 +391,8 @@ function PilotActivityFeed() {
         setLoading(true)
         try {
             const data = await getExecutionLog({ trigger_type: 'coordinator' })
-            setLogs((data || []).slice(0, 10))
+            const sliced = (data || []).slice(0, 10)
+            setLogs(sliced)
         } catch {
             setLogs([])
         } finally {
@@ -387,6 +404,7 @@ function PilotActivityFeed() {
 
     return (
         <div className="mt-4 border rounded-xl bg-card overflow-hidden">
+            {/* Section header */}
             <button
                 onClick={() => setOpen(!open)}
                 className="w-full flex items-center gap-2 p-3 text-left hover:bg-accent/30 transition-colors"
@@ -406,53 +424,62 @@ function PilotActivityFeed() {
             </button>
 
             {open && (
-                <div className="border-t divide-y">
+                <div className="border-t divide-y max-h-[420px] overflow-y-auto">
                     {logs.map((log) => {
                         const isExpanded = expandedLog === log.id
+                        const meta = log.metadata as any
                         return (
                             <div key={log.id} className="p-3">
-                                <div className="flex items-start gap-3">
+                                <div className="flex items-start gap-2.5">
                                     <StatusIcon status={log.status} />
                                     <div className="flex-1 min-w-0">
+                                        {/* Row 1: badges + time + Continue session button */}
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <TriggerBadge type={log.trigger_type} />
                                             <StatusBadge status={log.status} />
-                                            {log.metadata && (log.metadata as any).actions_taken != null && (
+                                            {meta?.actions_taken != null && (
                                                 <span className="text-[10px] bg-accent px-1.5 py-0.5 rounded">
-                                                    {(log.metadata as any).actions_taken} actions
+                                                    {meta.actions_taken} actions
                                                 </span>
                                             )}
-                                        </div>
-                                        {log.summary && (
-                                            <div className="mt-1.5">
-                                                {isExpanded ? (
-                                                    <div
-                                                        className="prose-chat text-xs leading-relaxed [&_strong]:font-semibold [&_em]:italic [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-xs [&_h4]:text-xs [&_li]:text-xs [&_code]:text-[11px] [&_p]:mb-1 [&_ul]:mb-1 [&_ol]:mb-1"
-                                                        dangerouslySetInnerHTML={{ __html: renderMarkdown(log.summary) }}
-                                                    />
-                                                ) : (
-                                                    <p className="text-xs text-muted-foreground line-clamp-2">{log.summary}</p>
+                                            <span className="text-[10px] text-muted-foreground">
+                                                {formatDistanceToNow(new Date(log.started_at), { addSuffix: true })}
+                                                {log.duration_ms != null && (
+                                                    <> · {log.duration_ms < 1000
+                                                        ? `${log.duration_ms}ms`
+                                                        : `${(log.duration_ms / 1000).toFixed(1)}s`}
+                                                    </>
                                                 )}
+                                            </span>
+                                            {/* Continue session — prominent in the top-right */}
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); onContinueSession(log.conversation_id) }}
+                                                className="ml-auto flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors shrink-0"
+                                                title={log.conversation_id ? 'Continue this pilot session in Workspace Chat' : 'Open Workspace Chat'}
+                                            >
+                                                <MessageCircle className="w-3 h-3" />
+                                                Continue session
+                                            </button>
+                                        </div>
+
+                                        {/* Summary — always rendered as markdown */}
+                                        {log.summary && (
+                                            <div className="mt-2">
+                                                <div
+                                                    className={cn(
+                                                        'prose-chat text-xs leading-relaxed [&_strong]:font-semibold [&_em]:italic [&_h3]:text-xs [&_h4]:text-xs [&_li]:text-xs [&_code]:text-[11px] [&_p]:mb-1 [&_ul]:mb-1 [&_ol]:mb-1 overflow-hidden transition-all',
+                                                        isExpanded ? 'max-h-[300px] overflow-y-auto pr-1' : 'max-h-[3rem]',
+                                                    )}
+                                                    dangerouslySetInnerHTML={{ __html: renderMarkdown(log.summary) }}
+                                                />
                                                 <button
                                                     onClick={() => setExpandedLog(isExpanded ? null : log.id)}
-                                                    className="text-[10px] text-primary hover:underline mt-0.5"
+                                                    className="text-[10px] text-primary hover:underline mt-1"
                                                 >
                                                     {isExpanded ? 'Show less' : 'Show full output'}
                                                 </button>
                                             </div>
                                         )}
-                                        <div className="flex items-center gap-3 mt-1">
-                                            <span className="text-[10px] text-muted-foreground">
-                                                {formatDistanceToNow(new Date(log.started_at), { addSuffix: true })}
-                                            </span>
-                                            {log.duration_ms != null && (
-                                                <span className="text-[10px] text-muted-foreground">
-                                                    {log.duration_ms < 1000
-                                                        ? `${log.duration_ms}ms`
-                                                        : `${(log.duration_ms / 1000).toFixed(1)}s`}
-                                                </span>
-                                            )}
-                                        </div>
                                     </div>
                                 </div>
                             </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState, useEffect } from 'react'
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import {
     ReactFlow,
     Background,
@@ -11,6 +11,7 @@ import {
     type Node,
     type Edge,
     type Connection,
+    type NodeChange,
     BackgroundVariant,
     Panel,
     MarkerType,
@@ -208,23 +209,47 @@ function buildInitialNodes(
     podSlug: string,
     onRemove: (id: string, name: string) => void,
     onOpenChat: (id: string, name: string) => void,
+    savedPositions: Record<string, { x: number; y: number }>,
 ): Node[] {
     return boards.map((board, i) => {
+        const saved = savedPositions[board.id]
         const col = i % 3
         const row = Math.floor(i / 3)
+        const defaultPos = { x: col * 280 + (row % 2 === 0 ? 0 : 20), y: row * 230 }
         return {
             id: board.id,
             type: 'boardNode',
-            position: { x: col * 280 + (row % 2 === 0 ? 0 : 20), y: row * 230 },
+            position: saved ?? defaultPos,
             data: { board, podSlug, onRemove, onOpenChat } as BoardNodeData,
         }
     })
+}
+
+function loadSavedPositions(podSlug: string): Record<string, { x: number; y: number }> {
+    if (typeof window === 'undefined') return {}
+    try {
+        const raw = localStorage.getItem(`pod-canvas-positions-${podSlug}`)
+        if (!raw) return {}
+        return JSON.parse(raw)
+    } catch {
+        return {}
+    }
+}
+
+function savePositions(podSlug: string, positions: Record<string, { x: number; y: number }>) {
+    if (typeof window === 'undefined') return
+    try {
+        localStorage.setItem(`pod-canvas-positions-${podSlug}`, JSON.stringify(positions))
+    } catch {
+        // localStorage full or unavailable
+    }
 }
 
 export function PodBoardCanvas({ boards, podSlug, podId, onAddBoards, onOpenChat }: PodBoardCanvasProps) {
     const removeFromPod = useRemoveFromPod()
     const [chatBoard, setChatBoard] = useState<{ id: string; name: string } | null>(null)
     const [routes, setRoutes] = useState<BoardRoute[]>([])
+    const positionSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     // Route editor state
     const [routeSheetOpen, setRouteSheetOpen] = useState(false)
@@ -253,20 +278,47 @@ export function PodBoardCanvas({ boards, podSlug, podId, onAddBoards, onOpenChat
         setChatBoard({ id: boardId, name: boardName })
     }, [])
 
+    // Load saved positions once (keyed by podSlug)
+    const savedPositions = useMemo(() => loadSavedPositions(podSlug), [podSlug])
+
     const initialNodes = useMemo(
-        () => buildInitialNodes(boards, podSlug, handleRemove, handleOpenBoardChat),
+        () => buildInitialNodes(boards, podSlug, handleRemove, handleOpenBoardChat, savedPositions),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
         [boards, podSlug, handleRemove, handleOpenBoardChat],
     )
 
     const routeEdges = useMemo(() => routes.map(buildRouteEdge), [routes])
 
-    const [nodes, , onNodesChange] = useNodesState(initialNodes)
+    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
     const [edges, setEdges, onEdgesChange] = useEdgesState(routeEdges)
 
     // Sync route edges when routes change
     useEffect(() => {
         setEdges(routes.map(buildRouteEdge))
     }, [routes, setEdges])
+
+    // Persist positions whenever nodes stop being dragged
+    const handleNodesChange = useCallback(
+        (changes: NodeChange[]) => {
+            onNodesChange(changes)
+            // Debounce-save positions after any drag
+            const hasDrag = changes.some((c) => c.type === 'position')
+            if (hasDrag) {
+                if (positionSaveTimer.current) clearTimeout(positionSaveTimer.current)
+                positionSaveTimer.current = setTimeout(() => {
+                    setNodes((currentNodes) => {
+                        const pos: Record<string, { x: number; y: number }> = {}
+                        for (const n of currentNodes) {
+                            pos[n.id] = n.position
+                        }
+                        savePositions(podSlug, pos)
+                        return currentNodes
+                    })
+                }, 300)
+            }
+        },
+        [onNodesChange, setNodes, podSlug],
+    )
 
     const onConnect = useCallback(
         (params: Connection) => {
@@ -319,7 +371,7 @@ export function PodBoardCanvas({ boards, podSlug, podId, onAddBoards, onOpenChat
                 <ReactFlow
                     nodes={nodes}
                     edges={edges}
-                    onNodesChange={onNodesChange}
+                    onNodesChange={handleNodesChange}
                     onEdgesChange={onEdgesChange}
                     onConnect={onConnect}
                     onEdgeClick={onEdgeClick}

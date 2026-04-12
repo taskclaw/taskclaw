@@ -13,6 +13,7 @@ import { ExecutionLogService } from '../heartbeat/execution-log.service';
 export interface PilotRunResult {
   summary: string;
   actions_taken: number;
+  conversation_id?: string | null;
 }
 
 interface PilotAction {
@@ -251,6 +252,18 @@ export class PilotService {
         (podSummaries.join('\n\n') || 'No pods configured.') +
         `\n\nTotal pods: ${pods?.length ?? 0}`;
 
+      // Find or create the workspace conversation so history is browsable
+      const conversationId = await this.findOrCreateWorkspaceConversation(accountId, logEntry?.id);
+
+      // Save user context message
+      if (conversationId) {
+        await client.from('ai_messages').insert({
+          conversation_id: conversationId,
+          role: 'user',
+          content: contextBlock,
+        });
+      }
+
       // Call backbone
       const result = await this.backboneRouter.send({
         accountId,
@@ -261,6 +274,20 @@ export class PilotService {
       });
 
       const summary = result.text ?? 'Workspace pilot ran but no response.';
+
+      // Save AI response to conversation
+      if (conversationId) {
+        await client.from('ai_messages').insert({
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: summary,
+        });
+        // Touch conversation updated_at
+        await client
+          .from('conversations')
+          .update({ updated_at: new Date().toISOString(), title: `Workspace Pilot · ${new Date().toLocaleDateString()}` })
+          .eq('id', conversationId);
+      }
 
       // Parse and execute actions (no specific pod — actions target any board)
       const actionsTaken = await this.parseAndExecuteActions(
@@ -284,6 +311,7 @@ export class PilotService {
           status: 'success',
           summary: summary.slice(0, 500),
           duration_ms: Date.now() - startTime,
+          conversation_id: conversationId ?? undefined,
         });
       }
 
@@ -291,7 +319,7 @@ export class PilotService {
         `Workspace pilot for account ${accountId} completed: ${actionsTaken} actions`,
       );
 
-      return { summary, actions_taken: actionsTaken };
+      return { summary, actions_taken: actionsTaken, conversation_id: conversationId };
     } catch (err) {
       const errorMessage = (err as Error).message;
 
@@ -360,6 +388,58 @@ export class PilotService {
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Find the most recent workspace-level conversation for this account, or create one.
+   * "Workspace" = no task_id, no board_id, no pod_id.
+   */
+  private async findOrCreateWorkspaceConversation(
+    accountId: string,
+    logId?: string | null,
+  ): Promise<string | null> {
+    const client = this.supabaseAdmin.getClient();
+
+    try {
+      // Reuse the most recently updated workspace conversation
+      const { data: existing } = await client
+        .from('conversations')
+        .select('id')
+        .eq('account_id', accountId)
+        .is('task_id', null)
+        .is('board_id', null)
+        .is('pod_id', null)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existing?.id) return existing.id;
+
+      // Get the account owner (first member) as user_id — required by conversations table
+      const { data: member } = await client
+        .from('account_members')
+        .select('user_id')
+        .eq('account_id', accountId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!member?.user_id) return null;
+
+      const { data: conv } = await client
+        .from('conversations')
+        .insert({
+          account_id: accountId,
+          user_id: member.user_id,
+          title: 'Workspace Pilot',
+        })
+        .select('id')
+        .single();
+
+      return conv?.id ?? null;
+    } catch (err) {
+      this.logger.warn(`findOrCreateWorkspaceConversation failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
 
   /**
    * Parse a JSON action block from the AI response and execute each action.

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
+import { NavLink as Link } from "@/components/nav-link"
 import { useRouter, usePathname } from "next/navigation"
 import {
     MoreHorizontal,
@@ -187,14 +188,14 @@ export function NavBoards() {
                 asChild
                 isActive={isActive(board.id)}
             >
-                <a href={`/dashboard/boards/${board.id}`}>
+                <Link href={`/dashboard/boards/${board.id}`}>
                     {board.is_favorite ? (
                         <Star className="w-4 h-4 fill-amber-400 text-amber-400" />
                     ) : (
                         <LayoutGrid className="w-4 h-4" />
                     )}
                     <span className="truncate">{board.name}</span>
-                </a>
+                </Link>
             </SidebarMenuButton>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -266,10 +267,10 @@ export function NavBoards() {
                         asChild
                         isActive={pathname === '/dashboard/cockpit' || pathname.startsWith('/dashboard/pods/')}
                     >
-                        <a href="/dashboard/cockpit">
+                        <Link href="/dashboard/cockpit">
                             <LayoutDashboard className="w-4 h-4" />
                             <span>Cockpit</span>
-                        </a>
+                        </Link>
                     </SidebarMenuButton>
                 </SidebarMenuItem>
 
@@ -292,7 +293,7 @@ export function NavBoards() {
                                     asChild
                                     isActive={pathname === `/dashboard/pods/${pod.slug}`}
                                 >
-                                    <a href={`/dashboard/pods/${pod.slug}`}>
+                                    <Link href={`/dashboard/pods/${pod.slug}`}>
                                         <span
                                             className="w-4 h-4 rounded flex items-center justify-center text-[10px] shrink-0"
                                             style={{ backgroundColor: `${podColor}20`, color: podColor }}
@@ -300,7 +301,7 @@ export function NavBoards() {
                                             {pod.icon && pod.icon.length <= 2 ? pod.icon : <Layers className="w-3 h-3" />}
                                         </span>
                                         <span className="truncate">{pod.name}</span>
-                                    </a>
+                                    </Link>
                                 </SidebarMenuButton>
                                 {podBoards.length > 0 && (
                                     <CollapsibleTrigger asChild>
@@ -323,14 +324,14 @@ export function NavBoards() {
                                                     asChild
                                                     isActive={isActive(board.id)}
                                                 >
-                                                    <a href={`/dashboard/boards/${board.id}`}>
+                                                    <Link href={`/dashboard/boards/${board.id}`}>
                                                         {board.is_favorite ? (
                                                             <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
                                                         ) : (
                                                             <LayoutGrid className="w-3 h-3" />
                                                         )}
                                                         <span className="truncate">{board.name}</span>
-                                                    </a>
+                                                    </Link>
                                                 </SidebarMenuSubButton>
                                             </SidebarMenuSubItem>
                                         ))}
@@ -350,9 +351,9 @@ export function NavBoards() {
                             asChild
                             className="text-primary hover:text-primary"
                         >
-                            <a href="/dashboard/boards">
+                            <Link href="/dashboard/boards">
                                 <span className="text-xs">See all ({ungroupedBoards.length})</span>
-                            </a>
+                            </Link>
                         </SidebarMenuButton>
                     </SidebarMenuItem>
                 )}

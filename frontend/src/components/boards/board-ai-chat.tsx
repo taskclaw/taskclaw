@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, BrainCircuit, CheckCircle, ListPlus, Layers, Plug, ArrowRight, Globe } from 'lucide-react'
+import { Send, Loader2, BrainCircuit, CheckCircle, ListPlus, Layers, Plug, ArrowRight, Globe, Zap } from 'lucide-react'
 import Link from 'next/link'
 import {
     getOrCreateBoardConversation,
@@ -11,6 +11,7 @@ import {
     getMessages,
 } from '@/app/dashboard/chat/actions'
 import { bulkCreateBoardTasks } from '@/app/dashboard/boards/actions'
+import { getBackboneConnections } from '@/app/dashboard/settings/backbones/actions'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { renderMarkdown, extractTasksJson } from '@/lib/markdown'
@@ -22,6 +23,7 @@ import {
     SheetTitle,
     SheetDescription,
 } from '@/components/ui/sheet'
+import type { BackboneConnection } from '@/types/backbone'
 
 interface Message {
     id?: string
@@ -45,6 +47,8 @@ interface BoardAIChatProps {
     podName?: string
     // Workspace mode (cockpit chat — sees all pods/boards)
     isWorkspace?: boolean
+    // Open at a specific conversation (e.g. from pilot activity "Continue session")
+    initialConversationId?: string | null
     // Sheet control
     open: boolean
     onOpenChange: (open: boolean) => void
@@ -58,6 +62,7 @@ export function BoardAIChat({
     podId,
     podName,
     isWorkspace,
+    initialConversationId,
     open,
     onOpenChange,
     onClose,
@@ -79,6 +84,7 @@ export function BoardAIChat({
     const [error, setError] = useState<string | null>(null)
     const [creatingTasks, setCreatingTasks] = useState<string | null>(null)
     const [createdMessageIds, setCreatedMessageIds] = useState<Set<string>>(new Set())
+    const [activeBackbone, setActiveBackbone] = useState<BackboneConnection | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLInputElement>(null)
     const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -129,6 +135,17 @@ export function BoardAIChat({
 
     useEffect(() => { return () => stopPolling() }, [stopPolling])
 
+    // Fetch active backbone for badge display
+    useEffect(() => {
+        if (!open) return
+        getBackboneConnections().then((connections) => {
+            if (!Array.isArray(connections)) return
+            const active = connections.filter((b) => b.is_active)
+            const def = active.find((b) => b.is_default) ?? active[0] ?? null
+            setActiveBackbone(def)
+        }).catch(() => {})
+    }, [open])
+
     // Re-init whenever the sheet opens or the context changes
     useEffect(() => {
         if (!open) return
@@ -140,6 +157,14 @@ export function BoardAIChat({
             setMessages([])
 
             try {
+                // If a specific conversation ID is provided (e.g. from pilot activity), use it directly
+                if (initialConversationId) {
+                    setConversationId(initialConversationId)
+                    await loadMessages(initialConversationId)
+                    if (!cancelled) { setIsInitializing(false); inputRef.current?.focus() }
+                    return
+                }
+
                 const result = isWorkspaceMode
                     ? await getOrCreateWorkspaceConversation()
                     : isPodMode
@@ -166,7 +191,7 @@ export function BoardAIChat({
         init()
         return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, boardId, podId, isWorkspace])
+    }, [open, boardId, podId, isWorkspace, initialConversationId])
 
     useEffect(() => {
         if (isProcessing && conversationId) startPolling(conversationId)
@@ -251,6 +276,16 @@ export function BoardAIChat({
                                 {isWorkspaceMode ? 'Workspace AI · Can trigger pods, boards & routes' : isPodMode ? 'Pod AI Chat' : 'Board AI Chat'}
                             </SheetDescription>
                         </div>
+                        {/* Backbone badge */}
+                        {activeBackbone && (
+                            <span
+                                className="flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium shrink-0 border border-emerald-500/20"
+                                title={`Using backbone: ${activeBackbone.name || activeBackbone.backbone_type}`}
+                            >
+                                <Zap className="w-2.5 h-2.5" />
+                                {activeBackbone.name || activeBackbone.backbone_type}
+                            </span>
+                        )}
                         {isProcessing && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium shrink-0">
                                 Thinking…

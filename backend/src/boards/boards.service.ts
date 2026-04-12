@@ -68,7 +68,7 @@ export class BoardsService {
       throw new Error(`Failed to fetch boards: ${error.message}`);
     }
 
-    // Get task counts per board
+    // Get task counts per board in a single query (select only the grouping key, not full rows)
     const boardIds = data.map((b) => b.id);
     if (boardIds.length > 0) {
       const { data: taskCounts, error: countError } = await client
@@ -78,12 +78,11 @@ export class BoardsService {
 
       if (!countError && taskCounts) {
         const countMap: Record<string, number> = {};
-        taskCounts.forEach((t) => {
-          countMap[t.board_instance_id] =
-            (countMap[t.board_instance_id] || 0) + 1;
-        });
+        for (const t of taskCounts) {
+          countMap[t.board_instance_id] = (countMap[t.board_instance_id] ?? 0) + 1;
+        }
         data.forEach((board) => {
-          board.task_count = countMap[board.id] || 0;
+          board.task_count = countMap[board.id] ?? 0;
         });
       }
     }
