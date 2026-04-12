@@ -130,6 +130,7 @@ export default function BackbonesSettingsPage() {
     }
 
     return (
+        <>
         <PageLayout
             header={
                 <PageHeader
@@ -235,5 +236,6 @@ export default function BackbonesSettingsPage() {
             confirmLabel="Delete"
             loading={deleteMutation.isPending}
         />
+        </>
     )
 }
