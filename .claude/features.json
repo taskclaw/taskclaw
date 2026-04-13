@@ -1,666 +1,150 @@
 {
-  "project": "Cockpit + Unified Architecture (PRD-Unified-Architecture v1.0)",
-  "created": "2026-04-06",
-  "total": 54,
-  "completed": 54,
+  "project": "Agents as First-Class Team Members (PRD-agents-first-class v1.0)",
+  "branch": "feature/v3",
+  "prd": "taskclaw-docs/implementations/prd-agents-first-class/prd-agents-first-class.md",
+  "created": "2026-04-12",
+  "total": 14,
+  "completed": 0,
   "features": [
     {
-      "id": "M01",
-      "name": "pods table migration",
-      "group": "migrations",
-      "status": "pass",
-      "spec": "Create pods table with RLS and all columns per PRD Section 6.2",
-      "depends_on": [],
-      "test": "SELECT * FROM pods WHERE account_id = 'x' returns empty array without error",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "M02",
-      "name": "pod_id FKs on board_instances and conversations",
-      "group": "migrations",
-      "status": "pass",
-      "spec": "Add nullable pod_id FK to board_instances and conversations with indexes",
-      "depends_on": [
-        "M01"
-      ],
-      "test": "SELECT pod_id FROM board_instances LIMIT 1 \u2014 column exists, nullable",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "M03",
-      "name": "board_routes, task_dags, task_dependencies tables",
-      "group": "migrations",
-      "status": "pass",
-      "spec": "Create 3 task-flow tables per PRD Section 7.8",
-      "depends_on": [
-        "M01"
-      ],
-      "test": "All 3 tables exist with correct FK constraints",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "M04",
-      "name": "tasks.result and tasks.dag_id columns",
-      "group": "migrations",
-      "status": "pass",
-      "spec": "ALTER TABLE tasks ADD COLUMN result jsonb; ADD COLUMN dag_id uuid FK task_dags",
-      "depends_on": [
-        "M03"
-      ],
-      "test": "SELECT result, dag_id FROM tasks LIMIT 1 \u2014 columns exist",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "M05",
-      "name": "integration_tools table",
-      "group": "migrations",
-      "status": "pass",
-      "spec": "Create integration_tools table per PRD Section 8.9",
-      "depends_on": [],
-      "test": "Insert + select round-trip succeeds",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "M06",
-      "name": "heartbeat_configs and execution_log tables",
-      "group": "migrations",
-      "status": "pass",
-      "spec": "Create both autonomy tables per PRD Section 9.6",
-      "depends_on": [
-        "M01"
-      ],
-      "test": "Insert heartbeat_config with cron_expression, verify FK cascades",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "M07",
-      "name": "Seed Anthropic and Ollama backbone definitions",
-      "group": "migrations",
-      "status": "pass",
-      "spec": "INSERT into backbone_definitions for slug=anthropic and slug=ollama",
-      "depends_on": [],
-      "test": "SELECT slug FROM backbone_definitions WHERE slug IN ('anthropic','ollama') returns 2 rows",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "B01",
-      "name": "AnthropicAdapter",
-      "group": "backbone",
-      "status": "pass",
-      "spec": "backend/src/backbone/adapters/anthropic.adapter.ts \u2014 Anthropic Messages API, SSE streaming, supportsToolExecution=true",
-      "depends_on": [
-        "M07"
-      ],
-      "test": "healthCheck({ api_key: ANTHROPIC_API_KEY }) returns { healthy: true }",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "B02",
-      "name": "OllamaAdapter",
-      "group": "backbone",
-      "status": "pass",
-      "spec": "backend/src/backbone/adapters/ollama.adapter.ts \u2014 Ollama REST API, NDJSON streaming, supportsToolExecution=false",
-      "depends_on": [
-        "M07"
-      ],
-      "test": "With Ollama Docker running, healthCheck returns healthy",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "B03",
-      "name": "supportsToolExecution on BackboneAdapter interface",
-      "group": "backbone",
-      "status": "pass",
-      "spec": "Add optional supportsToolExecution?(): boolean and ToolContextDefinition to backbone-adapter.interface.ts",
-      "depends_on": [],
-      "test": "Existing adapters compile without changes (method is optional)",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "B04",
-      "name": "Register Anthropic and Ollama adapters in BackboneModule",
-      "group": "backbone",
-      "status": "pass",
-      "spec": "Add to providers array, inject in constructor, register in onModuleInit()",
-      "depends_on": [
-        "B01",
-        "B02"
-      ],
-      "test": "Backend logs show 'anthropic, ollama' in adapter list on startup",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "B05",
-      "name": "Pod-level cascade in BackboneRouterService",
-      "group": "backbone",
-      "status": "pass",
-      "spec": "Insert Pod step between Category and Account default in resolve() cascade",
-      "depends_on": [
-        "M01",
-        "B03"
-      ],
-      "test": "Pod with specific backbone connection resolvedFrom === 'pod'",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "P01",
-      "name": "CreatePodDto and UpdatePodDto",
-      "group": "pods",
-      "status": "pass",
-      "spec": "DTOs with validation decorators, auto-slugify name if slug not provided",
-      "depends_on": [
-        "M01"
-      ],
-      "test": "class-validator rejects empty name, accepts valid payload",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "P02",
-      "name": "PodsService",
-      "group": "pods",
-      "status": "pass",
-      "spec": "backend/src/pods/pods.service.ts \u2014 CRUD mirroring BoardsService pattern",
-      "depends_on": [
-        "P01"
-      ],
-      "test": "CRUD round-trip: create pod, fetch by slug, update name, delete",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "P03",
-      "name": "PodsController",
-      "group": "pods",
-      "status": "pass",
-      "spec": "backend/src/pods/pods.controller.ts \u2014 REST endpoints at /accounts/:accountId/pods",
-      "depends_on": [
-        "P02"
-      ],
-      "test": "GET /accounts/:id/pods returns 200 with empty array for new account",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "P04",
-      "name": "PodsModule registered in AppModule",
-      "group": "pods",
-      "status": "pass",
-      "spec": "Create pods.module.ts and add to app.module.ts imports",
-      "depends_on": [
-        "P03"
-      ],
-      "test": "Backend starts without DI errors; /accounts/:id/pods returns 200",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "P05",
-      "name": "ConversationsService pod_id support",
-      "group": "pods",
-      "status": "pass",
-      "spec": "Add pod_id to CreateConversationDto, findAll filter, create(), sendMessage() backbone routing",
-      "depends_on": [
-        "M02",
-        "B05"
-      ],
-      "test": "Create conversation with pod_id, assert it's returned in findOne",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "P06",
-      "name": "BoardsService pod_id support",
-      "group": "pods",
-      "status": "pass",
-      "spec": "Add pod_id to CreateBoardDto/UpdateBoardDto, findAll filter, create(), update()",
-      "depends_on": [
-        "M02"
-      ],
-      "test": "Create board with pod_id; list boards filtered by pod_id",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "D01",
-      "name": "BoardRoutingModule structure",
-      "group": "dag",
-      "status": "pass",
-      "spec": "board-routing.module.ts with conditional BullMQ queue 'board-routing-jobs'",
-      "depends_on": [
-        "M03",
-        "P04"
-      ],
-      "test": "Module loads; GET /accounts/:id/board-routing/routes returns 200",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "D02",
-      "name": "BoardRoutingService \u2014 route CRUD",
-      "group": "dag",
-      "status": "pass",
-      "spec": "createRoute, findAllRoutes, findRoute, updateRoute, deleteRoute, triggerRoute",
-      "depends_on": [
-        "D01"
-      ],
-      "test": "Create route connecting two boards; appears in findAll",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "D03",
-      "name": "BoardRoutingProcessor (BullMQ)",
-      "group": "dag",
-      "status": "pass",
-      "spec": "@Processor('board-routing-jobs') \u2014 fetch task, apply transform, create in target board, log",
-      "depends_on": [
-        "D02"
-      ],
-      "test": "Enqueue job with mock task; verify task appears in target board",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "D04",
-      "name": "CoordinatorService \u2014 goal decomposition",
-      "group": "dag",
-      "status": "pass",
-      "spec": "decomposeGoal() \u2014 send goal to backbone, parse JSON subtask list, create tasks + task_dag + task_dependencies",
-      "depends_on": [
-        "D01",
-        "P04"
-      ],
-      "test": "With backbone configured, call decomposeGoal; assert N tasks + 1 DAG row created",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "D05",
-      "name": "DAGExecutorService \u2014 event-triggered dependency resolution",
-      "group": "dag",
-      "status": "pass",
-      "spec": "onTaskCompleted(taskId, result) \u2014 store result, find downstream tasks, check all upstreams done, dispatch ready tasks",
-      "depends_on": [
-        "D04"
-      ],
-      "test": "Create 2-task DAG; complete upstream; assert downstream status changes",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "D06",
-      "name": "TasksService integration \u2014 trigger DAG on task completion",
-      "group": "dag",
-      "status": "pass",
-      "spec": "In tasks.service.ts update(), when status reaches Done, call dagExecutorService.onTaskCompleted() fire-and-forget",
-      "depends_on": [
-        "D05"
-      ],
-      "test": "Update task to done; DAGExecutor fires (spy on method)",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "T01",
-      "name": "ToolRegistryService",
-      "group": "tools",
-      "status": "pass",
-      "spec": "integrations/tool-registry.service.ts \u2014 CRUD + buildToolContext(accountId, requiredTools)",
-      "depends_on": [
-        "M05"
-      ],
-      "test": "Create tool definition; buildToolContext(['my-tool']) returns definition array",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "T02",
-      "name": "SkillsService required_tools frontmatter parsing",
-      "group": "tools",
-      "status": "pass",
-      "spec": "Parse YAML frontmatter from skill.content, extract required_tools array, expose getRequiredTools(skill)",
-      "depends_on": [],
-      "test": "Skill with frontmatter 'required_tools: [web-search]' returns ['web-search']",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "T03",
-      "name": "ConversationsService buildToolContext integration",
-      "group": "tools",
-      "status": "pass",
-      "spec": "In sendMessage(), collect required_tools from skills, call buildToolContext(), attach as tool_context to backbone router",
-      "depends_on": [
-        "T01",
-        "T02"
-      ],
-      "test": "Conversation with skill with required_tools \u2014 BackboneRouter.send receives tool_context",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "T04",
-      "name": "Adapter tool_context translation (Anthropic + OpenRouter)",
-      "group": "tools",
-      "status": "pass",
-      "spec": "anthropic.adapter: translate tool_context to Anthropic tools[] format; openrouter.adapter: to OpenAI tools[] format",
-      "depends_on": [
-        "B01",
-        "T03"
-      ],
-      "test": "sendMessage with tool_context builds correct request body for each adapter",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "A01",
-      "name": "HeartbeatModule",
-      "group": "autonomy",
-      "status": "pass",
-      "spec": "heartbeat.module.ts with conditional BullMQ queue 'heartbeat-jobs', all providers + controller",
-      "depends_on": [
-        "M06",
-        "P04"
-      ],
-      "test": "Module loads; GET /accounts/:id/heartbeat/configs returns 200",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "A02",
-      "name": "HeartbeatService",
-      "group": "autonomy",
-      "status": "pass",
-      "spec": "createConfig, findAll, findOne, update, delete, toggle, trigger, scheduleAll() on init",
-      "depends_on": [
-        "A01"
-      ],
-      "test": "Create heartbeat config with cron; trigger manually; assert execution_log entry created",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "A03",
-      "name": "HeartbeatProcessor (BullMQ)",
-      "group": "autonomy",
-      "status": "pass",
-      "spec": "@Processor('heartbeat-jobs') \u2014 check circuit breaker, dry_run, max_tasks_per_run, call backbone, write log",
-      "depends_on": [
-        "A02"
-      ],
-      "test": "Manual trigger produces execution_log entry with status completed or dry_run",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "A04",
-      "name": "CircuitBreakerService",
-      "group": "autonomy",
-      "status": "pass",
-      "spec": "In-memory failure tracking per configId; auto-disable after threshold; recordFailure/Success/isOpen",
-      "depends_on": [
-        "A01"
-      ],
-      "test": "Record N failures; assert circuit opens and config becomes inactive",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "A05",
-      "name": "ExecutionLogService",
-      "group": "autonomy",
-      "status": "pass",
-      "spec": "create, findAll (with filters: trigger_type, status, pod_id, board_id, pagination), findOne",
-      "depends_on": [
-        "M06"
-      ],
-      "test": "Insert 3 entries; findAll with status filter returns correct subset",
-      "completed_at": "2026-04-07"
-    },
-    {
       "id": "F01",
-      "name": "Pod TypeScript types",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/types/pod.ts \u2014 Pod, CreatePodPayload, UpdatePodPayload, HeartbeatConfig, ExecutionLog, BoardRoute, TaskDAG",
+      "name": "Agents Table + CRUD API",
+      "group": "backend/phase-1",
+      "status": "fail",
+      "spec": "Create agents table (name, slug, avatar_url, description, persona, color, backbone_connection_id, model_override, max_concurrent_tasks, status, is_active, agent_type, tracking stats, config JSONB, migrated_from_category_id). AgentsService + AgentsController REST CRUD: POST/GET/PATCH/DELETE/pause/resume/clone under /accounts/:accountId/agents. AgentsModule registered in AppModule.",
       "depends_on": [],
-      "test": "TypeScript compilation passes with no errors in types file",
-      "completed_at": "2026-04-07"
+      "test": "POST /accounts/:accountId/agents creates row; GET lists it; PATCH updates name; DELETE soft-deactivates (is_active=false). TypeScript build clean.",
+      "completed_at": null
     },
     {
       "id": "F02",
-      "name": "Pod server actions",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/app/dashboard/pods/actions.ts \u2014 getPods, getPod, getPodBySlug, createPod, updatePod, deletePod, getPodBoards",
-      "depends_on": [
-        "F01",
-        "P04"
-      ],
-      "test": "getPods() returns empty array for new account without throwing",
-      "completed_at": "2026-04-07"
+      "name": "Polymorphic Task Assignment",
+      "group": "backend/phase-1",
+      "status": "fail",
+      "spec": "Add assignee_type (none|agent|human) and assignee_id to tasks table with partial indexes. TasksService auto-assigns task to column default_agent_id when task enters a step. Migration backfills existing tasks where category->agent mapping is clear via migrated_from_category_id.",
+      "depends_on": ["F01"],
+      "test": "Create task in column with default_agent_id set -> task.assignee_type='agent' and task.assignee_id matches agent. Tasks with no column default have assignee_type='none'.",
+      "completed_at": null
     },
     {
       "id": "F03",
-      "name": "usePods hooks",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/hooks/use-pods.ts \u2014 usePods, usePod, useCreatePod, useUpdatePod, useDeletePod with react-query",
-      "depends_on": [
-        "F02"
-      ],
-      "test": "usePods() returns empty data array without error",
-      "completed_at": "2026-04-07"
+      "name": "Column Default Agent (board_steps)",
+      "group": "backend/phase-1",
+      "status": "fail",
+      "spec": "Add default_agent_id FK to board_steps replacing category_id. BackboneRouterService removes Category cascade level; Agent level replaces it (6 levels instead of 7). Migration maps existing board_steps.category_id -> default_agent_id via agents.migrated_from_category_id.",
+      "depends_on": ["F01"],
+      "test": "board_steps has default_agent_id column. BackboneRouter resolves agent backbone connection without category level. Existing board routes still work.",
+      "completed_at": null
     },
     {
       "id": "F04",
-      "name": "Workspace Cockpit page",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/app/dashboard/cockpit/page.tsx \u2014 pod grid, New Pod button, empty state",
-      "depends_on": [
-        "F03"
-      ],
-      "test": "Navigate to /dashboard/cockpit; 'Workspace Cockpit' heading visible",
-      "completed_at": "2026-04-07"
+      "name": "Agent Skills Junction Table",
+      "group": "backend/phase-2",
+      "status": "fail",
+      "spec": "Create agent_skills junction table replacing category_skills. AgentSkillsService: add/remove skills from agent. Endpoints: POST/DELETE /agents/:id/skills/:skillId. Migration copies category_skills -> agent_skills using migrated_from_category_id mapping.",
+      "depends_on": ["F01"],
+      "test": "POST /agents/:id/skills/:skillId links skill; DELETE removes it; GET /agents/:id returns skills array. Existing category skills appear on migrated agents.",
+      "completed_at": null
     },
     {
       "id": "F05",
-      "name": "PodCard component",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/components/pods/pod-card.tsx \u2014 icon, name, board count badge, backbone health badge, dropdown menu",
-      "depends_on": [
-        "F01"
-      ],
-      "test": "Render with mock pod data; slug-based navigation href correct",
-      "completed_at": "2026-04-07"
+      "name": "Knowledge Docs on Agents",
+      "group": "backend/phase-2",
+      "status": "fail",
+      "spec": "Add agent_id FK to knowledge_docs table. Agents own knowledge directly; pod_id still available for shared knowledge. ConversationsService reads skills/knowledge from agent instead of category when agent_id present on the agent assigned to conversation.",
+      "depends_on": ["F01"],
+      "test": "knowledge_docs row with agent_id. ConversationsService builds context using agent skills + knowledge when conversation resolves to an agent. Existing pod knowledge still works.",
+      "completed_at": null
     },
     {
       "id": "F06",
-      "name": "CreatePodDialog component",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/components/pods/create-pod-dialog.tsx \u2014 name, description, icon picker, color picker, backbone selector",
-      "depends_on": [
-        "F03",
-        "F05"
-      ],
-      "test": "Open dialog, fill name, submit; mutation called with correct payload",
-      "completed_at": "2026-04-07"
+      "name": "Agent-Scoped Conversations",
+      "group": "backend/phase-2",
+      "status": "fail",
+      "spec": "Add agent_id FK to conversations table. Three scopes: task, pod, agent. ConversationsService injects agent persona into system prompt when agent_id present. New scope 'agent' usable via CreateConversationDto.",
+      "depends_on": ["F01", "F05"],
+      "test": "POST /conversations with agent_id -> conversation created. Sending message returns response using agent's persona. GET /conversations?agent_id= filters correctly.",
+      "completed_at": null
     },
     {
       "id": "F07",
-      "name": "Pod Cockpit page",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/app/dashboard/pods/[slug]/page.tsx \u2014 pod header, board card grid, breadcrumb, empty state",
-      "depends_on": [
-        "F03"
-      ],
-      "test": "Navigate to /dashboard/pods/test-pod; pod name heading visible",
-      "completed_at": "2026-04-07"
+      "name": "Provider Agents Repointed + Sync Rewritten",
+      "group": "backend/phase-3",
+      "status": "fail",
+      "spec": "Add agent_id FK to provider_agents. AgentCompilerService and AgentSyncService read from agents table instead of categories. Content hashing uses agent persona + skills + knowledge. Migration maps provider_agents.category_id -> agent_id.",
+      "depends_on": ["F04", "F05"],
+      "test": "AgentSyncService syncs OpenClaw by agent_id. Changing agent persona triggers re-sync (hash mismatch). provider_agents.agent_id populated after migration.",
+      "completed_at": null
     },
     {
       "id": "F08",
-      "name": "Pod Settings page",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/app/dashboard/pods/[slug]/settings/page.tsx \u2014 tabs: General, Heartbeat, Execution Log; danger zone",
-      "depends_on": [
-        "F07"
-      ],
-      "test": "Load page, change name, submit; toast 'Pod updated' shown",
-      "completed_at": "2026-04-07"
+      "name": "Agent Activity Feed",
+      "group": "backend/phase-3",
+      "status": "fail",
+      "spec": "Create agent_activity table (agent_id, activity_type, payload JSONB, created_at). Types: task_completed, task_failed, task_assigned, conversation_reply, dag_created, route_triggered, status_changed, error. AgentActivityService.record() called from dag-executor, tasks.service, conversations.service, coordinator, board-routing. GET /agents/:id/activity endpoint.",
+      "depends_on": ["F01"],
+      "test": "Complete a task assigned to an agent -> activity row with type=task_completed. GET /agents/:id/activity returns feed sorted by created_at desc.",
+      "completed_at": null
     },
     {
       "id": "F09",
-      "name": "NavBoards \u2014 grouped by Pod with collapse/expand",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "Modify frontend/src/components/nav-boards.tsx \u2014 usePods, group boards by pod_id, collapsible per pod, Cockpit link",
-      "depends_on": [
-        "F03"
-      ],
-      "test": "Sidebar shows pod group labels; collapse/expand works; Cockpit link present",
-      "completed_at": "2026-04-07"
+      "name": "Agent Stats Aggregation",
+      "group": "backend/phase-3",
+      "status": "fail",
+      "spec": "DAGExecutorService calls AgentActivityService after task completion/failure to increment agents.total_tasks_completed, total_tasks_failed, total_tokens_used, last_active_at. Stats exposed in GET /agents/:id response.",
+      "depends_on": ["F01", "F08"],
+      "test": "Run a DAG with agent-assigned tasks -> agents row shows incremented total_tasks_completed and updated last_active_at.",
+      "completed_at": null
     },
     {
       "id": "F10",
-      "name": "Pod Chat page",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/app/dashboard/pods/[slug]/chat/page.tsx \u2014 reuse chat UI, create conversations with pod_id",
-      "depends_on": [
-        "F07",
-        "P05"
-      ],
-      "test": "Send message in pod chat; conversation has pod_id in DB",
-      "completed_at": "2026-04-07"
+      "name": "Pilot Configs Migrated into Agents",
+      "group": "backend/phase-3",
+      "status": "fail",
+      "spec": "Each pilot_configs row becomes agents row with agent_type='pilot'. Add pilot_agent_id FK to pods. PilotService reads from agents where agent_type='pilot'. Config JSONB stores max_tasks_per_cycle, approval_required. Migration script creates pilot agents from pilot_configs.",
+      "depends_on": ["F01"],
+      "test": "Existing pilot configs appear as agents with type=pilot. PilotService finds pilot agent by pod.pilot_agent_id. Autonomy cycle still triggers correctly.",
+      "completed_at": null
     },
     {
       "id": "F11",
-      "name": "DAG Visualization component",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/components/boards/dag-view.tsx \u2014 CSS flex + SVG arrows, node states (pending/running/done/failed)",
-      "depends_on": [
-        "F01"
-      ],
-      "test": "Render with mock 3-task DAG; all 3 nodes visible",
-      "completed_at": "2026-04-07"
+      "name": "Coordinator Agent Integration + MCP Tools",
+      "group": "backend/phase-3",
+      "status": "fail",
+      "spec": "CoordinatorService uses coordinator-type agent. Coordinator prompt lists available agents with IDs, skills, descriptions so each generated DAG task is assigned to a specific agent. Register 3 MCP tools in mcp-entry.ts: create_agent, list_agents, assign_task_to_agent.",
+      "depends_on": ["F01", "F02"],
+      "test": "Decompose a goal -> generated tasks have assignee_id set. MCP tools callable. list_agents returns current agents list.",
+      "completed_at": null
     },
     {
       "id": "F12",
-      "name": "Route Builder UI",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/components/boards/board-route-builder.tsx \u2014 select target board, trigger type, field mapping, save",
-      "depends_on": [
-        "D02"
-      ],
-      "test": "Select two boards, submit; route appears in list",
-      "completed_at": "2026-04-07"
+      "name": "Agent Profiles in Team Views + Board Kanban Avatar",
+      "group": "frontend/phase-4",
+      "status": "fail",
+      "spec": "Team roster (/dashboard/teams) shows agents section with status indicators (idle/working/paused/error/offline). Agent profile cards: name, avatar, description, backbone/model, skills, knowledge, performance stats, recent activity, action buttons. Board Kanban shows agent avatar on assigned task cards.",
+      "depends_on": ["F01", "F08", "F09"],
+      "test": "Playwright: /dashboard/teams shows Agents section with at least one agent card and status badge. Task card on Kanban shows avatar for agent-assigned tasks.",
+      "completed_at": null
     },
     {
       "id": "F13",
-      "name": "Task card badges (DAG and result)",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "Modify frontend/src/components/tasks/task-card.tsx \u2014 DAG badge if dag_id, Done icon if result",
-      "depends_on": [
-        "M04"
-      ],
-      "test": "Task card with dag_id shows DAG badge",
-      "completed_at": "2026-04-07"
+      "name": "Agent Creation Wizard + Management Pages",
+      "group": "frontend/phase-4",
+      "status": "fail",
+      "spec": "4-step wizard: Identity -> Skills & Knowledge -> Configuration -> Assign to Columns. New pages: /dashboard/agents (list with status overview, filtering) and /dashboard/agents/[agentId] (detail with activity feed, edit form, Pause/Clone/Deactivate actions). Cockpit shows agent status overview widget.",
+      "depends_on": ["F04", "F05", "F12"],
+      "test": "Playwright: complete 4-step wizard -> agent in /dashboard/agents list. /dashboard/agents/[id] shows activity feed. Pause button changes status badge to paused.",
+      "completed_at": null
     },
     {
       "id": "F14",
-      "name": "Execution History Panel",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/components/pods/execution-history-panel.tsx \u2014 reverse-chron log, expandable rows, status dots, filters",
-      "depends_on": [
-        "A05",
-        "F08"
-      ],
-      "test": "Render with 3 mock entries; all 3 rows visible",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "F15",
-      "name": "HeartbeatConfig management UI",
-      "group": "frontend",
-      "status": "pass",
-      "spec": "frontend/src/app/dashboard/pods/[slug]/settings/heartbeat.tsx \u2014 form, list with toggle, Run Now button",
-      "depends_on": [
-        "A02",
-        "F08"
-      ],
-      "test": "Create config, appears in list; toggle sets is_active=false",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "I01",
-      "name": "Docker Compose \u2014 Ollama service",
-      "group": "infra",
-      "status": "pass",
-      "spec": "Add ollama service to docker-compose.yml: image ollama/ollama:latest, port 11434, healthcheck",
-      "depends_on": [],
-      "test": "curl http://localhost:11434/api/tags returns model list after 'ollama pull llama3.2:3b'",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "I02",
-      "name": "Backbone integration tests (Anthropic + Ollama)",
-      "group": "infra",
-      "status": "pass",
-      "spec": "backend/src/backbone/adapters/anthropic.adapter.test.ts and ollama.adapter.test.ts \u2014 real API calls, skip if env vars missing",
-      "depends_on": [
-        "B01",
-        "B02",
-        "I01"
-      ],
-      "test": "Tests pass with valid API keys; skip gracefully without them",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "I03",
-      "name": "Migration smoke test script",
-      "group": "infra",
-      "status": "pass",
-      "spec": "backend/scripts/test-migrations.sh \u2014 apply all M01-M07, verify tables exist, print PASS/FAIL per table",
-      "depends_on": [
-        "M01",
-        "M02",
-        "M03",
-        "M04",
-        "M05",
-        "M06",
-        "M07"
-      ],
-      "test": "bash test-migrations.sh exits 0",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "I04",
-      "name": "AppleScript \u2014 Cockpit navigation test",
-      "group": "infra",
-      "status": "pass",
-      "spec": "scripts/test-cockpit.applescript \u2014 navigate to /dashboard/cockpit, assert heading, create pod, assert card renders",
-      "depends_on": [
-        "F04",
-        "F06"
-      ],
-      "test": "osascript scripts/test-cockpit.applescript exits 0",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "I05",
-      "name": "AppleScript \u2014 Backbone verify test",
-      "group": "infra",
-      "status": "pass",
-      "spec": "scripts/test-backbone-verify.applescript \u2014 add Ollama connection in UI, click Verify, assert health badge green",
-      "depends_on": [
-        "I01",
-        "B02",
-        "F09"
-      ],
-      "test": "osascript scripts/test-backbone-verify.applescript exits 0",
-      "completed_at": "2026-04-07"
-    },
-    {
-      "id": "I06",
-      "name": "AppleScript \u2014 Pod chat end-to-end test",
-      "group": "infra",
-      "status": "pass",
-      "spec": "scripts/test-pod-chat.applescript \u2014 navigate to pod chat, send message, assert response exists",
-      "depends_on": [
-        "F10"
-      ],
-      "test": "osascript scripts/test-pod-chat.applescript exits 0",
-      "completed_at": "2026-04-07"
+      "name": "Category Deprecation (Phase 5)",
+      "group": "backend+frontend/phase-5",
+      "status": "fail",
+      "spec": "Drop migrated_from_category_id from agents. Drop category_id from tasks, board_steps, conversations, knowledge_docs, provider_agents. Drop category_skills, pilot_configs, categories tables. Remove CategoriesService, CategoriesController, CategoriesModule, frontend category components and use-categories hook. Clean all TypeScript references to categories.",
+      "depends_on": ["F02", "F03", "F04", "F05", "F06", "F07", "F10"],
+      "test": "npm run build succeeds with zero references to categories table or CategoriesService. No 404s on existing board/task/pod views in Playwright.",
+      "completed_at": null
     }
   ]
 }

@@ -160,3 +160,4 @@ docker/volumes/db/data/
 docker/volumes/db/init/
 docker/volumes/storage/
 docker-compose.supabase-local.yml
+backend/.env.secrets

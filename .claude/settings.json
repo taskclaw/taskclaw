@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "Check: 1) Has .claude/features.json been updated with current progress? 2) Has .claude/progress.md been updated? 3) Was the last completed feature committed to git? If any are missing, respond with {\"ok\": false, \"reason\": \"describe what's missing\"}."
+            "prompt": "Check: 1) Has /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v3.json been updated with current progress? 2) Has /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v3.md been updated? 3) Was the last completed feature committed to git? If any are missing, respond with {\"ok\": false, \"reason\": \"describe what's missing\"}."
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/taskclaw/.claude/features.json for feature status. Read /Users/macbook/Workspace/Devotts/taskclaw/taskclaw/.claude/progress.md for current state. Read /Users/macbook/.claude/plans/harmonic-fluttering-trinket.md for the full plan. Commit after completing each feature.'"
+            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v3.json for feature status. Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v3.md for current state. PRD at taskclaw-docs/implementations/prd-agents-first-class/prd-agents-first-class.md. Commit after completing each feature.'"
           }
         ]
       }
