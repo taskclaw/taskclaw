@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "FEATURES=/Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v4.json; PROGRESS=/Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v4.md; [ -f \"$FEATURES\" ] && [ -f \"$PROGRESS\" ] && echo 'State files OK' || (echo 'WARNING: missing features-v4.json or progress-v4.md in .taskstate/' && exit 0)"
+            "command": "FEATURES=/Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v5.json; PROGRESS=/Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v5.md; [ -f \"$FEATURES\" ] && [ -f \"$PROGRESS\" ] && echo 'State files OK' || (echo 'WARNING: missing features-v5.json or progress-v5.md in .taskstate/' && exit 0)"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v4.json for feature status. Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v4.md for current state. PRD at /Users/macbook/Workspace/Devotts/taskclaw/taskclaw-docs/implementations/prd-full-orchestration/prd-full-orchestration.md. Pick the next FAILING feature and work on it. Commit after completing each feature.'"
+            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v5.json for feature status. Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v5.md for current state. Backend PRD: /Users/macbook/Workspace/Devotts/taskclaw/taskclaw-docs/implementations/prd-orchestration-reliability/prd-orchestration-reliability.md. Frontend PRD: /Users/macbook/Workspace/Devotts/taskclaw/taskclaw-docs/implementations/prd-live-execution-ui/prd-live-execution-ui.md. Pick the next FAILING feature and work on it. Commit after completing each feature.'"
           }
         ]
       }
