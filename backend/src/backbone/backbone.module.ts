@@ -17,12 +17,15 @@ import { OpenRouterAdapter } from './adapters/openrouter.adapter';
 import { NemoClawAdapter } from './adapters/nemoclaw.adapter';
 import { AnthropicAdapter } from './adapters/anthropic.adapter';
 import { OllamaAdapter } from './adapters/ollama.adapter';
+import { BackboneDispatchQueueModule } from './backbone-dispatch-queue.module';
+import { BackboneDispatchProcessor } from './backbone-dispatch.processor';
 
 @Module({
   imports: [
     SupabaseModule,
     CommonModule,
     forwardRef(() => ConversationsModule),
+    BackboneDispatchQueueModule.register(),
   ],
   controllers: [BackboneConnectionsController],
   providers: [
@@ -38,6 +41,7 @@ import { OllamaAdapter } from './adapters/ollama.adapter';
     NemoClawAdapter,
     AnthropicAdapter,
     OllamaAdapter,
+    BackboneDispatchProcessor,
   ],
   exports: [
     BackboneRouterService,
@@ -45,6 +49,8 @@ import { OllamaAdapter } from './adapters/ollama.adapter';
     BackboneDefinitionsService,
     BackboneAdapterRegistry,
     MigrateAiProvidersService,
+    BackboneDispatchProcessor,
+    BackboneDispatchQueueModule,
   ],
 })
 export class BackboneModule implements OnModuleInit {
