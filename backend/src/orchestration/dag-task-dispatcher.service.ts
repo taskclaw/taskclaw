@@ -300,10 +300,52 @@ ${parts}
         .update({ status: 'running', updated_at: new Date().toISOString() })
         .eq('id', taskId);
 
-      // 8. Call backbone via BackboneRouter
+      // 8. Fetch pod boards so the agent knows which board_id to use with create_task
+      let podBoardsContext = '';
+      if (task.pod_id) {
+        const { data: boards } = await client
+          .from('board_instances')
+          .select('id, name')
+          .eq('pod_id', task.pod_id)
+          .limit(10);
+        if (boards && boards.length > 0) {
+          const boardList = boards.map((b: any) => `  - ${b.name} (board_id: ${b.id})`).join('\n');
+          podBoardsContext = `\n\n<pod_boards>\nBoards available in this pod:\n${boardList}\n</pod_boards>`;
+        }
+      }
+
+      // 9. Build system prompt with tool definitions so the agent can create tasks
+      const podToolDefinitions = `<tool_definitions>
+[
+  {
+    "name": "create_task",
+    "description": "Create a task on a specific board column within this pod. Use this to break down the goal into actionable board tasks.",
+    "parameters": {
+      "type": "object",
+      "required": ["board_id", "title"],
+      "properties": {
+        "board_id": { "type": "string", "description": "UUID of the board_instance to create the task on" },
+        "title": { "type": "string", "description": "Task title" },
+        "description": { "type": "string", "description": "Detailed task description or instructions" },
+        "priority": { "type": "string", "enum": ["Low", "Medium", "High", "Urgent"], "description": "Task priority level (defaults to Medium)" }
+      }
+    }
+  }
+]
+</tool_definitions>
+
+When executing a goal, decompose it into board tasks using create_task tool calls. Use this exact format:
+<tool_call name="create_task">
+{"board_id": "UUID", "title": "Task title", "description": "What to do", "priority": "Medium"}
+</tool_call>
+
+Emit one tool call per task. Then provide a summary of what you created.`;
+
       const systemPrompt =
-        `You are a TaskClaw pod agent executing a delegated goal. Complete the task and return a clear summary of what was accomplished.` +
-        systemPromptAddition;
+        `You are a TaskClaw pod agent executing a delegated goal. Decompose the goal into actionable tasks on the available boards, then provide a summary.` +
+        podBoardsContext +
+        systemPromptAddition +
+        '\n\n' + podToolDefinitions;
 
       const result = await this.backboneRouter.send({
         accountId,
