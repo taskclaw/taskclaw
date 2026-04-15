@@ -108,7 +108,8 @@ import type { Agent } from '@/types/agent'
 import { formatDistanceToNow, isToday, isYesterday } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
-import { CockpitExecutionFeed, type DelegationMeta } from '@/components/orchestration/cockpit-execution-feed'
+import { type DelegationMeta } from '@/components/orchestration/cockpit-execution-feed'
+import { CockpitRightPanel } from '@/components/orchestration/cockpit-right-panel'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -164,6 +165,17 @@ export default function CockpitPage() {
     // Conversation state (shared across Command Center + Timeline "Continue session")
     const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
     const [openFreshChat, setOpenFreshChat] = useState(false)
+    // Lifted delegations state — passed to CockpitRightPanel
+    const [allDelegations, setAllDelegations] = useState<DelegationMeta[]>([])
+    const [cockpitAccountId, setCockpitAccountId] = useState<string | null>(null)
+
+    // Read account ID from cookie client-side
+    useEffect(() => {
+        if (typeof document !== 'undefined') {
+            const m = document.cookie.match(/current_account_id=([^;]+)/)
+            setCockpitAccountId(m ? m[1] : null)
+        }
+    }, [])
 
     // Session detail view — when a timeline entry is clicked
     const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null)
@@ -270,10 +282,11 @@ export default function CockpitPage() {
                         onFreshChatConsumed={() => setOpenFreshChat(false)}
                         onNewPod={() => setShowCreate(true)}
                         onOpenTimeline={() => { if (!panels.timeline) togglePanel('timeline') }}
+                        onDelegationsChange={setAllDelegations}
                     />
                 </div>
 
-                {/* Right: Timeline or Session Detail */}
+                {/* Right: Timeline or Session Detail — wrapped in CockpitRightPanel */}
                 <div
                     className={cn(
                         'flex-shrink-0 overflow-hidden transition-all duration-500 ease-in-out',
@@ -290,7 +303,12 @@ export default function CockpitPage() {
                             }}
                         />
                     ) : (
-                        <WorkspaceTimeline onSelectLog={handleContinueSession} />
+                        <CockpitRightPanel
+                            sessionDelegations={allDelegations}
+                            accountId={cockpitAccountId}
+                        >
+                            <WorkspaceTimeline onSelectLog={handleContinueSession} />
+                        </CockpitRightPanel>
                     )}
                 </div>
             </div>
@@ -736,9 +754,11 @@ interface CommandCenterProps {
     onFreshChatConsumed?: () => void
     onNewPod: () => void
     onOpenTimeline: () => void
+    /** Called whenever delegations from message metadata change */
+    onDelegationsChange?: (delegations: DelegationMeta[]) => void
 }
 
-function CommandCenter({ activeConversationId, onConversationChange, openFreshChat, onFreshChatConsumed, onNewPod, onOpenTimeline }: CommandCenterProps) {
+function CommandCenter({ activeConversationId, onConversationChange, openFreshChat, onFreshChatConsumed, onNewPod, onOpenTimeline, onDelegationsChange }: CommandCenterProps) {
     const { data: backbones = [] } = useBackboneConnections()
     // Default to the is_default backbone; null = use account default (server resolves)
     const defaultBackboneId = (backbones as any[]).find((b: any) => b.is_default)?.id ?? null
@@ -876,6 +896,12 @@ function CommandCenter({ activeConversationId, onConversationChange, openFreshCh
         (m.metadata?.delegations as DelegationMeta[] | undefined) ?? []
     )
 
+    // Notify parent of delegation changes (for CockpitRightPanel)
+    useEffect(() => {
+        onDelegationsChange?.(allDelegations)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [messages, onDelegationsChange])
+
     return (
         <div className="h-full flex flex-col min-h-0">
             {isActive ? (
@@ -893,10 +919,10 @@ function CommandCenter({ activeConversationId, onConversationChange, openFreshCh
                         </button>
                     </div>
 
-                    {/* Two-column: chat + execution feed */}
+                    {/* Chat area (full width — execution feed moved to CockpitRightPanel) */}
                     <div className="flex flex-1 min-h-0">
 
-                    {/* Left: messages + input */}
+                    {/* Messages + input */}
                     <div className="flex flex-col flex-1 min-h-0 min-w-0">
 
                     {/* Messages */}
@@ -972,25 +998,9 @@ function CommandCenter({ activeConversationId, onConversationChange, openFreshCh
                             <span className="text-[10px] text-muted-foreground/25">⌘↵ to send</span>
                         </div>
                     </div>
-                    </div>{/* end left column */}
+                    </div>{/* end messages + input */}
 
-                    {/* Right: execution feed */}
-                    <div className="w-[260px] shrink-0 border-l flex flex-col min-h-0" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-                        <div className="px-3 py-2.5 border-b flex items-center gap-1.5 shrink-0" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
-                            <Activity className="w-3.5 h-3.5" style={{ color: '#8ff5ff', opacity: 0.7 }} />
-                            <span className="text-[10px] font-bold tracking-[0.15em] uppercase" style={{ color: 'rgba(143,245,255,0.5)' }}>
-                                Execution
-                            </span>
-                            {allDelegations.some(d => d.status === 'pending_approval') && (
-                                <span className="ml-auto w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-                            )}
-                        </div>
-                        <div className="flex-1 overflow-y-auto custom-cockpit-scroll">
-                            <CockpitExecutionFeed delegations={allDelegations} />
-                        </div>
-                    </div>
-
-                    </div>{/* end two-column row */}
+                    </div>{/* end chat area */}
                 </>
             ) : (
                 // ── Init state: command input ──────────────────────────────
