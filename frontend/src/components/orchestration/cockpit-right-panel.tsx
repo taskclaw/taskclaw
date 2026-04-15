@@ -23,7 +23,7 @@ export function CockpitRightPanel({
     accountId,
     children,
 }: CockpitRightPanelProps) {
-    const { activeTasks, isConnected, liveTasksByOrch } = useLiveExecution(accountId)
+    const { activeTasks, isConnected } = useLiveExecution(accountId)
     const [mode, setMode] = useState<PanelMode>('history')
     const [showHistoryPeek, setShowHistoryPeek] = useState(false)
     const [idleTimer, setIdleTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
@@ -129,7 +129,6 @@ export function CockpitRightPanel({
                                 sessionDelegations={sessionDelegations}
                                 activeTasks={activeTasks}
                                 liveStatuses={liveStatuses}
-                                liveTasksByOrch={liveTasksByOrch}
                             />
                         </div>
 

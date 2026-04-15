@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, Loader2, ExternalLink, CheckCircle2, XCircle
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useTaskStore } from '@/hooks/use-task-store'
-import type { ActiveOrchestration, LiveTask } from '@/hooks/use-live-execution'
+import type { ActiveOrchestration } from '@/hooks/use-live-execution'
 import { getOrchestrationDetail, approveOrchestration, rejectOrchestration } from '@/app/dashboard/pods/actions'
 import { toast } from 'sonner'
 
@@ -18,12 +18,20 @@ interface OrchTask {
     depends_on_titles?: string[]
 }
 
+interface BoardTask {
+    id: string
+    title: string
+    status: string
+    priority?: string
+}
+
 interface OrchDetail {
     id: string
     goal: string
     status: string
     tasks: OrchTask[]
     pods?: { name?: string; slug?: string }
+    boardTasks?: BoardTask[]
 }
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
@@ -47,13 +55,12 @@ const STATUS_LABEL: Record<string, string> = {
 interface OrchestrationGroupProps {
     orchestration: ActiveOrchestration
     liveStatus?: string
-    /** Board tasks created live by pod agents during this orchestration */
-    liveTasks?: LiveTask[]
 }
 
-export function OrchestrationGroup({ orchestration, liveStatus, liveTasks = [] }: OrchestrationGroupProps) {
+export function OrchestrationGroup({ orchestration, liveStatus }: OrchestrationGroupProps) {
     const [expanded, setExpanded] = useState(false)
     const [detail, setDetail] = useState<OrchDetail | null>(null)
+    const [boardTasks, setBoardTasks] = useState<BoardTask[]>([])
     const [loadingDetail, setLoadingDetail] = useState(false)
     const [localStatus, setLocalStatus] = useState(liveStatus ?? orchestration.status)
     const [approving, setApproving] = useState(false)
@@ -73,11 +80,36 @@ export function OrchestrationGroup({ orchestration, liveStatus, liveTasks = [] }
         try {
             const result = await getOrchestrationDetail(orchestration.id)
             if (!result.error && result.data) {
-                setDetail(result.data)
+                // API returns { orchestration, tasks, deps, boardTasks } — map to OrchDetail shape
+                const raw = result.data
+                const fetchedStatus: string | undefined = raw.orchestration?.status ?? raw.status
+                const mapped: OrchDetail = {
+                    id: raw.orchestration?.id ?? raw.id ?? orchestration.id,
+                    goal: raw.orchestration?.goal ?? raw.goal ?? orchestration.goal,
+                    status: fetchedStatus ?? orchestration.status,
+                    tasks: raw.tasks ?? [],
+                    pods: raw.orchestration?.pods ?? raw.pods,
+                    boardTasks: raw.boardTasks,
+                }
+                setDetail(mapped)
+                if (mapped.boardTasks) setBoardTasks(mapped.boardTasks)
+                // Update localStatus from fetch if liveStatus not provided and we got a real status
+                if (liveStatus === undefined && fetchedStatus) {
+                    setLocalStatus(fetchedStatus)
+                }
             }
         } catch { /* silent */ }
         finally { setLoadingDetail(false) }
-    }, [orchestration.id, loadingDetail])
+    }, [orchestration.id, orchestration.goal, orchestration.status, loadingDetail, liveStatus])
+
+    // Poll every 5s while running to get live board task cards
+    useEffect(() => {
+        if (status !== 'running') return
+        const interval = setInterval(() => {
+            fetchDetail()
+        }, 5000)
+        return () => clearInterval(interval)
+    }, [status, fetchDetail])
 
     // Auto-fetch detail on mount for pending_approval so user can see what they're approving
     useEffect(() => {
@@ -193,8 +225,8 @@ export function OrchestrationGroup({ orchestration, liveStatus, liveTasks = [] }
                 </div>
             )}
 
-            {/* Live board task cards — appear in real-time as pod agents call create_task */}
-            {liveTasks.length > 0 && (
+            {/* Board task cards — polled every 5s while running */}
+            {boardTasks.length > 0 && (
                 <div className="border-t divide-y" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
                     <div className="px-3 pt-2 pb-1 flex items-center gap-1.5">
                         <span className="text-[9px] font-bold tracking-[0.15em] uppercase"
@@ -203,10 +235,10 @@ export function OrchestrationGroup({ orchestration, liveStatus, liveTasks = [] }
                         </span>
                         <span className="text-[9px] px-1 py-0.5 rounded-full font-semibold"
                             style={{ background: 'rgba(143,245,255,0.1)', color: 'rgba(143,245,255,0.7)' }}>
-                            {liveTasks.length}
+                            {boardTasks.length}
                         </span>
                     </div>
-                    {liveTasks.map((t) => (
+                    {boardTasks.map((t) => (
                         <div key={t.id}
                             className="px-3 py-2 flex items-start gap-2 group hover:bg-white/[0.03] transition-colors cursor-pointer"
                             onClick={() => setSelectedTaskId(t.id)}

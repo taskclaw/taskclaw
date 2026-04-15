@@ -37,6 +37,14 @@ export interface OrchestrationDetail {
   orchestration: OrchestratedTask;
   tasks: OrchestratedTask[];
   deps: Array<{ upstream_task_id: string; downstream_task_id: string }>;
+  boardTasks?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    priority: string | null;
+    board_instance_id: string | null;
+    created_at: string;
+  }>;
 }
 
 @Injectable()
@@ -315,10 +323,27 @@ export class OrchestrationService {
       }
     }
 
+    // Fetch board tasks created during this orchestration (via metadata.orchestration_id)
+    // These are tracked for the live task cards feature in the Cockpit
+    const allOrchIds = [orchestrationId, ...taskIds];
+    const boardTasksResults = await Promise.all(
+      allOrchIds.map((oid) =>
+        client
+          .from('tasks')
+          .select('id, title, status, priority, board_instance_id, created_at, metadata')
+          .eq('account_id', accountId)
+          .contains('metadata', { orchestration_id: oid })
+      )
+    );
+    const boardTasks = boardTasksResults
+      .flatMap((r) => r.data ?? [])
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
     return {
       orchestration: orchestration as OrchestratedTask,
       tasks: childTasks,
       deps,
+      boardTasks,
     };
   }
 
@@ -428,10 +453,10 @@ export class OrchestrationService {
       .eq('parent_orchestrated_task_id', orchestrationId);
 
     if (childError || !childTasks || childTasks.length === 0) {
-      // No children — update parent status and dispatch it directly
+      // No children — update parent status to 'running' and dispatch it directly
       await client
         .from('orchestrated_tasks')
-        .update({ status: 'pending', updated_at: new Date().toISOString() })
+        .update({ status: 'running', updated_at: new Date().toISOString() })
         .eq('id', orchestrationId);
       if (this.dagDispatcher) {
         this.dagDispatcher.enqueueTask(orchestrationId, 1).catch((err) => {
@@ -472,14 +497,14 @@ export class OrchestrationService {
       }
     }
 
-    // Update parent orchestration status to 'pending'
+    // Update parent orchestration status to 'running' (children are now executing)
     await client
       .from('orchestrated_tasks')
-      .update({ status: 'pending', updated_at: new Date().toISOString() })
+      .update({ status: 'running', updated_at: new Date().toISOString() })
       .eq('id', orchestrationId);
 
     this.logger.log(
-      `Orchestration approved: ${orchestrationId}, ${rootTaskIds.length} root tasks set to pending`,
+      `Orchestration approved: ${orchestrationId} → running, ${rootTaskIds.length} root tasks set to pending`,
     );
 
     // Enqueue root tasks for backbone dispatch (priority 1 = user just approved)

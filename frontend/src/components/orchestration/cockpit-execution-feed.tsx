@@ -11,7 +11,6 @@ import { Badge } from '@/components/ui/badge'
 import { approveOrchestration, rejectOrchestration, getOrchestrationDetail } from '@/app/dashboard/pods/actions'
 import { toast } from 'sonner'
 import { useTaskStore } from '@/hooks/use-task-store'
-import type { LiveTask } from '@/hooks/use-live-execution'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +38,7 @@ interface OrchDetail {
     status: string
     tasks: OrchTask[]
     pods?: { name?: string; slug?: string }
+    boardTasks?: BoardTask[]
 }
 
 function getAccountId(): string | null {
@@ -78,8 +78,16 @@ const STATUS_LABEL: Record<string, string> = {
 
 // ── Single orchestration card ───────────────────────────────────────────────
 
-function OrchCard({ meta, accountId, onStatusChange, liveStatus, liveTasks = [] }: { meta: DelegationMeta; accountId: string; onStatusChange?: (id: string, status: string) => void; liveStatus?: string; liveTasks?: LiveTask[] }) {
+interface BoardTask {
+    id: string
+    title: string
+    status: string
+    priority?: string
+}
+
+function OrchCard({ meta, accountId, onStatusChange, liveStatus }: { meta: DelegationMeta; accountId: string; onStatusChange?: (id: string, status: string) => void; liveStatus?: string }) {
     const [detail, setDetail] = useState<OrchDetail | null>(null)
+    const [boardTasks, setBoardTasks] = useState<BoardTask[]>([])
     const [expanded, setExpanded] = useState(false)
     const [approving, setApproving] = useState(false)
     const [rejecting, setRejecting] = useState(false)
@@ -99,20 +107,40 @@ function OrchCard({ meta, accountId, onStatusChange, liveStatus, liveTasks = [] 
         try {
             const result = await getOrchestrationDetail(meta.orchestration_id)
             if (result.error || !result.data) return
-            const data: OrchDetail = result.data
+            // API returns { orchestration, tasks, deps, boardTasks } — map to OrchDetail shape
+            const raw = result.data
+            const fetchedStatus: string | undefined = raw.orchestration?.status ?? raw.status
+            const data: OrchDetail = {
+                id: raw.orchestration?.id ?? raw.id ?? meta.orchestration_id,
+                goal: raw.orchestration?.goal ?? raw.goal ?? meta.goal,
+                status: fetchedStatus ?? meta.status,
+                tasks: raw.tasks ?? [],
+                pods: raw.orchestration?.pods ?? raw.pods,
+                boardTasks: raw.boardTasks,
+            }
             setDetail(data)
-            // Only update status from fetch if no liveStatus is provided
-            if (liveStatus === undefined) {
-                setStatus(data.status)
-                onStatusChange?.(meta.orchestration_id, data.status)
+            if (data.boardTasks) {
+                setBoardTasks(data.boardTasks)
+            }
+            // Only update status from fetch if no liveStatus is provided, and we got a real status
+            if (liveStatus === undefined && fetchedStatus) {
+                setStatus(fetchedStatus)
+                onStatusChange?.(meta.orchestration_id, fetchedStatus)
             }
         } catch { /* silent */ }
-    }, [meta.orchestration_id, onStatusChange, liveStatus])
+    }, [meta.orchestration_id, meta.goal, onStatusChange, liveStatus])
 
     // Fetch detail once on mount to populate task list
     useEffect(() => {
         fetchDetail()
     }, [fetchDetail])
+
+    // Poll every 5s while running to get live board task cards
+    useEffect(() => {
+        if (status !== 'running') return
+        const interval = setInterval(fetchDetail, 5000)
+        return () => clearInterval(interval)
+    }, [status, fetchDetail])
 
     const handleApprove = async () => {
         setApproving(true)
@@ -222,8 +250,8 @@ function OrchCard({ meta, accountId, onStatusChange, liveStatus, liveTasks = [] 
                 </div>
             )}
 
-            {/* Live board task cards — appear in real-time as pod agents call create_task */}
-            {liveTasks.length > 0 && (
+            {/* Board task cards — polled every 5s while running */}
+            {boardTasks.length > 0 && (
                 <div className="border-t divide-y" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
                     <div className="px-3 pt-2 pb-1 flex items-center gap-1.5">
                         <span className="text-[9px] font-bold tracking-[0.15em] uppercase"
@@ -232,10 +260,10 @@ function OrchCard({ meta, accountId, onStatusChange, liveStatus, liveTasks = [] 
                         </span>
                         <span className="text-[9px] px-1 py-0.5 rounded-full font-semibold"
                             style={{ background: 'rgba(143,245,255,0.1)', color: 'rgba(143,245,255,0.7)' }}>
-                            {liveTasks.length}
+                            {boardTasks.length}
                         </span>
                     </div>
-                    {liveTasks.map((t) => (
+                    {boardTasks.map((t) => (
                         <div key={t.id}
                             className="px-3 py-2 flex items-start gap-2 group hover:bg-white/[0.03] transition-colors cursor-pointer"
                             onClick={() => setSelectedTaskId(t.id)}
@@ -333,11 +361,9 @@ interface CockpitExecutionFeedProps {
     delegations: DelegationMeta[]
     /** Live statuses from Realtime subscription, keyed by orchestration_id */
     liveStatuses?: Record<string, string>
-    /** Live board tasks created during orchestration, keyed by orchestration_id */
-    liveTasksByOrch?: Record<string, LiveTask[]>
 }
 
-export function CockpitExecutionFeed({ delegations, liveStatuses = {}, liveTasksByOrch = {} }: CockpitExecutionFeedProps) {
+export function CockpitExecutionFeed({ delegations, liveStatuses = {} }: CockpitExecutionFeedProps) {
     const [accountId, setAccountId] = useState<string | null>(null)
     // Track live statuses reported by OrchCard children (overrides stale metadata)
     const [localLiveStatuses, setLocalLiveStatuses] = useState<Record<string, string>>({})
@@ -385,7 +411,6 @@ export function CockpitExecutionFeed({ delegations, liveStatuses = {}, liveTasks
                     accountId={accountId}
                     onStatusChange={onStatusChange}
                     liveStatus={mergedStatuses[d.orchestration_id]}
-                    liveTasks={liveTasksByOrch[d.orchestration_id]}
                 />
             ))}
         </div>

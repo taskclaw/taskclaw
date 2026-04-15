@@ -110,6 +110,8 @@ import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
 import { type DelegationMeta } from '@/components/orchestration/cockpit-execution-feed'
 import { CockpitRightPanel } from '@/components/orchestration/cockpit-right-panel'
+import { TaskDetailPanel } from '@/components/tasks/task-detail-panel'
+import { useTaskStore } from '@/hooks/use-task-store'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -146,6 +148,7 @@ function storePanels(v: { agents: boolean; timeline: boolean }) {
 export default function CockpitPage() {
     const { data: pods } = usePods()
     const { data: agents } = useAgents()
+    const selectedTaskId = useTaskStore((s) => s.selectedTaskId)
     const deletePod = useDeletePod()
     const [showCreate, setShowCreate] = useState(false)
     const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
@@ -313,6 +316,7 @@ export default function CockpitPage() {
                 </div>
             </div>
 
+            {selectedTaskId && <TaskDetailPanel />}
             <CreatePodDialog open={showCreate} onOpenChange={setShowCreate} />
             <ConfirmDeleteDialog
                 open={!!deleteTarget}

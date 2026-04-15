@@ -35,8 +35,6 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 export function useLiveExecution(accountId: string | null) {
     const [activeTasks, setActiveTasks] = useState<ActiveOrchestration[]>([])
     const [isConnected, setIsConnected] = useState(false)
-    /** Live board tasks created by pod agents, keyed by orchestration_id */
-    const [liveTasksByOrch, setLiveTasksByOrch] = useState<Record<string, LiveTask[]>>({})
 
     // Initial load of active orchestrations via server action (reads HttpOnly auth_token)
     const loadInitial = useCallback(async () => {
@@ -118,48 +116,10 @@ export function useLiveExecution(accountId: string | null) {
                 setIsConnected(status === 'SUBSCRIBED')
             })
 
-        // Subscribe to Realtime for board tasks created by pod agents during orchestration
-        const tasksChannel = supabaseBrowser
-            .channel(`live-tasks-${accountId}`)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'tasks',
-                    filter: `account_id=eq.${accountId}`,
-                },
-                (payload) => {
-                    const inserted = payload.new as any
-                    const orchId: string | undefined = inserted.metadata?.orchestration_id
-                    if (!orchId) return  // not from an orchestration — ignore
-
-                    const liveTask: LiveTask = {
-                        id: inserted.id,
-                        title: inserted.title,
-                        status: inserted.status,
-                        priority: inserted.priority || 'Medium',
-                        board_instance_id: inserted.board_instance_id,
-                        account_id: inserted.account_id,
-                        created_at: inserted.created_at,
-                        orchestration_id: orchId,
-                    }
-
-                    setLiveTasksByOrch(prev => {
-                        const existing = prev[orchId] ?? []
-                        // Avoid duplicates
-                        if (existing.some(t => t.id === liveTask.id)) return prev
-                        return { ...prev, [orchId]: [...existing, liveTask] }
-                    })
-                }
-            )
-            .subscribe()
-
         return () => {
             supabaseBrowser.removeChannel(orchChannel)
-            supabaseBrowser.removeChannel(tasksChannel)
         }
     }, [accountId, loadInitial])
 
-    return { activeTasks, isConnected, liveTasksByOrch }
+    return { activeTasks, isConnected }
 }
