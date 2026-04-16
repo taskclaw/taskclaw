@@ -395,8 +395,11 @@ export class WorkspaceContextService {
 
       if (pod.boards.length > 0) {
         const boardStr = pod.boards
-          .map((b) => `${b.name} (${b.active_task_count} active tasks)`)
-          .join(', ');
+          .map((b) => {
+            const desc = b.description ? ` — ${b.description}` : '';
+            return `${b.name}${desc} (${b.active_task_count} active tasks)`;
+          })
+          .join('; ');
         lines.push(`   Boards: ${boardStr}`);
       } else {
         lines.push(`   Boards: (none)`);

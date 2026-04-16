@@ -112,6 +112,19 @@ export function useLiveExecution(accountId: string | null) {
                     }
                 }
             )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'DELETE',
+                    schema: 'public',
+                    table: 'orchestrated_tasks',
+                    filter: `account_id=eq.${accountId}`,
+                },
+                (payload) => {
+                    const deleted = payload.old as { id: string }
+                    setActiveTasks(prev => prev.filter(t => t.id !== deleted.id))
+                }
+            )
             .subscribe((status) => {
                 setIsConnected(status === 'SUBSCRIBED')
             })

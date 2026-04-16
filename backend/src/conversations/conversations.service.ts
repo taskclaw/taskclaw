@@ -2438,11 +2438,21 @@ Rules:
 ${JSON.stringify(tools, null, 2)}
 </tool_definitions>
 
-IMPORTANT: When the user asks you to delegate work, orchestrate tasks, or coordinate pods, you MUST respond by emitting one or more <tool_call> XML blocks in your response. Use this exact format:
+IMPORTANT: When the user describes a goal, task, or workflow — even a complex multi-step one — you MUST immediately emit one or more <tool_call> XML blocks in your response. Do NOT write a plan and ask "Ready to proceed?" or "Shall I start?". Do NOT ask for confirmation. Do NOT wait for the user to say "yes" or "go ahead". The user's message IS the instruction to act.
+
+Emit the tool calls in the SAME response as your explanation. Use this exact format:
 
 <tool_call name="delegate_to_pod">
 {"pod_id": "UUID", "goal": "description of what this pod should do", "input_context": {}}
 </tool_call>
+
+ROUTING RULES — read these carefully before emitting any tool call:
+1. Match each part of the goal to the MOST SPECIFIC pod+board, using the board descriptions in <workspace_context>.
+2. If a goal spans multiple departments (e.g. "build mockup websites AND write X posts"), emit SEPARATE delegate_to_pod calls — one per pod. Do NOT bundle cross-department work into a single pod just because that pod can partially handle it.
+3. A pod with a board explicitly named for a task (e.g. "X Content Pipeline" for X/Twitter posts) ALWAYS wins over a pod that can handle it generically.
+4. Use depends_on_task_ids to chain sequential work (e.g. X posts depend on mockups being done first).
+
+For multi-step workflows, emit multiple tool_call blocks in sequence — one per pod. The platform queues them as a DAG and shows an approval card to the user before execution starts.
 
 Do NOT say the tools are unavailable or unregistered. Do NOT ask for confirmation before emitting the tool call. Just emit the XML directly in your response. The platform will parse and execute it automatically.`;
   }
@@ -2586,10 +2596,10 @@ ${JSON.stringify(tools, null, 2)}
     aiResponseText: string,
     accountId: string,
     userId: string,
-  ): Promise<{ processedText: string; toolResults: string[]; delegations: Array<{ orchestration_id: string; pod_id: string; pod_slug?: string; goal: string; status: string }> }> {
+  ): Promise<{ processedText: string; toolResults: string[]; delegations: Array<{ orchestration_id: string; pod_id: string; pod_slug?: string; pod_name?: string; goal: string; status: string }> }> {
     const toolCallPattern = /<tool_call\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/tool_call>/g;
     const toolResults: string[] = [];
-    const delegations: Array<{ orchestration_id: string; pod_id: string; pod_slug?: string; goal: string; status: string }> = [];
+    const delegations: Array<{ orchestration_id: string; pod_id: string; pod_slug?: string; pod_name?: string; goal: string; status: string }> = [];
     // Strip <tool_call> XML from the displayed text — keep only AI prose
     let processedText = aiResponseText
       .replace(/<tool_call\s[^>]*>[\s\S]*?<\/tool_call>/g, '')
@@ -2617,20 +2627,21 @@ ${JSON.stringify(tools, null, 2)}
             accountId,
             userId,
           );
-          toolResults.push(result);
+          toolResults.push(result.toolResult);
           // Extract orchestration_id from result and store delegation metadata
-          const idMatch = result.match(/Orchestration created: ([0-9a-f-]{36})/i);
+          const idMatch = result.toolResult.match(/Orchestration created: ([0-9a-f-]{36})/i);
           if (idMatch) {
             delegations.push({
               orchestration_id: idMatch[1],
               pod_id: params.pod_id,
-              pod_slug: params.pod_slug,
+              pod_slug: result.pod_slug ?? params.pod_slug,
+              pod_name: result.pod_name ?? params.pod_name,
               goal: params.goal,
               status: 'pending_approval',
             });
           }
           this.logger.log(
-            `[CockpitTools] delegate_to_pod executed for pod ${params.pod_id}`,
+            `[CockpitTools] delegate_to_pod executed for pod ${params.pod_id} (${result.pod_name ?? 'unknown'})`,
           );
         } catch (err: any) {
           this.logger.error(
@@ -2654,7 +2665,7 @@ ${JSON.stringify(tools, null, 2)}
     params: Record<string, any>,
     accountId: string,
     userId: string,
-  ): Promise<string> {
+  ): Promise<{ toolResult: string; pod_name?: string; pod_slug?: string }> {
     if (!params.pod_id) {
       throw new Error('delegate_to_pod: pod_id is required');
     }
@@ -2662,21 +2673,34 @@ ${JSON.stringify(tools, null, 2)}
       throw new Error('delegate_to_pod: goal is required');
     }
 
-    // Resolve slug → UUID if necessary
+    // Resolve slug → UUID if necessary, and always fetch pod name/slug for delegation metadata
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let resolvedPodId: string = params.pod_id;
+    let resolvedPodName: string | undefined;
+    let resolvedPodSlug: string | undefined;
+    const client = this.supabaseAdmin.getClient();
     if (!uuidPattern.test(resolvedPodId)) {
-      const client = this.supabaseAdmin.getClient();
       const { data: podRow } = await client
         .from('pods')
-        .select('id')
+        .select('id, name, slug')
         .eq('account_id', accountId)
         .eq('slug', resolvedPodId)
         .single();
       if (!podRow) {
-        return JSON.stringify({ error: `Pod not found: ${resolvedPodId}` });
+        return { toolResult: JSON.stringify({ error: `Pod not found: ${resolvedPodId}` }) };
       }
       resolvedPodId = podRow.id;
+      resolvedPodName = podRow.name;
+      resolvedPodSlug = podRow.slug;
+    } else {
+      // UUID provided — fetch name and slug
+      const { data: podRow } = await client
+        .from('pods')
+        .select('name, slug')
+        .eq('id', resolvedPodId)
+        .single();
+      resolvedPodName = podRow?.name;
+      resolvedPodSlug = podRow?.slug;
     }
 
     const orchestrationResult = await this.orchestrationService.createOrchestration(
@@ -2701,7 +2725,11 @@ ${JSON.stringify(tools, null, 2)}
       dependencyNote = ` Depends on: ${params.depends_on_task_ids.join(', ')}.`;
     }
 
-    return `<tool_result name="delegate_to_pod" status="success">Orchestration created: ${orchestrationId}.${dependencyNote}</tool_result>`;
+    return {
+      toolResult: `<tool_result name="delegate_to_pod" status="success">Orchestration created: ${orchestrationId}.${dependencyNote}</tool_result>`,
+      pod_name: resolvedPodName,
+      pod_slug: resolvedPodSlug,
+    };
   }
 
   async processPodToolCalls(

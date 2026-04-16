@@ -87,10 +87,11 @@ export class OrchestrationService {
       }
     }
 
-    // Determine parent task status — root orchestration row is always 'pending_approval' for tracking
-    // unless autonomy_level >= 3
-    const parentStatus =
-      effectiveAutonomy >= 3 ? 'pending' : 'pending_approval';
+    // Parent orchestration always starts as 'pending_approval' so the user
+    // can review the plan before execution begins — regardless of autonomy_level.
+    // autonomy_level controls how the pod executes tasks (e.g. pauses for confirmation),
+    // not whether the human approves the orchestration itself.
+    const parentStatus = 'pending_approval';
 
     // Create the parent orchestration container row
     // Store the primary pod_id (first task's pod) so the parent row can show a pod name
@@ -121,9 +122,8 @@ export class OrchestrationService {
       `Orchestration parent created: ${parentTask.id} status=${parentTask.status}`,
     );
 
-    // Determine per-task status:
-    // If autonomy_level < 3: all tasks start as 'pending_approval'
-    // If autonomy_level >= 3: tasks with no upstream deps (root tasks) → 'pending', others → 'pending_approval' until triggered
+    // All child tasks start as 'pending_approval' — they are promoted to 'pending'
+    // (and dispatched) only when the user approves the orchestration via approveOrchestration().
     const taskInserts = dto.tasks.map((t, _idx) => ({
       account_id: accountId,
       pod_id: t.pod_id,
@@ -177,30 +177,6 @@ export class OrchestrationService {
         this.logger.error(`Failed to create task deps: ${depError.message}`);
         // Not rolling back — tasks created, deps are best-effort here but log the error
         throw new Error(`Failed to create task dependencies: ${depError.message}`);
-      }
-    }
-
-    // Now set correct statuses:
-    // Root tasks (no upstream deps) get 'pending' if autonomy_level >= 3
-    if (effectiveAutonomy >= 3 && childTasks.length > 0) {
-      // Find which tasks have upstream deps
-      const hasUpstream = new Set(depInserts.map((d) => d.downstream_task_id));
-      const rootTaskIds = childTasks
-        .filter((t) => !hasUpstream.has(t.id))
-        .map((t) => t.id);
-
-      if (rootTaskIds.length > 0) {
-        await client
-          .from('orchestrated_tasks')
-          .update({ status: 'pending' })
-          .in('id', rootTaskIds);
-
-        // Reflect in returned data
-        childTasks.forEach((t) => {
-          if (rootTaskIds.includes(t.id)) {
-            t.status = 'pending';
-          }
-        });
       }
     }
 

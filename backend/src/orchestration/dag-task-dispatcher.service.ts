@@ -301,52 +301,47 @@ ${parts}
         .update({ status: 'running', updated_at: new Date().toISOString() })
         .eq('id', taskId);
 
-      // 8. Fetch pod boards so the agent knows which board_id to use with create_task
-      let podBoardsContext = '';
+      // 8. Fetch pod boards with descriptions for the decomposition prompt
+      let boards: Array<{ id: string; name: string; description: string | null }> = [];
       if (task.pod_id) {
-        const { data: boards } = await client
+        const { data: boardRows } = await client
           .from('board_instances')
-          .select('id, name')
+          .select('id, name, description')
           .eq('pod_id', task.pod_id)
           .limit(10);
-        if (boards && boards.length > 0) {
-          const boardList = boards.map((b: any) => `  - ${b.name} (board_id: ${b.id})`).join('\n');
-          podBoardsContext = `\n\n<pod_boards>\nBoards available in this pod:\n${boardList}\n</pod_boards>`;
-        }
+        boards = boardRows ?? [];
       }
 
-      // 9. Build system prompt with tool definitions so the agent can create tasks
-      const podToolDefinitions = `<tool_definitions>
-[
-  {
-    "name": "create_task",
-    "description": "Create a task on a specific board column within this pod. Use this to break down the goal into actionable board tasks.",
-    "parameters": {
-      "type": "object",
-      "required": ["board_id", "title"],
-      "properties": {
-        "board_id": { "type": "string", "description": "UUID of the board_instance to create the task on" },
-        "title": { "type": "string", "description": "Task title" },
-        "description": { "type": "string", "description": "Detailed task description or instructions" },
-        "priority": { "type": "string", "enum": ["Low", "Medium", "High", "Urgent"], "description": "Task priority level (defaults to Medium)" }
-      }
-    }
-  }
-]
-</tool_definitions>
+      const boardListJson = boards.map((b) => ({
+        board_id: b.id,
+        name: b.name,
+        description: b.description ?? '',
+      }));
 
-When executing a goal, decompose it into board tasks using create_task tool calls. Use this exact format:
-<tool_call name="create_task">
-{"board_id": "UUID", "title": "Task title", "description": "What to do", "priority": "Medium"}
-</tool_call>
-
-Emit one tool call per task. Then provide a summary of what you created.`;
-
+      // 9. Build system prompt — AI returns pure JSON, service handles all DB writes.
+      //    No XML parsing, no tool-call fragility. The AI's job is decomposition only.
       const systemPrompt =
-        `You are a TaskClaw pod agent executing a delegated goal. Decompose the goal into actionable tasks on the available boards, then provide a summary.` +
-        podBoardsContext +
-        systemPromptAddition +
-        '\n\n' + podToolDefinitions;
+        `You are a TaskClaw pod agent. Your job is to decompose a delegated goal into a list of actionable board tasks.` +
+        (systemPromptAddition ? `\n\n${systemPromptAddition}` : '') +
+        `\n\n<available_boards>\n${JSON.stringify(boardListJson, null, 2)}\n</available_boards>` +
+        `\n\nRespond with ONLY a valid JSON object — no markdown, no explanation, no preamble. Use this exact schema:
+{
+  "tasks": [
+    {
+      "board_id": "<UUID from available_boards>",
+      "title": "<short action-oriented task title>",
+      "description": "<detailed instructions for completing this task>",
+      "priority": "<Low|Medium|High|Urgent>"
+    }
+  ],
+  "summary": "<one paragraph describing what you decomposed and why>"
+}
+
+Rules:
+- Each task must use a board_id from the available_boards list above.
+- Create 2–8 tasks that fully cover the goal.
+- Distribute tasks across relevant boards based on their descriptions.
+- Do not return anything outside the JSON object.`;
 
       const result = await this.backboneRouter.send({
         accountId,
@@ -362,29 +357,57 @@ Emit one tool call per task. Then provide a summary of what you created.`;
         },
       });
 
-      // 9. Process tool calls from the AI response (e.g. create_task)
-      if (result.text.includes('<tool_call')) {
-        await this.processDagToolCalls(result.text, accountId, taskId, task.pod_id);
+      // 9. Parse JSON response and insert tasks deterministically — no XML parsing.
+      //    If the model wraps the JSON in markdown fences, strip them first.
+      let decomposition: { tasks: any[]; summary: string } | null = null;
+      try {
+        const raw = result.text.trim();
+        // Strip optional ```json ... ``` fences
+        const jsonStr = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+        decomposition = JSON.parse(jsonStr);
+      } catch (parseErr: any) {
+        this.logger.warn(
+          `[DAG] JSON parse failed for task ${taskId}: ${parseErr.message}. Raw: ${result.text.slice(0, 300)}`,
+        );
       }
+
+      let createdCount = 0;
+      if (decomposition?.tasks && Array.isArray(decomposition.tasks)) {
+        createdCount = await this.insertDecomposedTasks(
+          decomposition.tasks,
+          accountId,
+          taskId,
+          task.pod_id,
+        );
+      } else {
+        this.logger.warn(
+          `[DAG] No tasks array in decomposition for task ${taskId} — storing raw response as summary.`,
+        );
+      }
+
+      const summaryText = decomposition?.summary ?? result.text;
 
       // 10. Complete task
       await this.orchestrationService.completeTask(taskId, {
-        summary: result.text,
-        structured_output: { raw_response: result.text, usage: result.usage },
+        summary: summaryText,
+        structured_output: {
+          tasks_created: createdCount,
+          decomposition,
+          usage: result.usage,
+        },
       });
 
       const durationMs = Date.now() - startTime;
       this.logger.log(
-        `[DAG] Task ${taskId} completed in ${durationMs}ms`,
+        `[DAG] Task ${taskId} completed in ${durationMs}ms — ${createdCount} board task(s) created`,
       );
 
       // Complete execution log (F025)
       if (execLogId) {
+        const logSummary = `Created ${createdCount} task(s): ${summaryText}`;
         await this.executionLogService.complete(execLogId, {
           status: 'success',
-          summary: result.text.length > 200
-            ? result.text.slice(0, 200) + '…'
-            : result.text,
+          summary: logSummary.length > 200 ? logSummary.slice(0, 200) + '…' : logSummary,
           duration_ms: durationMs,
         });
       }
@@ -414,107 +437,82 @@ Emit one tool call per task. Then provide a summary of what you created.`;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Tool call processing for DAG dispatch (no ConversationsService dependency)
+  // ─────────────────────────────────────────────────────────────────────────
+  // Structured JSON decomposition — deterministic task insertion (Option C/D)
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * Parses tool calls from a backbone response and executes them.
-   * Currently handles: create_task — inserts board tasks with orchestration metadata
-   * so frontend can subscribe via Supabase Realtime and show live task cards.
+   * Inserts board tasks from the AI's structured JSON decomposition.
+   * The AI returns `{ tasks: [...], summary: "..." }` — this method owns
+   * all DB writes. No XML parsing, no tool-call fragility.
+   *
+   * Returns the number of tasks successfully inserted.
    */
-  private async processDagToolCalls(
-    responseText: string,
+  private async insertDecomposedTasks(
+    tasks: Array<{ board_id: string; title: string; description?: string; priority?: string }>,
     accountId: string,
     orchestratedTaskId: string,
-    _podId: string | null,
-  ): Promise<void> {
+    podId: string | null,
+  ): Promise<number> {
     const client = this.supabaseAdmin.getClient();
-    const toolCallPattern = /<tool_call\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/tool_call>/g;
 
-    let match: RegExpExecArray | null;
-    while ((match = toolCallPattern.exec(responseText)) !== null) {
-      const toolName = match[1];
-      const toolBody = match[2];
+    // Pre-fetch first board step for each unique board_id in one round-trip
+    const boardIds = [...new Set(tasks.map((t) => t.board_id).filter(Boolean))];
+    const firstStepByBoard: Record<string, { id: string; name: string; default_agent_id: string | null }> = {};
 
-      if (toolName !== 'create_task') continue;
-
-      let params: Record<string, any> = {};
-      try {
-        params = JSON.parse(toolBody.trim());
-      } catch {
-        this.logger.warn(`[DAGTools] Failed to parse JSON for create_task: ${toolBody}`);
-        continue;
-      }
-
-      if (!params.board_id || !params.title) {
-        this.logger.warn(`[DAGTools] create_task missing board_id or title`);
-        continue;
-      }
-
-      try {
-        // Resolve column/step
-        let stepId: string | null = params.column_id || null;
-        let status = 'To-Do';
-        let defaultAgentId: string | null = params.agent_id || null;
-
-        if (stepId) {
-          const { data: step } = await client
-            .from('board_steps')
-            .select('id, name, default_agent_id')
-            .eq('id', stepId)
-            .eq('board_instance_id', params.board_id)
-            .single();
-          if (step) {
-            status = step.name;
-            if (!defaultAgentId && step.default_agent_id) defaultAgentId = step.default_agent_id;
-          }
-        } else {
-          const { data: firstStep } = await client
-            .from('board_steps')
-            .select('id, name, default_agent_id')
-            .eq('board_instance_id', params.board_id)
-            .order('position', { ascending: true })
-            .limit(1)
-            .single();
-          if (firstStep) {
-            stepId = firstStep.id;
-            status = firstStep.name;
-            if (!defaultAgentId && firstStep.default_agent_id) defaultAgentId = firstStep.default_agent_id;
-          }
-        }
-
-        const { data: task, error } = await client
-          .from('tasks')
-          .insert({
-            account_id: accountId,
-            title: params.title,
-            notes: params.description || '',
-            priority: params.priority || 'Medium',
-            status,
-            board_instance_id: params.board_id,
-            current_step_id: stepId,
-            assignee_type: defaultAgentId ? 'agent' : 'none',
-            assignee_id: defaultAgentId,
-            completed: false,
-            card_data: {},
-            metadata: { orchestration_id: orchestratedTaskId },
-          })
-          .select('id')
-          .single();
-
-        if (error || !task) {
-          this.logger.error(`[DAGTools] create_task insert failed: ${error?.message}`);
-          continue;
-        }
-
-        this.logger.log(`[DAGTools] create_task executed: task_id=${task.id} orch=${orchestratedTaskId}`);
-
-        // Emit webhook so other listeners (e.g. board) know about the new task
-        this.webhookEmitter.emit(accountId, 'task.created', { task });
-      } catch (err: any) {
-        this.logger.error(`[DAGTools] create_task failed: ${err.message}`);
-      }
+    for (const boardId of boardIds) {
+      const { data: firstStep } = await client
+        .from('board_steps')
+        .select('id, name, default_agent_id')
+        .eq('board_instance_id', boardId)
+        .order('position', { ascending: true })
+        .limit(1)
+        .single();
+      if (firstStep) firstStepByBoard[boardId] = firstStep;
     }
+
+    let created = 0;
+    for (const params of tasks) {
+      if (!params.board_id || !params.title) {
+        this.logger.warn(`[DAGTasks] Skipping task missing board_id or title: ${JSON.stringify(params)}`);
+        continue;
+      }
+
+      const step = firstStepByBoard[params.board_id] ?? null;
+      const stepId = step?.id ?? null;
+      const status = step?.name ?? 'To-Do';
+      const defaultAgentId = step?.default_agent_id ?? null;
+
+      const { data: inserted, error } = await client
+        .from('tasks')
+        .insert({
+          account_id: accountId,
+          title: params.title,
+          notes: params.description ?? '',
+          priority: params.priority ?? 'Medium',
+          status,
+          board_instance_id: params.board_id,
+          current_step_id: stepId,
+          assignee_type: defaultAgentId ? 'agent' : 'none',
+          assignee_id: defaultAgentId,
+          completed: false,
+          card_data: {},
+          metadata: { orchestration_id: orchestratedTaskId, pod_id: podId },
+        })
+        .select('id')
+        .single();
+
+      if (error || !inserted) {
+        this.logger.error(`[DAGTasks] Insert failed for "${params.title}": ${error?.message}`);
+        continue;
+      }
+
+      this.logger.log(`[DAGTasks] Created task ${inserted.id}: "${params.title}" on board ${params.board_id}`);
+      this.webhookEmitter.emit(accountId, 'task.created', { task: inserted });
+      created++;
+    }
+
+    return created;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
