@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PodsService } from './pods.service';
+import { PodBundleService } from './pod-bundle.service';
 import { CreatePodDto } from './dto/create-pod.dto';
 import { UpdatePodDto } from './dto/update-pod.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
@@ -19,7 +20,10 @@ import { AuthGuard } from '../common/guards/auth.guard';
 @Controller('accounts/:accountId/pods')
 @UseGuards(AuthGuard)
 export class PodsController {
-  constructor(private readonly podsService: PodsService) {}
+  constructor(
+    private readonly podsService: PodsService,
+    private readonly bundleService: PodBundleService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all pods' })
@@ -35,6 +39,28 @@ export class PodsController {
     @Param('slug') slug: string,
   ) {
     return this.podsService.findBySlug(req.user.id, accountId, slug);
+  }
+
+  // PRD §6 — pod bundle export/import. Routes declared before `:podId`
+  // routes so the literal /import path wins NestJS routing.
+  @Post('import')
+  @ApiOperation({ summary: 'Import a Pod Bundle (PRD §6)' })
+  importBundle(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Body() body: unknown,
+  ) {
+    return this.bundleService.import(accountId, body);
+  }
+
+  @Get(':podId/export')
+  @ApiOperation({ summary: 'Export a Pod as a portable bundle' })
+  exportBundle(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('podId') podId: string,
+  ) {
+    return this.bundleService.export(accountId, podId);
   }
 
   @Get(':podId')
