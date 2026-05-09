@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge'
 import { usePod, usePodBoards } from '@/hooks/use-pods'
 import { useAgents } from '@/hooks/use-agents'
 import { PodContextSidebar } from '@/components/orchestration/pod-context-sidebar'
+import { SlashPalette, type SlashSelection } from '@/components/chat/slash-palette'
 
 interface Message {
     id?: string
@@ -634,7 +635,17 @@ export function BoardAIChat({
                 </div>
 
                 {/* Input — hidden when no backbone is configured */}
-                <div className={cn('p-3 border-t shrink-0', isNoBackboneError(error) && 'hidden')}>
+                <div className={cn('p-3 border-t shrink-0 relative', isNoBackboneError(error) && 'hidden')}>
+                    <SlashPalette
+                        open={input.startsWith('/')}
+                        query={input.startsWith('/') ? input.slice(1) : ''}
+                        onQueryChange={(q) => setInput('/' + q)}
+                        onSelect={(sel: SlashSelection) => {
+                            setInput(`[/${sel.skill.name}] `)
+                            requestAnimationFrame(() => inputRef.current?.focus())
+                        }}
+                        onClose={() => { if (input.startsWith('/')) setInput('') }}
+                    />
                     <div className="flex items-center gap-2">
                         <input
                             ref={inputRef}
@@ -642,10 +653,12 @@ export function BoardAIChat({
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => {
+                                // Let cmdk handle keys while the palette is open
+                                if (input.startsWith('/')) return
                                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
                                 if (e.key === 'Escape') handleClose()
                             }}
-                            placeholder={placeholder}
+                            placeholder={placeholder + '  ·  Try / for skills'}
                             disabled={isSending || isProcessing || !conversationId}
                             className="flex-1 bg-accent/50 border border-border rounded-lg px-3 py-2 text-sm placeholder-muted-foreground outline-none focus:border-primary/30 transition-colors disabled:opacity-50"
                         />

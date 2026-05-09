@@ -63,6 +63,18 @@ export class SyncsController {
     return this.syncs.listRuns(accountId, id, limit ? Number(limit) : undefined);
   }
 
+  /**
+   * What this sync pulled in. Used by the Syncs UI to let users expand a
+   * card and see exactly which skills were imported.
+   */
+  @Get(':id/skills')
+  listSkills(
+    @Param('accountId', new ParseUUIDPipe()) accountId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.syncs.listSkills(accountId, id);
+  }
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useCallback, useEffect, useState, useTransition } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,8 @@ import {
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   FolderOpen,
   Github,
   Loader2,
@@ -41,10 +43,12 @@ import {
   createSync,
   deleteSync,
   listSyncs,
+  listSyncSkills,
   runSync,
   updateSync,
   type SyncRow,
   type CreateSyncInput,
+  type SyncSkill,
 } from './actions';
 
 type SourceKind = SyncRow['source_kind'];
@@ -219,68 +223,15 @@ export default function SyncsPage() {
         <ul className="space-y-3">
           {syncs.map((s) => (
             <li key={s.id}>
-              <Card>
-                <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{s.name}</span>
-                      <Badge variant="outline">{s.sync_type}</Badge>
-                      <Badge variant="outline">{s.source_kind}</Badge>
-                      {statusBadge(s.last_status)}
-                      {!s.enabled && <Badge variant="outline">Paused</Badge>}
-                    </div>
-                    <p className="break-all text-xs text-muted-foreground">
-                      {summarizeConfig(s)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Last run: {relativeTime(s.last_run_at)}
-                      {s.schedule_cron ? ` · Schedule: ${s.schedule_cron}` : ' · Manual only'}
-                    </p>
-                    {s.last_error && (
-                      <p className="text-xs text-destructive">{s.last_error}</p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 flex-row gap-2">
-                    <Button
-                      size="sm"
-                      variant="default"
-                      onClick={() => onRun(s.id)}
-                      disabled={runningIds.has(s.id) || !s.enabled}
-                    >
-                      {runningIds.has(s.id) ? (
-                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                      ) : (
-                        <RefreshCw className="mr-1 h-3 w-3" />
-                      )}
-                      Sync now
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => onToggleEnabled(s)}
-                      disabled={pending}
-                    >
-                      {s.enabled ? (
-                        <>
-                          <Pause className="mr-1 h-3 w-3" /> Pause
-                        </>
-                      ) : (
-                        <>
-                          <Play className="mr-1 h-3 w-3" /> Resume
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => onDelete(s)}
-                      title="Delete"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+              <SyncCard
+                sync={s}
+                running={runningIds.has(s.id)}
+                pending={pending}
+                onRun={() => onRun(s.id)}
+                onToggleEnabled={() => onToggleEnabled(s)}
+                onDelete={() => onDelete(s)}
+                lastRunIso={s.last_run_at}
+              />
             </li>
           ))}
         </ul>
@@ -308,6 +259,226 @@ function summarizeConfig(s: SyncRow): string {
     return typeof cfg.repo_url === 'string' ? cfg.repo_url : '(no repo)';
   }
   return JSON.stringify(cfg);
+}
+
+/**
+ * SyncCard — one row in the Syncs list, with an expandable "Imported skills"
+ * section so users can see exactly what the sync pulled in. Skills are
+ * lazy-loaded the first time the user opens the section, then re-fetched
+ * after every successful "Sync now" so the count stays fresh.
+ */
+function SyncCard({
+  sync,
+  running,
+  pending,
+  onRun,
+  onToggleEnabled,
+  onDelete,
+  lastRunIso,
+}: {
+  sync: SyncRow;
+  running: boolean;
+  pending: boolean;
+  onRun: () => Promise<void> | void;
+  onToggleEnabled: () => void;
+  onDelete: () => void;
+  lastRunIso: string | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [skills, setSkills] = useState<SyncSkill[] | null>(null);
+  const [loadingSkills, setLoadingSkills] = useState(false);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+
+  const loadSkills = useCallback(async () => {
+    setLoadingSkills(true);
+    setSkillsError(null);
+    try {
+      const rows = await listSyncSkills(sync.id);
+      setSkills(rows);
+    } catch (err) {
+      setSkillsError(err instanceof Error ? err.message : 'Failed to load skills');
+    } finally {
+      setLoadingSkills(false);
+    }
+  }, [sync.id]);
+
+  // Lazy-load on first expand
+  useEffect(() => {
+    if (expanded && skills === null) {
+      void loadSkills();
+    }
+  }, [expanded, skills, loadSkills]);
+
+  // Re-fetch after a successful run (last_run_at changes)
+  useEffect(() => {
+    if (expanded && skills !== null) {
+      void loadSkills();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastRunIso]);
+
+  async function handleRun() {
+    await onRun();
+    // If the section is open, refresh after the run finishes.
+    if (expanded) await loadSkills();
+  }
+
+  const itemCount = skills?.length ?? null;
+  const missingFromDisk = skills?.filter((s) => s.locally_available === false).length ?? 0;
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="-ml-1 rounded p-1 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                title={expanded ? 'Hide imported skills' : 'Show imported skills'}
+                aria-expanded={expanded}
+              >
+                {expanded ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+              </button>
+              <span className="font-medium">{sync.name}</span>
+              <Badge variant="outline">{sync.sync_type}</Badge>
+              <Badge variant="outline">{sync.source_kind}</Badge>
+              {statusBadge(sync.last_status)}
+              {!sync.enabled && <Badge variant="outline">Paused</Badge>}
+              {itemCount !== null && (
+                <Badge variant="secondary" className="font-mono text-[10px]">
+                  {itemCount} item{itemCount === 1 ? '' : 's'}
+                </Badge>
+              )}
+            </div>
+            <p className="break-all text-xs text-muted-foreground">{summarizeConfig(sync)}</p>
+            <p className="text-xs text-muted-foreground">
+              Last run: {relativeTime(sync.last_run_at)}
+              {sync.schedule_cron ? ` · Schedule: ${sync.schedule_cron}` : ' · Manual only'}
+            </p>
+            {sync.last_error && <p className="text-xs text-destructive">{sync.last_error}</p>}
+          </div>
+          <div className="flex shrink-0 flex-row gap-2">
+            <Button
+              size="sm"
+              variant="default"
+              onClick={handleRun}
+              disabled={running || !sync.enabled}
+            >
+              {running ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-1 h-3 w-3" />
+              )}
+              Sync now
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onToggleEnabled}
+              disabled={pending}
+            >
+              {sync.enabled ? (
+                <>
+                  <Pause className="mr-1 h-3 w-3" /> Pause
+                </>
+              ) : (
+                <>
+                  <Play className="mr-1 h-3 w-3" /> Resume
+                </>
+              )}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onDelete} title="Delete">
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
+
+        {expanded && (
+          <div className="mt-4 border-t pt-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Imported {sync.sync_type}{' '}
+                {missingFromDisk > 0 && (
+                  <span className="ml-2 text-amber-600 normal-case font-normal">
+                    ({missingFromDisk} no longer on disk)
+                  </span>
+                )}
+              </p>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 text-xs"
+                onClick={() => void loadSkills()}
+                disabled={loadingSkills}
+              >
+                {loadingSkills ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+                <span className="ml-1">Refresh</span>
+              </Button>
+            </div>
+            {skillsError && (
+              <p className="text-xs text-destructive">{skillsError}</p>
+            )}
+            {!skillsError && loadingSkills && skills === null && (
+              <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" /> Loading…
+              </div>
+            )}
+            {!skillsError && skills !== null && skills.length === 0 && (
+              <p className="py-2 text-xs text-muted-foreground">
+                Nothing imported yet. Run the sync to scan the source.
+              </p>
+            )}
+            {!skillsError && skills !== null && skills.length > 0 && (
+              <ul className="max-h-60 space-y-1 overflow-y-auto pr-1">
+                {skills.map((sk) => (
+                  <li
+                    key={sk.id}
+                    className="flex items-baseline justify-between gap-2 rounded px-2 py-1 text-xs hover:bg-muted/30"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-mono text-foreground">{sk.name}</span>
+                        {sk.source_version && (
+                          <Badge variant="outline" className="text-[10px]">
+                            v{sk.source_version}
+                          </Badge>
+                        )}
+                        {sk.locally_available === false && (
+                          <Badge variant="outline" className="text-[10px] text-amber-600">
+                            removed
+                          </Badge>
+                        )}
+                      </div>
+                      {sk.description && (
+                        <p className="line-clamp-1 text-muted-foreground">
+                          {sk.description}
+                        </p>
+                      )}
+                    </div>
+                    {sk.source_uri && (
+                      <span className="shrink-0 truncate font-mono text-[10px] text-muted-foreground/70">
+                        {sk.source_uri.replace(/^file:\/\//, '')}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function CreateSyncDialog({
