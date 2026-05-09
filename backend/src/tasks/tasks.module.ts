@@ -8,6 +8,7 @@ import { AdaptersModule } from '../adapters/adapters.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { BoardRoutingModule } from '../board-routing/board-routing.module';
 import { HeartbeatModule } from '../heartbeat/heartbeat.module';
+import { MentionModule } from '../mention/mention.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { HeartbeatModule } from '../heartbeat/heartbeat.module';
     forwardRef(() => ConversationsModule),
     forwardRef(() => BoardRoutingModule),
     forwardRef(() => HeartbeatModule),
+    MentionModule,
   ],
   controllers: [TasksController],
   providers: [TasksService],
