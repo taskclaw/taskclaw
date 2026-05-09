@@ -112,6 +112,7 @@ import { type DelegationMeta } from '@/components/orchestration/cockpit-executio
 import { CockpitRightPanel } from '@/components/orchestration/cockpit-right-panel'
 import { TaskDetailPanel } from '@/components/tasks/task-detail-panel'
 import { useTaskStore } from '@/hooks/use-task-store'
+import { useBlockedTasks } from '@/hooks/use-blocked-tasks'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -171,6 +172,9 @@ export default function CockpitPage() {
     // Lifted delegations state — passed to CockpitRightPanel
     const [allDelegations, setAllDelegations] = useState<DelegationMeta[]>([])
     const [cockpitAccountId, setCockpitAccountId] = useState<string | null>(null)
+
+    // Blocked tasks — Realtime subscription feeds into CockpitRightPanel alert section
+    const { blockedTasks } = useBlockedTasks(cockpitAccountId)
 
     // Read account ID from cookie client-side
     useEffect(() => {
@@ -310,6 +314,7 @@ export default function CockpitPage() {
                         <CockpitRightPanel
                             sessionDelegations={allDelegations}
                             accountId={cockpitAccountId}
+                            blockedTasks={blockedTasks}
                         >
                             <WorkspaceTimeline onSelectLog={handleContinueSession} />
                         </CockpitRightPanel>

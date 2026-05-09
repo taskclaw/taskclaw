@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
     CheckCircle2, XCircle, Clock, Play, ChevronDown, ChevronRight,
-    Loader2, RefreshCw, ThumbsUp, X, ExternalLink, Activity,
+    Loader2, RefreshCw, ThumbsUp, X, ExternalLink, Activity, AlertTriangle,
 } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -56,6 +56,7 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
     completed: <CheckCircle2 className="w-3 h-3 text-green-400" />,
     failed: <XCircle className="w-3 h-3 text-red-400" />,
     cancelled: <XCircle className="w-3 h-3 text-slate-500" />,
+    blocked: <AlertTriangle className="w-3 h-3 text-amber-400" />,
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -83,6 +84,7 @@ interface BoardTask {
     title: string
     status: string
     priority?: string
+    metadata?: Record<string, any>
 }
 
 function OrchCard({ meta, accountId, onStatusChange, liveStatus }: { meta: DelegationMeta; accountId: string; onStatusChange?: (id: string, status: string) => void; liveStatus?: string }) {
@@ -219,6 +221,13 @@ function OrchCard({ meta, accountId, onStatusChange, liveStatus }: { meta: Deleg
                                 {boardTasks.length} task{boardTasks.length !== 1 ? 's' : ''}
                             </span>
                         )}
+                        {boardTasks.some(t => t.status === 'blocked') && (
+                            <span className="flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
+                                style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.2)' }}>
+                                <AlertTriangle className="w-2.5 h-2.5" />
+                                blocked
+                            </span>
+                        )}
                     </div>
                     <p className="text-[10px] mt-0.5 line-clamp-2" style={{ color: 'rgba(255,255,255,0.45)' }}>
                         {meta.goal}
@@ -277,29 +286,43 @@ function OrchCard({ meta, accountId, onStatusChange, liveStatus }: { meta: Deleg
                             )}
                         </div>
                     )}
-                    {boardTasks.map((t) => (
-                        <div key={t.id}
-                            className="px-3 py-2 flex items-start gap-2 group hover:bg-white/[0.03] transition-colors cursor-pointer"
-                            onClick={() => setSelectedTaskId(t.id)}
-                        >
-                            <div className="mt-0.5 shrink-0">
-                                {STATUS_ICON[t.status] ?? STATUS_ICON.pending}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-[10px] leading-snug font-medium"
-                                    style={{ color: 'rgba(255,255,255,0.8)' }}>
-                                    {t.title}
-                                </p>
-                                <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                                    {t.priority} · {t.status}
+                    {boardTasks.map((t) => {
+                        const isBlocked = t.status === 'blocked'
+                        const blockerReason = (t as any).metadata?.blocker?.reason
+                        return (
+                            <div key={t.id}
+                                className="px-3 py-2 flex items-start gap-2 group hover:bg-white/[0.03] transition-colors cursor-pointer"
+                                style={isBlocked ? { background: 'rgba(245,158,11,0.04)' } : undefined}
+                                onClick={() => setSelectedTaskId(t.id)}
+                            >
+                                <div className="mt-0.5 shrink-0">
+                                    {isBlocked
+                                        ? <AlertTriangle className="w-3 h-3 text-amber-400" />
+                                        : (STATUS_ICON[t.status] ?? STATUS_ICON.pending)
+                                    }
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[10px] leading-snug font-medium"
+                                        style={{ color: isBlocked ? 'rgba(245,158,11,0.9)' : 'rgba(255,255,255,0.8)' }}>
+                                        {t.title}
+                                    </p>
+                                    {isBlocked && blockerReason ? (
+                                        <p className="text-[9px] mt-0.5 line-clamp-2" style={{ color: 'rgba(245,158,11,0.55)' }}>
+                                            {blockerReason}
+                                        </p>
+                                    ) : (
+                                        <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                                            {t.priority} · {t.status}
+                                        </span>
+                                    )}
+                                </div>
+                                <span className="opacity-0 group-hover:opacity-100 text-[9px] px-1.5 py-0.5 rounded shrink-0 transition-opacity"
+                                    style={{ background: 'rgba(143,245,255,0.1)', color: 'rgba(143,245,255,0.7)' }}>
+                                    Open
                                 </span>
                             </div>
-                            <span className="opacity-0 group-hover:opacity-100 text-[9px] px-1.5 py-0.5 rounded shrink-0 transition-opacity"
-                                style={{ background: 'rgba(143,245,255,0.1)', color: 'rgba(143,245,255,0.7)' }}>
-                                Open
-                            </span>
-                        </div>
-                    ))}
+                        )
+                    })}
 
                     {/* Footer: view in pod */}
                     {podSlug && (

@@ -16,6 +16,8 @@ import {
     Trash2,
     ChevronDown,
     ChevronRight,
+    AlertTriangle,
+    CheckCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTaskStore } from '@/hooks/use-task-store'
@@ -28,6 +30,7 @@ import type { Category } from '@/types/task'
 import type { BoardStep } from '@/types/board'
 import { cn } from '@/lib/utils'
 import { TaskAIChat } from './task-ai-chat'
+import { resolveTaskBlocker } from '@/app/dashboard/tasks/actions'
 import { MarkdownEditor } from './markdown-editor'
 import { BackbonePicker } from '@/components/backbones/backbone-picker'
 import { SchemaFieldRenderer } from '@/components/boards/schema-field-renderer'
@@ -277,6 +280,40 @@ export function TaskDetailPanel({ categories = [], boardSteps }: TaskDetailPanel
                                     </h2>
                                 )}
                             </div>
+
+                            {/* Blocker banner */}
+                            {task.status === 'blocked' && task.metadata?.blocker && (
+                                <div className="mx-6 mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                                    <div className="flex items-start gap-2">
+                                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-0.5">
+                                                Blocked
+                                            </p>
+                                            <p className="text-xs text-amber-200/80 leading-snug">
+                                                {(task.metadata.blocker as any).reason}
+                                            </p>
+                                            {(task.metadata.blocker as any).suggested_resolution && (
+                                                <p className="text-[11px] text-amber-300/60 mt-1 leading-snug">
+                                                    Suggestion: {(task.metadata.blocker as any).suggested_resolution}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <button
+                                            onClick={async () => {
+                                                const result = await resolveTaskBlocker(task.id)
+                                                if (result.error) toast.error(result.error)
+                                                else toast.success('Blocker resolved — task is in progress')
+                                            }}
+                                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold shrink-0 transition-colors"
+                                            style={{ background: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.25)' }}
+                                        >
+                                            <CheckCheck className="w-3 h-3" />
+                                            Resolve
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Metadata */}
                             <div className="px-6 py-3 grid grid-cols-2 gap-y-3 gap-x-6 border-b border-border">

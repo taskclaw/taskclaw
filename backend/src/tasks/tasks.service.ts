@@ -16,6 +16,7 @@ import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { ConversationsService } from '../conversations/conversations.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 import { DAGExecutorService } from '../board-routing/dag-executor.service';
+import { ExecutionLogService } from '../heartbeat/execution-log.service';
 
 interface TaskFilters {
   category_id?: string;
@@ -41,6 +42,7 @@ export class TasksService {
     private readonly webhookEmitter: WebhookEmitterService,
     @Inject(forwardRef(() => DAGExecutorService))
     private readonly dagExecutor: DAGExecutorService,
+    private readonly executionLog: ExecutionLogService,
   ) {}
 
   async findAll(
@@ -808,5 +810,133 @@ export class TasksService {
       last_synced_at: task.last_synced_at,
       source: task.sources,
     };
+  }
+
+  /**
+   * Report a blocker on a task, escalating it to the pod and cockpit.
+   *
+   * Sets task.status = 'blocked' and stores the blocker details in metadata.
+   * Writes an execution_log entry so the cockpit timeline shows the event.
+   * Emits a webhook event for external integrations.
+   *
+   * Supabase Realtime broadcasts the tasks UPDATE automatically, so the
+   * cockpit UI will receive the blocker notification without polling.
+   */
+  async reportBlocker(
+    userId: string,
+    accountId: string,
+    taskId: string,
+    dto: {
+      reason: string;
+      blocker_type?: 'dependency' | 'external_tool' | 'missing_data' | 'human_required';
+      suggested_resolution?: string;
+    },
+    accessToken?: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    const task = await this.findOne(userId, accountId, taskId, accessToken);
+
+    const blockerMeta = {
+      reason: dto.reason,
+      blocker_type: dto.blocker_type ?? 'missing_data',
+      suggested_resolution: dto.suggested_resolution ?? null,
+      reported_at: new Date().toISOString(),
+    };
+
+    // Merge blocker into existing metadata, preserve other fields
+    const updatedMetadata = {
+      ...(task.metadata ?? {}),
+      blocker: blockerMeta,
+    };
+
+    const { data: updatedTask, error } = await client
+      .from('tasks')
+      .update({
+        status: 'blocked',
+        metadata: updatedMetadata,
+      })
+      .eq('id', taskId)
+      .eq('account_id', accountId)
+      .select('*, categories:categories!category_id(id, name, color), assignee_agent:agents!assignee_id(id, name)')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to report blocker: ${error.message}`);
+    }
+
+    // Log execution event — appears in 24H cockpit timeline
+    await this.executionLog.create({
+      account_id: accountId,
+      trigger_type: 'manual',
+      status: 'error',
+      task_id: taskId,
+      board_id: task.board_instance_id ?? undefined,
+      summary: `Blocker reported: ${dto.reason}`,
+      error_details: dto.suggested_resolution ?? undefined,
+      metadata: {
+        blocker_type: dto.blocker_type ?? 'missing_data',
+        task_title: task.title,
+      },
+    });
+
+    // Emit webhook for external integrations
+    this.webhookEmitter.emit(accountId, 'task.blocked', {
+      task: updatedTask,
+      blocker: blockerMeta,
+    });
+
+    this.logger.log(`Blocker reported on task ${taskId}: ${dto.reason}`);
+
+    return { task: updatedTask, blocker: blockerMeta };
+  }
+
+  /**
+   * Resolve a blocker on a task, restoring it to its previous active status.
+   */
+  async resolveBlocker(
+    userId: string,
+    accountId: string,
+    taskId: string,
+    accessToken?: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    const task = await this.findOne(userId, accountId, taskId, accessToken);
+
+    // Remove the blocker from metadata
+    const { blocker: _removed, ...metadataWithoutBlocker } = (task.metadata ?? {}) as any;
+
+    const { data: updatedTask, error } = await client
+      .from('tasks')
+      .update({
+        status: 'in_progress',
+        metadata: metadataWithoutBlocker,
+      })
+      .eq('id', taskId)
+      .eq('account_id', accountId)
+      .select('*, categories:categories!category_id(id, name, color), assignee_agent:agents!assignee_id(id, name)')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to resolve blocker: ${error.message}`);
+    }
+
+    await this.executionLog.create({
+      account_id: accountId,
+      trigger_type: 'manual',
+      status: 'success',
+      task_id: taskId,
+      board_id: task.board_instance_id ?? undefined,
+      summary: `Blocker resolved on task: ${task.title}`,
+    });
+
+    this.webhookEmitter.emit(accountId, 'task.blocker_resolved', { task: updatedTask });
+
+    this.logger.log(`Blocker resolved on task ${taskId}`);
+
+    return { task: updatedTask };
   }
 }

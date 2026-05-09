@@ -75,6 +75,7 @@ export const STATUS_COLORS: Record<string, string> = {
   'AI Running': '#E63B3B',
   'In Review': '#a855f7',
   Done: '#22c55e',
+  blocked: '#f59e0b',
 }
 
 export const PRIORITY_COLORS: Record<string, string> = {
