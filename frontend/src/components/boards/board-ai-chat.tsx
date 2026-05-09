@@ -26,8 +26,7 @@ import { Badge } from '@/components/ui/badge'
 import { usePod, usePodBoards } from '@/hooks/use-pods'
 import { useAgents } from '@/hooks/use-agents'
 import { PodContextSidebar } from '@/components/orchestration/pod-context-sidebar'
-import { SlashPalette, type SlashPaletteHandle, type SlashSelection } from '@/components/chat/slash-palette'
-import { useSlashTrigger } from '@/hooks/use-slash-trigger'
+import { SkillPaletteHost } from '@/components/chat/skill-palette-host'
 
 interface Message {
     id?: string
@@ -746,38 +745,28 @@ function BoardChatInput({
     handleClose: () => void
     hide: boolean
 }) {
-    const slash = useSlashTrigger(input, setInput, inputRef as any)
-    const paletteRef = useRef<SlashPaletteHandle | null>(null)
     return (
-        <div className={cn('p-3 border-t shrink-0 relative', hide && 'hidden')}>
-            <SlashPalette
-                ref={paletteRef}
-                open={slash.open}
-                query={slash.query}
-                onSelect={(sel: SlashSelection) => slash.insertChip(`[/${sel.skill.name}] `)}
-                onClose={slash.close}
-            />
+        <div className={cn('p-3 border-t shrink-0', hide && 'hidden')}>
             <div className="flex items-center gap-2">
-                <input
-                    ref={inputRef}
-                    type="text"
+                <SkillPaletteHost
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (slash.open) {
-                            if (e.key === 'ArrowDown') { e.preventDefault(); paletteRef.current?.highlightDelta(1); return }
-                            if (e.key === 'ArrowUp') { e.preventDefault(); paletteRef.current?.highlightDelta(-1); return }
-                            if (e.key === 'Enter') { e.preventDefault(); paletteRef.current?.activate(); return }
-                            if (e.key === 'Escape') { e.preventDefault(); slash.close(); return }
-                            return
-                        }
+                    setValue={setInput}
+                    externalRef={inputRef as any}
+                    onInputKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
                         if (e.key === 'Escape') handleClose()
                     }}
-                    placeholder={placeholder + '  ·  Type / for skills'}
-                    disabled={isSending || isProcessing || !conversationId}
-                    className="flex-1 bg-accent/50 border border-border rounded-lg px-3 py-2 text-sm placeholder-muted-foreground outline-none focus:border-primary/30 transition-colors disabled:opacity-50"
-                />
+                    className="flex-1"
+                >
+                    <input
+                        type="text"
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        placeholder={placeholder + '  ·  Type / for skills'}
+                        disabled={isSending || isProcessing || !conversationId}
+                        className="w-full bg-accent/50 border border-border rounded-lg px-3 py-2 text-sm placeholder-muted-foreground outline-none focus:border-primary/30 transition-colors disabled:opacity-50"
+                    />
+                </SkillPaletteHost>
                 <button
                     onClick={handleSend}
                     disabled={!input.trim() || isSending || isProcessing || !conversationId}

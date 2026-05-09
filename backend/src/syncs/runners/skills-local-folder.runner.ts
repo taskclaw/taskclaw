@@ -90,12 +90,16 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
     // Upsert into DB.
     const client = this.supabaseAdmin.getClient();
 
-    // 1. Existing disk-scan rows for this account, keyed by source_uri.
+    // 1. Existing rows owned BY THIS SYNC, keyed by source_uri. Earlier we
+    //    looked at every disk-scan row in the account, which meant scans of
+    //    one sync clobbered the locally_available flag on rows owned by
+    //    OTHER syncs. Scope tight.
     const { data: existing } = await client
       .from('skills')
       .select('id, source_uri, source_version, name, description, locally_available')
       .eq('account_id', sync.account_id)
-      .eq('source_type', 'disk-scan');
+      .eq('source_type', 'disk-scan')
+      .eq('source_sync_id', sync.id);
 
     const existingByUri = new Map(
       (existing ?? []).map((row: any) => [row.source_uri as string, row]),
@@ -115,7 +119,10 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
           account_id: sync.account_id,
           name: safeName,
           description: parsed.description ?? null,
-          instructions: parsed.body,
+          // skills.instructions has a 50KB CHECK constraint; SKILL.md bodies
+          // sometimes exceed it. Truncate with a marker so the row still
+          // inserts and the user sees what was clipped.
+          instructions: this.clampInstructions(parsed.body),
           is_active: true,
           source_type: 'disk-scan',
           source_uri: parsed.source_uri,
@@ -142,7 +149,7 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
           .from('skills')
           .update({
             description: parsed.description ?? null,
-            instructions: parsed.body,
+            instructions: this.clampInstructions(parsed.body),
             source_version: parsed.version ?? null,
             source_sync_id: sync.id,
             locally_available: true,
@@ -241,10 +248,11 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
   }
 
   /**
-   * Walk a root directory looking for SKILL.md files. Bounded depth (5)
-   * to prevent runaway scans.
+   * Walk a root directory looking for SKILL.md files. Bounded depth (8) to
+   * prevent runaway scans — but enough to handle realistic monorepo layouts
+   * like ~/Workspace/<org>/<project>/.claude/skills/<skill>/SKILL.md (depth 6).
    */
-  private async scanRoot(root: string, depth = 0, maxDepth = 5): Promise<ParsedSkill[]> {
+  private async scanRoot(root: string, depth = 0, maxDepth = 8): Promise<ParsedSkill[]> {
     const out: ParsedSkill[] = [];
     let stat;
     try {
@@ -280,14 +288,36 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
     return out;
   }
 
+  /**
+   * Directories we never recurse into. Critically we DO walk into well-known
+   * dot-dirs that hold skills (`.claude`, `.cursor`, `.copilot`, `.config`,
+   * `.opencode`) — earlier versions skipped every dot-dir which silently
+   * dropped repo-scoped skill folders nested under ~/Workspace/<repo>/.claude/.
+   */
   private shouldSkipDir(name: string): boolean {
-    return (
-      name.startsWith('.') ||
-      name === 'node_modules' ||
-      name === 'dist' ||
-      name === 'build' ||
-      name === '__pycache__'
-    );
+    const noise = new Set([
+      'node_modules',
+      'dist',
+      'build',
+      'out',
+      '.next',
+      '.turbo',
+      '.svelte-kit',
+      '.cache',
+      '.git',
+      '.github',
+      '.idea',
+      '.vscode',
+      '.DS_Store',
+      '__pycache__',
+      'venv',
+      '.venv',
+      'target',
+      'coverage',
+      '.pytest_cache',
+      '.mypy_cache',
+    ]);
+    return noise.has(name);
   }
 
   private async parseSkillFile(absolute: string): Promise<ParsedSkill | null> {
@@ -384,6 +414,19 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
    * share names with already-existing custom skills; in that case append
    * `-disk`, `-disk-2`, etc.
    */
+  /**
+   * skills.instructions has a 50KB CHECK constraint; very long SKILL.md
+   * files (notably some scaffold + connector docs) exceed it. We truncate
+   * with a visible marker so the row still inserts and the user can see
+   * that something was clipped.
+   */
+  private clampInstructions(body: string): string {
+    const MAX = 51000; // a hair under the 51200 ceiling so leading text fits
+    if (body.length <= MAX) return body;
+    const trailer = '\n\n---\n*[truncated by Skills Sync — original SKILL.md is longer than 50KB]*\n';
+    return body.slice(0, MAX - trailer.length) + trailer;
+  }
+
   private sanitizeName(name: string): string {
     const cleaned = name.replace(/[^A-Za-z0-9_:.-]+/g, '-').slice(0, 100);
     return cleaned || 'unnamed-skill';

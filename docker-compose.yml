@@ -39,11 +39,13 @@ services:
       FEATURE_TASK_RUNS_V2: ${FEATURE_TASK_RUNS_V2:-true}
     volumes:
       - ./backend/dist:/app/dist
-      # Opt-in read-only mount for Skills Sync local-folder runner (PRD §4.6).
-      # Set SKILLS_HOST_DIR in your shell env (e.g. SKILLS_HOST_DIR=$HOME/.claude
-      # docker compose up -d) to expose your CLI skill folders to the runner.
-      # Falls back to /tmp when unset to keep the mount harmless.
+      # Opt-in read-only mounts for Skills Sync local-folder runner (PRD §4.6).
+      # SKILLS_HOST_DIR  — usually ~/.claude (default skill location).
+      # WORKSPACE_HOST_DIR — usually ~/Workspace; any repo-scoped
+      #                      .claude/skills inside gets picked up too.
+      # Both fall back to /tmp when unset so the mount stays harmless.
       - ${SKILLS_HOST_DIR:-/tmp}:/host-skills:ro
+      - ${WORKSPACE_HOST_DIR:-/tmp}:/host-workspace:ro
     depends_on:
       redis:
         condition: service_healthy
