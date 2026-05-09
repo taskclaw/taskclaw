@@ -7,6 +7,7 @@ import { ExecutionHistoryPanel } from '@/components/pods/execution-history-panel
 import { HeartbeatConfigForm } from '@/components/pods/heartbeat-config-form'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
 import { AutonomyDial } from '@/components/orchestration/autonomy-dial'
+import { PodBundleSection } from '@/components/pods/pod-bundle-section'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
@@ -200,6 +201,9 @@ export default function PodSettingsPage({ params }: { params: Promise<{ slug: st
                                 {updatePod.isPending ? 'Saving...' : 'Save changes'}
                             </Button>
                         </div>
+
+                        {/* Pod Bundle (PRD §6) — export/import portable JSON */}
+                        <PodBundleSection podId={pod.id} podName={pod.name} podSlug={pod.slug} />
 
                         {/* Danger zone */}
                         <div className="border border-destructive/20 rounded-lg p-4 mt-8">
