@@ -27,6 +27,7 @@ import {
     useSidebar,
 } from "@/components/ui/sidebar"
 
+import { NavLink as Link } from "@/components/nav-link"
 import { useRouter } from "next/navigation"
 import { deleteProject } from "@/app/dashboard/actions"
 import { CreateProjectDialog } from "@/components/create-project-dialog"
@@ -85,10 +86,10 @@ export function NavProjects({
                         className={cn(deletingId === item.id && 'animate-deleting')}
                     >
                         <SidebarMenuButton asChild>
-                            <a href={item.url}>
+                            <Link href={item.url}>
                                 <item.icon />
                                 <span className="truncate">{item.name}</span>
-                            </a>
+                            </Link>
                         </SidebarMenuButton>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>

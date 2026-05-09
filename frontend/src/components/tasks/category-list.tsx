@@ -57,7 +57,7 @@ export function CategoryList({ tasks, categories }: CategoryListProps) {
                                     </span>
                                 </div>
                                 <Link
-                                    href={`/dashboard/settings/categories?edit=${cat.id}`}
+                                    href={`/dashboard/agents/${cat.id}`}
                                     className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                                     title={`${cat.name} settings`}
                                 >

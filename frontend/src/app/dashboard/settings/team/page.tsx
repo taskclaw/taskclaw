@@ -91,7 +91,7 @@ export default async function TeamSettingsPage() {
                                         <Avatar className="h-9 w-9">
                                             <AvatarImage src="" alt={member.name} />
                                             <AvatarFallback>
-                                                {member.name
+                                                {(member.name || member.email || '?')
                                                     .split(" ")
                                                     .map((n: string) => n[0])
                                                     .join("")

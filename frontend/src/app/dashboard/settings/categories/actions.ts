@@ -68,7 +68,7 @@ export async function createCategory(data: {
 
 export async function updateCategory(
     categoryId: string,
-    data: { name?: string; color?: string; icon?: string; visible?: boolean },
+    data: { name?: string; color?: string; icon?: string; visible?: boolean; preferred_backbone_connection_id?: string | null },
 ) {
     const headers = await getAuthHeaders()
     const accountId = await getCurrentAccountId()

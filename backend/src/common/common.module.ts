@@ -1,9 +1,10 @@
 import { Module, Global } from '@nestjs/common';
 import { AccessControlHelper } from './helpers/access-control.helper';
+import { CacheService } from './cache.service';
 
 @Global()
 @Module({
-  providers: [AccessControlHelper],
-  exports: [AccessControlHelper],
+  providers: [CacheService, AccessControlHelper],
+  exports: [CacheService, AccessControlHelper],
 })
 export class CommonModule {}

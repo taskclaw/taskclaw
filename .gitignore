@@ -76,6 +76,7 @@ typings/
 .env.local
 .env.*.local
 backend/.env
+backend/.env.secrets
 frontend/.env
 frontend/.env.local
 

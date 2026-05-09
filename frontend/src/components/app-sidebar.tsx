@@ -78,6 +78,14 @@ const data = {
                     title: "Team",
                     url: "/dashboard/settings/team",
                 },
+                {
+                    title: "Memory",
+                    url: "/dashboard/settings/memory",
+                },
+                {
+                    title: "Autonomy",
+                    url: "/dashboard/settings/autonomy",
+                },
                 // Billing and AI Usage are cloud-only features
                 ...(isCloudEdition ? [
                     {

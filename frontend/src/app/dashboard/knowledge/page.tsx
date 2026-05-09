@@ -25,11 +25,18 @@ import {
   Download,
   PenLine,
   FolderUp,
+  BookOpen,
+  Search,
 } from 'lucide-react';
 import { FileDropZone, type DroppedFile } from '@/components/ui/file-drop-zone';
 import { toast } from 'sonner';
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ViewToggle } from '@/components/view-toggle';
+import { PageLayout, PageHeader, PageFilterBar, PageSidebar, PageContent } from '@/components/page-layout';
+import { BoardIcon } from '@/lib/board-icon';
 
 interface FileAttachment {
   name: string;
@@ -78,6 +85,8 @@ export default function KnowledgePage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [removeAttTarget, setRemoveAttTarget] = useState<string | null>(null);
   const [removeAttLoading, setRemoveAttLoading] = useState(false);
+  const [view, setView] = useState<'grid' | 'list'>('list');
+  const [search, setSearch] = useState('');
 
   // File editor sidebar state
   const [activeFile, setActiveFile] = useState<string>('__DOC_CONTENT__');
@@ -396,150 +405,196 @@ export default function KnowledgePage() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
-  const filteredDocs = selectedCategory
-    ? docs.filter((doc) => doc.category_id === selectedCategory)
-    : docs;
+  const filteredDocs = docs
+    .filter((doc) => !selectedCategory || doc.category_id === selectedCategory)
+    .filter((doc) => !search.trim() || doc.title.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <div className="flex h-[calc(100vh-4rem)]">
-      {/* Sidebar: Category Filter */}
-      <div className="w-64 border-r bg-gray-50 dark:bg-gray-900 p-4 overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-4">Agents</h2>
-        <button
-          onClick={() => setSelectedCategory(null)}
-          className={`w-full text-left px-3 py-2 rounded-md mb-1 ${
-            selectedCategory === null
-              ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-              : 'hover:bg-gray-200 dark:hover:bg-gray-800'
-          }`}
-        >
-          All Documents
-        </button>
-        {categories.map((cat) => (
-          <button
-            key={cat.id}
-            onClick={() => setSelectedCategory(cat.id)}
-            className={`w-full text-left px-3 py-2 rounded-md mb-1 flex items-center gap-2 ${
-              selectedCategory === cat.id
-                ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300'
-                : 'hover:bg-gray-200 dark:hover:bg-gray-800'
-            }`}
-          >
-            <div
-              className="w-3 h-3 rounded-full"
-              style={{ backgroundColor: cat.color }}
-            />
-            {cat.name}
-          </button>
-        ))}
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="border-b p-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold">Knowledge Base</h1>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Create persistent context for AI conversations
-            </p>
-          </div>
-          <button
-            onClick={startCreate}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            New Document
-          </button>
-        </div>
-
-        {/* Document List */}
-        <div className="flex-1 overflow-y-auto p-4">
-          {loading ? (
-            <div className="text-center py-8 text-gray-500">Loading...</div>
-          ) : filteredDocs.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p>No documents yet. Create your first knowledge doc!</p>
+    <>
+    <PageLayout
+      header={
+        <PageHeader
+          icon={<BookOpen className="w-4 h-4 text-primary" />}
+          title="Knowledge Base"
+          meta={
+            <span className="text-xs text-muted-foreground px-2 py-0.5 bg-accent rounded-full">
+              {docs.length}
+            </span>
+          }
+          actions={
+            <Button size="sm" onClick={startCreate}>
+              <Plus className="w-3.5 h-3.5 mr-1.5" />
+              New Document
+            </Button>
+          }
+        />
+      }
+      filterBar={
+        <PageFilterBar
+          left={
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search documents..."
+                className="pl-8 h-8 w-56 text-sm"
+              />
             </div>
-          ) : (
-            <div className="grid gap-4">
-              {filteredDocs.map((doc) => {
-                const category = categories.find((c) => c.id === doc.category_id);
-                return (
-                  <div
-                    key={doc.id}
-                    className={cn(
-                      'border rounded-lg p-4 hover:shadow-md transition-shadow bg-white dark:bg-gray-800',
-                      deletingId === doc.id && 'animate-deleting',
-                    )}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          {doc.is_master && (
-                            <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
-                          )}
-                          <h3 className="text-lg font-semibold">{doc.title}</h3>
-                          {category && (
-                            <span
-                              className="px-2 py-1 text-xs rounded-full"
-                              style={{
-                                backgroundColor: `${category.color}20`,
-                                color: category.color,
-                              }}
-                            >
-                              {category.name}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
-                          {doc.content.substring(0, 150)}...
-                        </p>
-                        <div className="flex items-center gap-3 mt-2">
-                          <p className="text-xs text-gray-500">
-                            Updated {new Date(doc.updated_at).toLocaleDateString()}
-                          </p>
-                          {doc.file_attachments?.length > 0 && (
-                            <span className="text-xs text-gray-500 flex items-center gap-1">
-                              <Paperclip className="w-3 h-3" />
-                              {doc.file_attachments.length} file{doc.file_attachments.length !== 1 ? 's' : ''}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex gap-2 ml-4">
-                        {!doc.is_master && doc.category_id && (
-                          <button
-                            onClick={() => handleSetMaster(doc.id)}
-                            className="p-2 text-gray-500 hover:text-yellow-500"
-                            title="Set as master doc"
-                          >
-                            <Star className="w-4 h-4" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => startEdit(doc)}
-                          className="p-2 text-gray-500 hover:text-blue-600"
-                        >
-                          <Edit className="w-4 h-4" />
+          }
+          right={<ViewToggle mode={view} onChange={setView} />}
+        />
+      }
+      sidebar={
+        <PageSidebar>
+          <div className="px-3 pt-4 pb-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-2 mb-1">Agents</p>
+            <button
+              onClick={() => setSelectedCategory(null)}
+              className={cn(
+                'w-full flex items-center justify-between px-2 py-1.5 rounded-md text-sm transition-colors',
+                selectedCategory === null
+                  ? 'bg-primary/10 text-primary font-medium'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+              )}
+            >
+              <span>All Documents</span>
+              <span className="text-[10px]">{docs.length}</span>
+            </button>
+            {categories.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={() => setSelectedCategory(cat.id)}
+                className={cn(
+                  'w-full flex items-center justify-between px-2 py-1.5 rounded-md text-sm transition-colors',
+                  selectedCategory === cat.id
+                    ? 'bg-primary/10 text-primary font-medium'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                  <span className="truncate">{cat.name}</span>
+                </span>
+                <span className="text-[10px] shrink-0">{docs.filter((d) => d.category_id === cat.id).length}</span>
+              </button>
+            ))}
+          </div>
+        </PageSidebar>
+      }
+    >
+      <PageContent className="p-4">
+        {loading ? (
+          <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">Loading...</div>
+        ) : filteredDocs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
+            <FileText className="w-10 h-10 mb-3 opacity-20" />
+            <p className="text-sm">{search ? 'No documents match your search' : 'No documents yet'}</p>
+          </div>
+        ) : view === 'grid' ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredDocs.map((doc) => {
+              const category = categories.find((c) => c.id === doc.category_id);
+              return (
+                <div
+                  key={doc.id}
+                  className={cn(
+                    'border border-border rounded-xl p-4 bg-card hover:bg-accent/30 transition-colors flex flex-col gap-2',
+                    deletingId === doc.id && 'animate-deleting',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {doc.is_master && <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />}
+                      <p className="text-sm font-semibold truncate">{doc.title}</p>
+                    </div>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {!doc.is_master && doc.category_id && (
+                        <button onClick={() => handleSetMaster(doc.id)} className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-amber-400 transition-colors" title="Set as master">
+                          <Star className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          onClick={() => setDeleteTarget(doc.id)}
-                          className="p-2 text-gray-500 hover:text-red-600"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                      )}
+                      <button onClick={() => startEdit(doc)} className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors">
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => setDeleteTarget(doc.id)} className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-destructive transition-colors">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
-                );
-              })}
+                  {category && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full w-fit font-medium" style={{ backgroundColor: `${category.color}20`, color: category.color }}>
+                      {category.name}
+                    </span>
+                  )}
+                  <p className="text-xs text-muted-foreground line-clamp-2 flex-1">{doc.content.substring(0, 120)}</p>
+                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground/60 pt-1 border-t border-border/50">
+                    <span>Updated {new Date(doc.updated_at).toLocaleDateString()}</span>
+                    {doc.file_attachments?.length > 0 && (
+                      <span className="flex items-center gap-1"><Paperclip className="w-3 h-3" />{doc.file_attachments.length}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-border overflow-hidden">
+            <div className="flex items-center gap-4 px-4 py-2 bg-muted/50 border-b border-border">
+              <p className="flex-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Document</p>
+              <p className="hidden md:block w-32 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Agent</p>
+              <p className="hidden lg:block w-28 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Updated</p>
+              <div className="w-20" />
             </div>
-          )}
-        </div>
-      </div>
-
+            {filteredDocs.map((doc) => {
+              const category = categories.find((c) => c.id === doc.category_id);
+              return (
+                <div
+                  key={doc.id}
+                  className={cn(
+                    'flex items-center gap-4 px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors',
+                    deletingId === doc.id && 'animate-deleting',
+                  )}
+                >
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {doc.is_master && <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />}
+                    <p className="text-sm font-medium truncate">{doc.title}</p>
+                    {doc.file_attachments?.length > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60">
+                        <Paperclip className="w-3 h-3" />{doc.file_attachments.length}
+                      </span>
+                    )}
+                  </div>
+                  {category && (
+                    <span className="hidden md:block text-[10px] px-2 py-0.5 rounded-full w-32 text-center font-medium truncate" style={{ backgroundColor: `${category.color}20`, color: category.color }}>
+                      {category.name}
+                    </span>
+                  )}
+                  {!category && <div className="hidden md:block w-32" />}
+                  <p className="hidden lg:block text-[11px] text-muted-foreground w-28 shrink-0">
+                    {new Date(doc.updated_at).toLocaleDateString()}
+                  </p>
+                  <div className="flex items-center gap-0.5 shrink-0 w-20 justify-end">
+                    {!doc.is_master && doc.category_id && (
+                      <button onClick={() => handleSetMaster(doc.id)} className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-amber-400 transition-colors" title="Set as master">
+                        <Star className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button onClick={() => startEdit(doc)} className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors">
+                      <Edit className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => setDeleteTarget(doc.id)} className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-destructive transition-colors">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </PageContent>
+    </PageLayout>
+    <>
       {/* Editor Modal */}
       {(editingDoc || isCreating) && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -844,6 +899,7 @@ export default function KnowledgePage() {
         confirmLabel="Remove"
         loading={removeAttLoading}
       />
-    </div>
+    </>
+    </>
   );
 }

@@ -15,13 +15,32 @@ import {
 import { updateTask } from '@/app/dashboard/tasks/actions'
 import type { Board } from '@/types/board'
 import type { Task } from '@/types/task'
+import { getSidebarCache, setSidebarCache, clearSidebarCache } from '@/lib/sidebar-cache'
+
+function getActiveAccountId(): string {
+    if (typeof document === 'undefined') return ''
+    const match = document.cookie.match(/(?:^|;\s*)current_account_id=([^;]*)/)
+    return match ? decodeURIComponent(match[1]) : ''
+}
 
 export function useBoards(filters?: { archived?: string; favorite?: string }) {
+    const isSidebarQuery = !filters
+    const accountId = isSidebarQuery ? getActiveAccountId() : ''
+    const cached = isSidebarQuery ? getSidebarCache<Board[]>('boards', accountId) : undefined
+
     return useQuery({
         queryKey: ['boards', filters],
-        queryFn: () => getBoards(filters),
+        queryFn: async () => {
+            const data = await getBoards(filters)
+            if (isSidebarQuery && accountId && data) {
+                setSidebarCache('boards', accountId, data)
+            }
+            return data
+        },
         staleTime: 30000,
         refetchInterval: 60000,
+        initialData: cached?.data,
+        initialDataUpdatedAt: cached?.updatedAt,
     })
 }
 
@@ -49,6 +68,7 @@ export function useCreateBoard() {
     return useMutation({
         mutationFn: createBoard,
         onSuccess: () => {
+            clearSidebarCache('boards', getActiveAccountId())
             qc.invalidateQueries({ queryKey: ['boards'] })
         },
     })
@@ -60,6 +80,7 @@ export function useUpdateBoard() {
         mutationFn: ({ id, ...updates }: { id: string } & Parameters<typeof updateBoard>[1]) =>
             updateBoard(id, updates),
         onSuccess: () => {
+            clearSidebarCache('boards', getActiveAccountId())
             qc.invalidateQueries({ queryKey: ['boards'] })
         },
     })
@@ -70,6 +91,7 @@ export function useDeleteBoard() {
     return useMutation({
         mutationFn: deleteBoard,
         onSuccess: () => {
+            clearSidebarCache('boards', getActiveAccountId())
             qc.invalidateQueries({ queryKey: ['boards'] })
         },
     })
@@ -80,6 +102,7 @@ export function useDuplicateBoard() {
     return useMutation({
         mutationFn: duplicateBoard,
         onSuccess: () => {
+            clearSidebarCache('boards', getActiveAccountId())
             qc.invalidateQueries({ queryKey: ['boards'] })
         },
     })
@@ -98,6 +121,7 @@ export function useInstallTemplate() {
     return useMutation({
         mutationFn: installTemplate,
         onSuccess: () => {
+            clearSidebarCache('boards', getActiveAccountId())
             qc.invalidateQueries({ queryKey: ['boards'] })
         },
     })

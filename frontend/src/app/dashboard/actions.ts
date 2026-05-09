@@ -1,19 +1,23 @@
 'use server'
 
+import { cache } from 'react'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { getAuthToken, isTokenExpired } from '@/lib/auth'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
 
-async function getAuthHeaders() {
+// cache() deduplicates calls within a single render pass (per-request memoization).
+// Multiple server components calling getAuthHeaders() in the same SSR render
+// will only execute the token read once.
+const getAuthHeaders = cache(async () => {
     const token = await getAuthToken()
     if (!token || isTokenExpired(token)) return null
     return {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
     }
-}
+})
 
 export async function getUserDetails() {
     const headers = await getAuthHeaders()

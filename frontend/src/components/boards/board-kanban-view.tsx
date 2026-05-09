@@ -73,20 +73,20 @@ export function BoardKanbanView({ board, categories }: BoardKanbanViewProps) {
     }
 
     return (
-        <div className="flex flex-col flex-1 min-h-0">
+        <div className="flex flex-col flex-1 min-h-0 h-full w-full overflow-hidden">
             <BoardHeader
                 board={board}
                 onNewTask={() => setShowNewTask(steps[0] || null)}
             />
 
-            <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
+            <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden pb-2">
                 <DndContext
                     sensors={sensors}
                     collisionDetection={closestCorners}
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
                 >
-                    <div className="flex gap-4 flex-1 h-full min-w-max p-1">
+                    <div className="flex gap-3 h-full min-w-max px-0.5">
                         {steps.map((step) => (
                             <BoardKanbanColumn
                                 key={step.id}

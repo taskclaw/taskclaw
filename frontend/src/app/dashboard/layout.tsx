@@ -2,6 +2,7 @@ import { AppSidebar } from '@/components/app-sidebar'
 import { AiBubble } from '@/components/ai/ai-bubble'
 import { SystemStatusBar } from '@/components/system-status-bar'
 import { QueryProvider } from '@/components/query-provider'
+import { NavigationLoader } from '@/components/navigation-loader'
 import {
     SidebarInset,
     SidebarProvider,
@@ -22,20 +23,23 @@ export default async function DashboardLayout({
         plan: string
     }
 
-    const accounts: Account[] = await getUserAccounts()
-    const user = await getUserDetails()
+    const [accounts, user, settings, cookieStore] = await Promise.all([
+        getUserAccounts(),
+        getUserDetails(),
+        getSystemSettings(),
+        cookies(),
+    ])
 
     // If session is expired or user can't be fetched, redirect to login
     if (!user) {
         redirect('/login')
     }
 
-    const settings = await getSystemSettings()
-    const cookieStore = await cookies()
     let activeAccountId = cookieStore.get('current_account_id')?.value
 
     // Transform accounts to match TeamSwitcher expected format
-    const teams = accounts.map(account => ({
+    type Team = { id: string; name: string; plan: string }
+    const teams: Team[] = accounts.map((account: any) => ({
         id: account.id,
         name: account.name,
         plan: account.plan,
@@ -69,7 +73,8 @@ export default async function DashboardLayout({
 
     return (
         <QueryProvider>
-            <SidebarProvider>
+            <NavigationLoader />
+            <SidebarProvider className="h-svh overflow-hidden">
                 <AppSidebar
                     user={user ? { ...user, email: user.email || '', role: user.role } : null}
                     teams={teams}
@@ -78,12 +83,12 @@ export default async function DashboardLayout({
                     allowMultipleProjects={settings?.allow_multiple_projects ?? true}
                     allowMultipleTeams={settings?.allow_multiple_teams ?? true}
                 />
-                <SidebarInset>
-                    <div className="flex flex-col h-screen min-h-0 overflow-hidden">
-                        <div className="flex flex-1 flex-col gap-4 p-4 pt-0 min-h-0 overflow-y-auto">
+                <SidebarInset className="min-h-0 overflow-hidden">
+                    <div className="flex flex-col h-full min-h-0">
+                        <div className="flex flex-1 flex-col min-h-0 overflow-hidden px-4">
                             {children}
                         </div>
-                        <div className="sticky bottom-0 z-30 shrink-0">
+                        <div className="shrink-0">
                             <SystemStatusBar />
                         </div>
                     </div>

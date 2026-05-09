@@ -7,6 +7,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../../supabase/supabase.service';
 import { ApiKeysService } from '../../auth/api-keys/api-keys.service';
+import { CacheService } from '../cache.service';
+
+// Cache user active-status for 5 minutes to avoid a DB query on every request
+const USER_STATUS_TTL_SECONDS = 300;
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -14,6 +18,7 @@ export class AuthGuard implements CanActivate {
     private readonly supabaseService: SupabaseService,
     private readonly configService: ConfigService,
     private readonly apiKeysService: ApiKeysService,
+    private readonly cacheService: CacheService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -49,34 +54,46 @@ export class AuthGuard implements CanActivate {
     request['accessToken'] = token;
 
     // Enforce user approval status (public.users.status)
-    // Pending/suspended users must not access protected API routes.
-    try {
-      const adminSupabase = this.supabaseService.getAdminClient();
-      const { data: profile, error: profileError } = await adminSupabase
-        .from('users')
-        .select('status')
-        .eq('id', user.id)
-        .single();
+    // Cache the result for USER_STATUS_TTL_SECONDS to avoid a DB query on every request.
+    const cacheKey = `user:${user.id}:status`;
+    let cachedStatus = this.cacheService.get<string>(cacheKey);
 
-      if (!profileError) {
-        const status = String(profile?.status || 'active').toLowerCase();
-        if (status !== 'active') {
-          throw new UnauthorizedException(
-            'Your account is pending approval or suspended.',
+    if (!cachedStatus) {
+      try {
+        const adminSupabase = this.supabaseService.getAdminClient();
+        const { data: profile, error: profileError } = await adminSupabase
+          .from('users')
+          .select('status')
+          .eq('id', user.id)
+          .single();
+
+        if (!profileError) {
+          cachedStatus = String(profile?.status || 'active').toLowerCase();
+          this.cacheService.set(
+            cacheKey,
+            cachedStatus,
+            USER_STATUS_TTL_SECONDS,
           );
+        } else {
+          // Backwards-compat if migration wasn't applied yet
+          const msg = (profileError as any)?.message?.toLowerCase?.() || '';
+          if (!msg.includes('status')) {
+            console.error('AuthGuard status lookup error:', profileError);
+            throw new UnauthorizedException();
+          }
+          cachedStatus = 'active'; // assume active if column doesn't exist yet
         }
-      } else {
-        // Backwards-compat if migration wasn't applied yet
-        const msg = (profileError as any)?.message?.toLowerCase?.() || '';
-        if (!msg.includes('status')) {
-          console.error('AuthGuard status lookup error:', profileError);
-          throw new UnauthorizedException();
-        }
+      } catch (e) {
+        if (e instanceof UnauthorizedException) throw e;
+        console.error('AuthGuard status check failed:', e);
+        throw new UnauthorizedException();
       }
-    } catch (e) {
-      if (e instanceof UnauthorizedException) throw e;
-      console.error('AuthGuard status check failed:', e);
-      throw new UnauthorizedException();
+    }
+
+    if (cachedStatus !== 'active') {
+      throw new UnauthorizedException(
+        'Your account is pending approval or suspended.',
+      );
     }
 
     return true;
