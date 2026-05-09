@@ -15,6 +15,8 @@ import {
     Layers,
     ChevronRight,
     LayoutDashboard,
+    ChevronsDownUp,
+    ChevronsUpDown,
 } from "lucide-react"
 import {
     DropdownMenu,
@@ -91,6 +93,23 @@ export function NavBoards() {
             localStorage.setItem(getCollapseKey(slug), String(next[slug]))
             return next
         })
+    }
+
+    // True when every pod we know about is currently collapsed. Drives the
+    // header chevron icon (collapse-all vs expand-all).
+    const allCollapsed = pods.length > 0 && pods.every((p) => collapsedPods[p.slug])
+
+    const setAllPodsCollapsed = (collapsed: boolean) => {
+        const next: Record<string, boolean> = {}
+        pods.forEach((p) => {
+            next[p.slug] = collapsed
+            try {
+                localStorage.setItem(getCollapseKey(p.slug), String(collapsed))
+            } catch {
+                // ignore quota / privacy mode
+            }
+        })
+        setCollapsedPods(next)
     }
 
     // Group boards by pod
@@ -252,12 +271,31 @@ export function NavBoards() {
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
             <SidebarGroupLabel className="flex items-center justify-between">
                 <span>Boards</span>
-                <button
-                    onClick={() => router.push('/dashboard/boards?create=true')}
-                    className="text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
-                >
-                    <Plus className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-0.5">
+                    {pods.length > 1 && (
+                        <button
+                            type="button"
+                            onClick={() => setAllPodsCollapsed(!allCollapsed)}
+                            className="rounded p-0.5 text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/40 hover:text-sidebar-foreground"
+                            title={allCollapsed ? 'Expand all pods' : 'Collapse all pods'}
+                            aria-label={allCollapsed ? 'Expand all pods' : 'Collapse all pods'}
+                        >
+                            {allCollapsed ? (
+                                <ChevronsUpDown className="h-3.5 w-3.5" />
+                            ) : (
+                                <ChevronsDownUp className="h-3.5 w-3.5" />
+                            )}
+                        </button>
+                    )}
+                    <button
+                        onClick={() => router.push('/dashboard/boards?create=true')}
+                        className="rounded p-0.5 text-sidebar-foreground/50 transition-colors hover:bg-sidebar-accent/40 hover:text-sidebar-foreground"
+                        title="Create board"
+                        aria-label="Create board"
+                    >
+                        <Plus className="h-3.5 w-3.5" />
+                    </button>
+                </div>
             </SidebarGroupLabel>
             <SidebarMenu>
                 {/* Cockpit link */}

@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { useEffect, useState } from "react"
+import { getInboxCount } from "@/app/dashboard/inbox/actions"
 import {
     Frame,
     GalleryVerticalEnd,
@@ -14,6 +16,7 @@ import {
     Library,
     RefreshCw,
     Activity,
+    Inbox,
 } from "lucide-react"
 
 import { isCloudEdition } from "@/lib/edition"
@@ -35,6 +38,12 @@ import {
 // Navigation data for the sidebar
 const data = {
     navMain: [
+        {
+            title: "Inbox",
+            url: "/dashboard/inbox",
+            icon: Inbox,
+            items: [],
+        },
         {
             title: "AI Chat",
             url: "/dashboard/chat",
@@ -169,7 +178,7 @@ export function AppSidebar({ user, teams, activeTeam, projects, allowMultiplePro
             </SidebarHeader>
             <SidebarContent>
                 <NavBoards />
-                <NavMain items={data.navMain} />
+                <NavMain items={navMainWithBadges(data.navMain, useInboxCount())} />
                 {allowMultipleProjects && (
                     <NavProjects projects={projectsWithIcons} activeTeamId={activeTeam?.id} />
                 )}
@@ -184,5 +193,44 @@ export function AppSidebar({ user, teams, activeTeam, projects, allowMultiplePro
             </SidebarFooter>
             <SidebarRail />
         </Sidebar>
+    )
+}
+
+/**
+ * Polls /inbox/count every 30s. Cheap query (two head:true counts) so the
+ * sidebar badge stays roughly in sync without the user having to refresh.
+ */
+function useInboxCount(): number | null {
+    const [count, setCount] = useState<number | null>(null)
+    useEffect(() => {
+        let cancelled = false
+        const tick = async () => {
+            try {
+                const { count: c } = await getInboxCount()
+                if (!cancelled) setCount(c)
+            } catch {
+                // 401s and the like during sign-in flips are normal — silent.
+            }
+        }
+        void tick()
+        const interval = setInterval(tick, 30_000)
+        return () => {
+            cancelled = true
+            clearInterval(interval)
+        }
+    }, [])
+    return count
+}
+
+/**
+ * Inject the live inbox count onto the Inbox row of the nav list. Keeps
+ * the static `data.navMain` declaration above readable.
+ */
+function navMainWithBadges<T extends { title: string; url: string }>(
+    items: T[],
+    inboxCount: number | null,
+): (T & { badge?: number | null })[] {
+    return items.map((it) =>
+        it.url === '/dashboard/inbox' ? { ...it, badge: inboxCount } : it,
     )
 }
