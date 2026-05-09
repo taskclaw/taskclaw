@@ -39,6 +39,7 @@ import { MemoryModule } from './memory/memory.module';
 import { PilotModule } from './pilot/pilot.module';
 import { SyncsModule } from './syncs/syncs.module';
 import { MentionModule } from './mention/mention.module';
+import { TaskRunsModule } from './task-runs/task-runs.module';
 
 // Edition-gated modules (cloud-only)
 import { LangfuseModule } from './ee/langfuse/langfuse.module';
@@ -102,6 +103,7 @@ const editionModules = isCloudEdition
     PilotModule,
     SyncsModule,
     MentionModule,
+    TaskRunsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

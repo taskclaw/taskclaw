@@ -9,6 +9,7 @@ import { BackboneRouterService } from './backbone-router.service';
 import { BackboneHealthService } from './backbone-health.service';
 import { TokenUsageService } from './token-usage.service';
 import { TokenUsageController } from './token-usage.controller';
+import { TaskRunsModule } from '../task-runs/task-runs.module';
 import { MigrateAiProvidersService } from './migrations/migrate-ai-providers';
 import { BackboneConnectionsController } from './backbone-connections.controller';
 import { ClaudeCodeAdapter } from './adapters/claude-code.adapter';
@@ -28,6 +29,7 @@ import { BackboneDispatchProcessor } from './backbone-dispatch.processor';
     CommonModule,
     forwardRef(() => ConversationsModule),
     BackboneDispatchQueueModule.register(),
+    TaskRunsModule,
   ],
   controllers: [BackboneConnectionsController, TokenUsageController],
   providers: [

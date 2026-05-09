@@ -272,11 +272,20 @@ export class HeartbeatService {
   async executeHeartbeat(configId: string) {
     if (this.backboneDispatchQueue) {
       const idempotencyKey = `heartbeat-exec-${configId}-${Date.now()}`;
+      // Resolve account_id so the dispatch processor can shadow-write a
+      // task_runs row (PRD §10.1, gated by FEATURE_TASK_RUNS_V2).
+      const { data: cfg } = await this.supabaseAdmin
+        .getClient()
+        .from('heartbeat_configs')
+        .select('account_id')
+        .eq('id', configId)
+        .maybeSingle();
       await this.backboneDispatchQueue.add(
         'dispatch',
         {
           type: 'heartbeat',
           heartbeatConfigId: configId,
+          accountId: cfg?.account_id ?? undefined,
           priority: 5,
           idempotencyKey,
         },
