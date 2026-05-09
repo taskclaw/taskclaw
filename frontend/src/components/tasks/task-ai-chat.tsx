@@ -8,10 +8,12 @@ import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
 import { SlashPalette, type SlashSelection } from '@/components/chat/slash-palette'
+import { MessageKindRenderer } from '@/components/chat/message-kind'
 
 interface Message {
     id?: string
     role: 'user' | 'assistant' | 'system'
+    kind?: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'status' | 'error' | 'log'
     content: string
     created_at?: string
     metadata?: Record<string, any>
@@ -68,6 +70,7 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
                 const msgs: Message[] = result.data.map((m: any) => ({
                     id: m.id,
                     role: m.role,
+                    kind: m.kind,
                     content: m.content,
                     created_at: m.created_at,
                     metadata: m.metadata,
@@ -389,9 +392,16 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
                                 )}
                             >
                                 {msg.role === 'assistant' ? (
-                                    <div
-                                        className="prose-chat break-words text-sm leading-relaxed [&_strong]:font-semibold [&_em]:italic [&_h3]:text-foreground [&_h4]:text-foreground [&_li]:text-sm [&_code]:text-[13px]"
-                                        dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }}
+                                    <MessageKindRenderer
+                                        kind={msg.kind ?? 'text'}
+                                        content={msg.content}
+                                        metadata={msg.metadata}
+                                        fallback={
+                                            <div
+                                                className="prose-chat break-words text-sm leading-relaxed [&_strong]:font-semibold [&_em]:italic [&_h3]:text-foreground [&_h4]:text-foreground [&_li]:text-sm [&_code]:text-[13px]"
+                                                dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }}
+                                            />
+                                        }
                                     />
                                 ) : (
                                     <div className="whitespace-pre-wrap break-words">

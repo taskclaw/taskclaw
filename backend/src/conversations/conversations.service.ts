@@ -364,6 +364,15 @@ export class ConversationsService {
       let aiResponseText: string;
       let aiResponseMetadata: Record<string, any> = {};
       let backboneConnectionId: string | null = null;
+      // F5 — typed segments emitted by adapters (Anthropic today). When
+      // present we persist non-text segments (thinking, tool_use,
+      // tool_result) as their own messages.kind rows before the
+      // assistant text row, preserving order.
+      let aiResponseSegments: Array<{
+        kind: string;
+        content: string;
+        metadata?: Record<string, unknown>;
+      }> | undefined;
 
       const backboneResolved = await this.tryResolveBackbone(accountId, {
         taskId: conversation.task_id || undefined,
@@ -407,6 +416,7 @@ export class ConversationsService {
         });
 
         aiResponseText = result.text;
+        aiResponseSegments = result.segments;
         aiResponseMetadata = {
           model: result.model,
           ...(result.usage || {}),
@@ -487,10 +497,38 @@ export class ConversationsService {
         }
       }
 
+      // F5 — persist non-text segments first so they appear before the
+      // assistant's text reply when ordered by created_at. We only write
+      // thinking / tool_use / tool_result; 'text' is collapsed into the
+      // main assistantInsert below for backward compatibility.
+      if (aiResponseSegments && aiResponseSegments.length > 0) {
+        const sideRows = aiResponseSegments
+          .filter((s) => s.kind !== 'text')
+          .map((s) => ({
+            conversation_id: conversationId,
+            role: 'assistant',
+            kind: s.kind,
+            author_type: 'agent',
+            content: s.content,
+            metadata: { ...(s.metadata ?? {}), generated_with: aiResponseMetadata?.model },
+            ...(backboneConnectionId
+              ? { backbone_connection_id: backboneConnectionId }
+              : {}),
+          }));
+        if (sideRows.length > 0) {
+          const { error: sideErr } = await client.from('messages').insert(sideRows);
+          if (sideErr) {
+            this.logger.warn(`Failed to store segment rows: ${sideErr.message}`);
+          }
+        }
+      }
+
       // Store AI response (F021: include backbone_connection_id)
       const assistantInsert: Record<string, any> = {
         conversation_id: conversationId,
         role: 'assistant',
+        kind: 'text',
+        author_type: 'agent',
         content: aiResponseText,
         metadata: aiResponseMetadata,
       };

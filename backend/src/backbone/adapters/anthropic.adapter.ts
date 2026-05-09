@@ -155,8 +155,17 @@ export class AnthropicAdapter implements BackboneAdapter {
   ): Promise<BackboneSendResult> {
     const data = await response.json();
 
-    const text =
-      data.content && data.content[0] ? data.content[0].text : '';
+    // F5 — split Anthropic's content[] into typed segments. The order
+    // the model emitted them is preserved so the UI can render thinking
+    // before the text reply, tool_use → tool_result pairs in sequence,
+    // etc. The legacy `text` field stays populated with the concatenated
+    // text-kind content for backward compatibility.
+    const segments = this.extractSegments(data.content);
+    const text = segments
+      .filter((s) => s.kind === 'text')
+      .map((s) => s.content)
+      .join('\n')
+      .trim();
 
     // F012: Parse cache stats from usage field
     const hasCacheStats =
@@ -165,6 +174,7 @@ export class AnthropicAdapter implements BackboneAdapter {
 
     return {
       text,
+      segments: segments.length > 0 ? segments : undefined,
       model: data.model || requestModel,
       usage: data.usage
         ? {
@@ -186,6 +196,69 @@ export class AnthropicAdapter implements BackboneAdapter {
         : undefined,
       raw: data,
     };
+  }
+
+  /**
+   * Walk Anthropic's content[] array into typed segments.
+   *
+   *   { type: 'thinking', thinking: '…' }       → kind='thinking'
+   *   { type: 'text',     text:     '…' }       → kind='text'
+   *   { type: 'tool_use', id, name, input }      → kind='tool_use'
+   *   { type: 'tool_result', tool_use_id, content } → kind='tool_result'
+   *
+   * Anything else is captured as kind='log' so we don't silently drop
+   * data we don't yet understand.
+   */
+  private extractSegments(content: unknown): Array<{
+    kind:
+      | 'text'
+      | 'thinking'
+      | 'tool_use'
+      | 'tool_result'
+      | 'status'
+      | 'error'
+      | 'log';
+    content: string;
+    metadata?: Record<string, unknown>;
+  }> {
+    if (!Array.isArray(content)) return [];
+    const out: Array<{ kind: any; content: string; metadata?: Record<string, unknown> }> = [];
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const type = (block as any).type;
+      if (type === 'text' && typeof (block as any).text === 'string') {
+        out.push({ kind: 'text', content: (block as any).text });
+      } else if (type === 'thinking' && typeof (block as any).thinking === 'string') {
+        out.push({ kind: 'thinking', content: (block as any).thinking });
+      } else if (type === 'tool_use') {
+        out.push({
+          kind: 'tool_use',
+          content: JSON.stringify((block as any).input ?? {}, null, 2),
+          metadata: {
+            tool_name: (block as any).name,
+            tool_use_id: (block as any).id,
+            args: (block as any).input,
+          },
+        });
+      } else if (type === 'tool_result') {
+        const c = (block as any).content;
+        out.push({
+          kind: 'tool_result',
+          content: typeof c === 'string' ? c : JSON.stringify(c ?? {}),
+          metadata: {
+            tool_use_id: (block as any).tool_use_id,
+            error: (block as any).is_error === true,
+          },
+        });
+      } else {
+        out.push({
+          kind: 'log',
+          content: JSON.stringify(block).slice(0, 4000),
+          metadata: { unrecognized_type: type },
+        });
+      }
+    }
+    return out;
   }
 
   // ── Private: SSE streaming response ──
