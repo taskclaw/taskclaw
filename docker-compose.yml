@@ -34,6 +34,9 @@ services:
       REDIS_URL: redis://redis:6379
       # Override .env's localhost URL so the container reaches Kong via Docker network
       SUPABASE_URL: http://kong:8000
+      # PRD §10.1 — shadow-write task_runs alongside BullMQ for one release
+      # cycle, then graduate to source-of-truth.
+      FEATURE_TASK_RUNS_V2: ${FEATURE_TASK_RUNS_V2:-true}
     volumes:
       - ./backend/dist:/app/dist
       # Opt-in read-only mount for Skills Sync local-folder runner (PRD §4.6).
