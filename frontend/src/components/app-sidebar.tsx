@@ -13,6 +13,7 @@ import {
     Import,
     Library,
     RefreshCw,
+    Activity,
 } from "lucide-react"
 
 import { isCloudEdition } from "@/lib/edition"
@@ -74,6 +75,12 @@ const data = {
             title: "Syncs",
             url: "/dashboard/settings/syncs",
             icon: RefreshCw,
+            items: [],
+        },
+        {
+            title: "Factory",
+            url: "/dashboard/factory",
+            icon: Activity,
             items: [],
         },
         {

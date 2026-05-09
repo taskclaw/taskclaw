@@ -7,6 +7,8 @@ import { BackboneDefinitionsService } from './backbone-definitions.service';
 import { BackboneConnectionsService } from './backbone-connections.service';
 import { BackboneRouterService } from './backbone-router.service';
 import { BackboneHealthService } from './backbone-health.service';
+import { TokenUsageService } from './token-usage.service';
+import { TokenUsageController } from './token-usage.controller';
 import { MigrateAiProvidersService } from './migrations/migrate-ai-providers';
 import { BackboneConnectionsController } from './backbone-connections.controller';
 import { ClaudeCodeAdapter } from './adapters/claude-code.adapter';
@@ -27,13 +29,14 @@ import { BackboneDispatchProcessor } from './backbone-dispatch.processor';
     forwardRef(() => ConversationsModule),
     BackboneDispatchQueueModule.register(),
   ],
-  controllers: [BackboneConnectionsController],
+  controllers: [BackboneConnectionsController, TokenUsageController],
   providers: [
     BackboneAdapterRegistry,
     BackboneDefinitionsService,
     BackboneConnectionsService,
     BackboneRouterService,
     BackboneHealthService,
+    TokenUsageService,
     MigrateAiProvidersService,
     ClaudeCodeAdapter,
     CodexAdapter,
@@ -48,6 +51,7 @@ import { BackboneDispatchProcessor } from './backbone-dispatch.processor';
     BackboneConnectionsService,
     BackboneDefinitionsService,
     BackboneAdapterRegistry,
+    TokenUsageService,
     MigrateAiProvidersService,
     BackboneDispatchProcessor,
     BackboneDispatchQueueModule,

@@ -7,12 +7,74 @@ import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
+import { encrypt, decrypt, maskSensitiveValue } from '../common/utils/encryption.util';
 
 function generateSlug(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
+}
+
+// Marker prefix on encrypted env values. We keep encryption per-value so
+// the user can edit a single key without re-supplying every other secret.
+const ENC_PREFIX = 'enc:v1:';
+
+/** Encrypt every non-encrypted value in a custom_env object. */
+function encryptEnvObject(env: Record<string, unknown> | null | undefined): Record<string, string> {
+  if (!env) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v !== 'string') continue;
+    if (v.startsWith(ENC_PREFIX)) {
+      out[k] = v;
+    } else {
+      out[k] = ENC_PREFIX + encrypt(v);
+    }
+  }
+  return out;
+}
+
+/** Mask values stored encrypted; safe to return to the client. */
+function maskEnvObject(env: Record<string, unknown> | null | undefined): Record<string, string> {
+  if (!env) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v !== 'string') continue;
+    if (v.startsWith(ENC_PREFIX)) {
+      try {
+        const plain = decrypt(v.slice(ENC_PREFIX.length));
+        out[k] = maskSensitiveValue(plain);
+      } catch {
+        out[k] = '••••';
+      }
+    } else {
+      out[k] = maskSensitiveValue(v);
+    }
+  }
+  return out;
+}
+
+/**
+ * Decrypt a stored custom_env into plain values. Used at adapter call
+ * time to merge into spawn env / HTTP headers. Never returned to clients.
+ */
+export function decryptEnvObject(env: Record<string, unknown> | null | undefined): Record<string, string> {
+  if (!env) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v !== 'string') continue;
+    if (v.startsWith(ENC_PREFIX)) {
+      try {
+        out[k] = decrypt(v.slice(ENC_PREFIX.length));
+      } catch {
+        // Skip undecryptable values rather than crashing the spawn.
+      }
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 @Injectable()
@@ -49,7 +111,7 @@ export class AgentsService {
       throw new Error(`Failed to fetch agents: ${error.message}`);
     }
 
-    return data;
+    return (data ?? []).map((row) => this.maskRowEnv(row));
   }
 
   async findOne(userId: string, accountId: string, agentId: string) {
@@ -67,7 +129,36 @@ export class AgentsService {
       throw new NotFoundException(`Agent with ID ${agentId} not found`);
     }
 
-    return data;
+    return this.maskRowEnv(data);
+  }
+
+  /**
+   * Internal helper for adapter callers that need the *decrypted* env to
+   * merge into spawn env / HTTP headers. Bypasses the standard read path
+   * so we can guarantee plain values never leak through findOne/findAll.
+   */
+  async getDecryptedEnv(
+    accountId: string,
+    agentId: string,
+  ): Promise<{ env: Record<string, string>; args: string[] }> {
+    const client = this.supabaseAdmin.getClient();
+    const { data } = await client
+      .from('agents')
+      .select('custom_env, custom_args')
+      .eq('id', agentId)
+      .eq('account_id', accountId)
+      .maybeSingle();
+    return {
+      env: decryptEnvObject((data?.custom_env as Record<string, unknown>) ?? {}),
+      args: Array.isArray(data?.custom_args) ? (data!.custom_args as string[]) : [],
+    };
+  }
+
+  private maskRowEnv(row: any) {
+    return {
+      ...row,
+      custom_env: maskEnvObject(row?.custom_env ?? {}),
+    };
   }
 
   async create(
@@ -95,6 +186,8 @@ export class AgentsService {
         max_concurrent_tasks: dto.max_concurrent_tasks ?? 3,
         agent_type: dto.agent_type ?? 'worker',
         config: dto.config ?? {},
+        custom_env: encryptEnvObject(dto.custom_env ?? {}),
+        custom_args: Array.isArray(dto.custom_args) ? dto.custom_args : [],
         status: 'idle',
         is_active: true,
       })
@@ -110,7 +203,7 @@ export class AgentsService {
       throw new Error(`Failed to create agent: ${error.message}`);
     }
 
-    return data;
+    return this.maskRowEnv(data);
   }
 
   async update(
@@ -126,6 +219,30 @@ export class AgentsService {
     await this.findOne(userId, accountId, agentId);
 
     const updatePayload: Record<string, unknown> = { ...dto, updated_at: new Date().toISOString() };
+    if (dto.custom_env !== undefined) {
+      // Merge: empty string means "delete this key"; missing keys keep their
+      // existing encrypted value so the user doesn't have to re-supply
+      // already-set secrets just to add a new one.
+      const existing = await client
+        .from('agents')
+        .select('custom_env')
+        .eq('id', agentId)
+        .single();
+      const merged: Record<string, unknown> = {
+        ...((existing.data?.custom_env as Record<string, unknown>) ?? {}),
+      };
+      for (const [k, v] of Object.entries(dto.custom_env ?? {})) {
+        if (v === '' || v === null || v === undefined) {
+          delete merged[k];
+        } else {
+          merged[k] = v;
+        }
+      }
+      updatePayload.custom_env = encryptEnvObject(merged);
+    }
+    if (dto.custom_args !== undefined) {
+      updatePayload.custom_args = Array.isArray(dto.custom_args) ? dto.custom_args : [];
+    }
 
     const { data, error } = await client
       .from('agents')
@@ -139,7 +256,7 @@ export class AgentsService {
       throw new Error(`Failed to update agent: ${error.message}`);
     }
 
-    return data;
+    return this.maskRowEnv(data);
   }
 
   async remove(userId: string, accountId: string, agentId: string) {

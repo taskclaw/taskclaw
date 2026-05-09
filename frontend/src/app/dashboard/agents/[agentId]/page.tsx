@@ -21,6 +21,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentStatusBadge } from '@/components/agents/AgentStatusBadge'
 import { AgentAvatar } from '@/components/agents/AgentAvatar'
+import { AgentAdvancedSection } from '@/components/agents/agent-advanced-section'
 import { cn } from '@/lib/utils'
 import type { AgentActivity, UpdateAgentInput } from '@/types/agent'
 import { getSkills } from '@/app/dashboard/settings/skills/actions'
@@ -74,7 +75,7 @@ export default function AgentDetailPage() {
     const { agentId } = useParams<{ agentId: string }>()
     const router = useRouter()
     const qc = useQueryClient()
-    const [tab, setTab] = useState<'overview' | 'skills' | 'knowledge' | 'settings'>('overview')
+    const [tab, setTab] = useState<'overview' | 'skills' | 'knowledge' | 'settings' | 'advanced'>('overview')
     const [activityPage, setActivityPage] = useState(1)
     const [deleteConfirm, setDeleteConfirm] = useState(false)
     const [saveError, setSaveError] = useState<string | null>(null)
@@ -227,7 +228,7 @@ export default function AgentDetailPage() {
 
             {/* Tabs */}
             <div className="flex gap-4 px-6 border-b border-border">
-                {(['overview', 'skills', 'knowledge', 'settings'] as const).map((t) => (
+                {(['overview', 'skills', 'knowledge', 'settings', 'advanced'] as const).map((t) => (
                     <button
                         key={t}
                         onClick={() => setTab(t)}
@@ -564,6 +565,22 @@ export default function AgentDetailPage() {
                                 Click again to confirm. This will deactivate the agent and remove it from all active assignments.
                             </p>
                         )}
+                    </div>
+                )}
+
+                {tab === 'advanced' && agent && (
+                    <div className="max-w-2xl">
+                        <AgentAdvancedSection
+                            agentId={agent.id}
+                            initialEnv={(agent.custom_env as Record<string, string>) ?? {}}
+                            initialArgs={Array.isArray(agent.custom_args) ? (agent.custom_args as string[]) : []}
+                            onSave={(input) =>
+                                updateMutation.mutateAsync({
+                                    agentId: agent.id,
+                                    input: input as UpdateAgentInput,
+                                })
+                            }
+                        />
                     </div>
                 )}
             </div>

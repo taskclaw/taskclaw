@@ -60,4 +60,14 @@ export class CreateAgentDto {
   @IsOptional()
   @IsObject()
   config?: Record<string, unknown>;
+
+  // PRD §9 — per-agent overrides for spawn env / HTTP headers / CLI flags.
+  // Allows a single agent to use a Bedrock-routed Anthropic key while the
+  // rest of the account stays on the default backbone, etc.
+  @IsOptional()
+  @IsObject()
+  custom_env?: Record<string, string>;
+
+  @IsOptional()
+  custom_args?: string[];
 }

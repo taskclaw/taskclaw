@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 import { BackboneAdapterRegistry } from './adapters/backbone-adapter.registry';
 import { BackboneConnectionsService } from './backbone-connections.service';
+import { TokenUsageService } from './token-usage.service';
 import {
   BackboneAdapter,
   BackboneSendOptions,
@@ -63,6 +64,7 @@ export class BackboneRouterService {
     private readonly supabaseAdmin: SupabaseAdminService,
     private readonly registry: BackboneAdapterRegistry,
     private readonly connections: BackboneConnectionsService,
+    private readonly tokenUsage: TokenUsageService,
   ) {}
 
   /**
@@ -262,12 +264,14 @@ export class BackboneRouterService {
       skills = undefined;
     }
 
+    const startedAt = Date.now();
     const result = await resolved.adapter.sendMessage({
       ...options.sendOptions,
       config: resolved.config,
       systemPrompt,
       skills,
     });
+    const latency = Date.now() - startedAt;
 
     // Track usage asynchronously (fire-and-forget)
     if (result.usage?.total_tokens) {
@@ -275,6 +279,38 @@ export class BackboneRouterService {
         .trackUsage(resolved.connection.id, result.usage.total_tokens)
         .catch((err) =>
           this.logger.error(`Failed to track usage: ${err.message}`),
+        );
+    }
+
+    // PRD §11 — record per-call token usage for the Factory Dashboard.
+    // Fire-and-forget; failures must never block the caller.
+    const usage = result.usage;
+    const cacheStats = result.cacheStats;
+    if (usage || cacheStats) {
+      this.tokenUsage
+        .record({
+          account_id: options.accountId,
+          agent_id: options.agentId ?? null,
+          pod_id: options.podId ?? null,
+          conversation_id:
+            (options.sendOptions.metadata?.conversation_id as string | undefined) ?? null,
+          task_id: options.taskId ?? null,
+          provider: resolved.adapter.slug,
+          model:
+            result.model ??
+            (resolved.config?.model as string | undefined) ??
+            'unknown',
+          input_tokens:
+            (usage?.prompt_tokens ?? 0) + (cacheStats?.input_tokens ?? 0),
+          output_tokens: usage?.completion_tokens ?? 0,
+          cache_read_tokens: cacheStats?.cache_read_input_tokens ?? 0,
+          cache_write_tokens: cacheStats?.cache_creation_input_tokens ?? 0,
+          latency_ms: latency,
+        })
+        .catch((err) =>
+          this.logger.warn(
+            `token_usage record failed: ${err instanceof Error ? err.message : err}`,
+          ),
         );
     }
 
