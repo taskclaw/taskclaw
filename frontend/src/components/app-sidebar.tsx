@@ -12,6 +12,7 @@ import {
     Bot,
     Import,
     Library,
+    RefreshCw,
 } from "lucide-react"
 
 import { isCloudEdition } from "@/lib/edition"
@@ -67,6 +68,12 @@ const data = {
             title: "Integrations",
             url: "/dashboard/settings/integrations",
             icon: Plug,
+            items: [],
+        },
+        {
+            title: "Syncs",
+            url: "/dashboard/settings/syncs",
+            icon: RefreshCw,
             items: [],
         },
         {
