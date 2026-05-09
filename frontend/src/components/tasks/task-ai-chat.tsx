@@ -7,8 +7,9 @@ import { getOrCreateConversation, sendMessageBackground, getMessages, saveAiToTa
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
-import { SlashPalette, type SlashSelection } from '@/components/chat/slash-palette'
+import { SlashPalette, type SlashPaletteHandle, type SlashSelection } from '@/components/chat/slash-palette'
 import { MessageKindRenderer } from '@/components/chat/message-kind'
+import { useSlashTrigger } from '@/hooks/use-slash-trigger'
 
 interface Message {
     id?: string
@@ -283,27 +284,39 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
     }
 
     // PRD §5 — slash command palette for skills.
-    // The palette opens whenever the input begins with '/'. The query passed
-    // to the palette is everything after the slash. Selecting a skill replaces
-    // the slash-prefix with a [/SkillName] chip and dismisses the palette.
-    const slashOpen = input.startsWith('/')
-    const slashQuery = slashOpen ? input.slice(1) : ''
+    // useSlashTrigger detects `/` either at start-of-input or right after
+    // whitespace, so "hello /design" works the same as "/design".
+    const slashTrigger = useSlashTrigger(input, setInput, inputRef as any)
+    const paletteRef = useRef<SlashPaletteHandle | null>(null)
 
     const handleSlashSelect = (sel: SlashSelection) => {
-        const chip = `[/${sel.skill.name}] `
-        setInput(chip)
-        // Defer focus so the palette has time to unmount.
-        requestAnimationFrame(() => inputRef.current?.focus())
+        slashTrigger.insertChip(`[/${sel.skill.name}] `)
     }
 
-    const closeSlash = useCallback(() => {
-        if (input.startsWith('/')) setInput('')
-    }, [input])
-
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (slashOpen) {
-            // Let the palette swallow Enter / arrow keys. Only Escape needs to
-            // bubble — and we handle that inside the palette.
+        if (slashTrigger.open) {
+            // Forward arrow / enter / escape into the palette so focus can
+            // stay on the textarea and the user keeps seeing what they type.
+            if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                paletteRef.current?.highlightDelta(1)
+                return
+            }
+            if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                paletteRef.current?.highlightDelta(-1)
+                return
+            }
+            if (e.key === 'Enter') {
+                e.preventDefault()
+                paletteRef.current?.activate()
+                return
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault()
+                slashTrigger.close()
+                return
+            }
             return
         }
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -462,11 +475,11 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
             {/* Input */}
             <div className="p-3 border-t border-border relative">
                 <SlashPalette
-                    open={slashOpen}
-                    query={slashQuery}
-                    onQueryChange={(q) => setInput('/' + q)}
+                    ref={paletteRef}
+                    open={slashTrigger.open}
+                    query={slashTrigger.query}
                     onSelect={handleSlashSelect}
-                    onClose={closeSlash}
+                    onClose={slashTrigger.close}
                 />
                 <div className="flex items-center gap-2">
                     {/* Quick-start button: sends task context without typing */}
