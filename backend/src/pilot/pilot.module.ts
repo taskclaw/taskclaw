@@ -4,6 +4,7 @@ import { CommonModule } from '../common/common.module';
 import { BackboneModule } from '../backbone/backbone.module';
 import { TasksModule } from '../tasks/tasks.module';
 import { BoardRoutingModule } from '../board-routing/board-routing.module';
+import { HeartbeatModule } from '../heartbeat/heartbeat.module';
 import { PilotService } from './pilot.service';
 import { PilotController } from './pilot.controller';
 
@@ -20,6 +21,7 @@ import { PilotController } from './pilot.controller';
     forwardRef(() => BackboneModule),
     forwardRef(() => TasksModule),
     forwardRef(() => BoardRoutingModule),
+    forwardRef(() => HeartbeatModule),
   ],
   controllers: [PilotController],
   providers: [PilotService],

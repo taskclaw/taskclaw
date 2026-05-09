@@ -37,6 +37,7 @@ import { AgentsModule } from './agents/agents.module';
 import { OrchestrationModule } from './orchestration/orchestration.module';
 import { MemoryModule } from './memory/memory.module';
 import { PilotModule } from './pilot/pilot.module';
+import { SyncsModule } from './syncs/syncs.module';
 
 // Edition-gated modules (cloud-only)
 import { LangfuseModule } from './ee/langfuse/langfuse.module';
@@ -98,6 +99,7 @@ const editionModules = isCloudEdition
     OrchestrationModule,
     MemoryModule,
     PilotModule,
+    SyncsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
