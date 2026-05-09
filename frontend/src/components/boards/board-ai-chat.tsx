@@ -26,7 +26,8 @@ import { Badge } from '@/components/ui/badge'
 import { usePod, usePodBoards } from '@/hooks/use-pods'
 import { useAgents } from '@/hooks/use-agents'
 import { PodContextSidebar } from '@/components/orchestration/pod-context-sidebar'
-import { SlashPalette, type SlashSelection } from '@/components/chat/slash-palette'
+import { SlashPalette, type SlashPaletteHandle, type SlashSelection } from '@/components/chat/slash-palette'
+import { useSlashTrigger } from '@/hooks/use-slash-trigger'
 
 interface Message {
     id?: string
@@ -635,42 +636,18 @@ export function BoardAIChat({
                 </div>
 
                 {/* Input — hidden when no backbone is configured */}
-                <div className={cn('p-3 border-t shrink-0 relative', isNoBackboneError(error) && 'hidden')}>
-                    <SlashPalette
-                        open={input.startsWith('/')}
-                        query={input.startsWith('/') ? input.slice(1) : ''}
-                        onQueryChange={(q) => setInput('/' + q)}
-                        onSelect={(sel: SlashSelection) => {
-                            setInput(`[/${sel.skill.name}] `)
-                            requestAnimationFrame(() => inputRef.current?.focus())
-                        }}
-                        onClose={() => { if (input.startsWith('/')) setInput('') }}
-                    />
-                    <div className="flex items-center gap-2">
-                        <input
-                            ref={inputRef}
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyDown={(e) => {
-                                // Let cmdk handle keys while the palette is open
-                                if (input.startsWith('/')) return
-                                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-                                if (e.key === 'Escape') handleClose()
-                            }}
-                            placeholder={placeholder + '  ·  Try / for skills'}
-                            disabled={isSending || isProcessing || !conversationId}
-                            className="flex-1 bg-accent/50 border border-border rounded-lg px-3 py-2 text-sm placeholder-muted-foreground outline-none focus:border-primary/30 transition-colors disabled:opacity-50"
-                        />
-                        <button
-                            onClick={handleSend}
-                            disabled={!input.trim() || isSending || isProcessing || !conversationId}
-                            className="p-2 bg-primary/20 border border-primary/30 rounded-lg text-primary hover:bg-primary/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                            <Send className="w-4 h-4" />
-                        </button>
-                    </div>
-                </div>
+                <BoardChatInput
+                    input={input}
+                    setInput={setInput}
+                    inputRef={inputRef}
+                    placeholder={placeholder}
+                    isSending={isSending}
+                    isProcessing={isProcessing}
+                    conversationId={conversationId}
+                    handleSend={handleSend}
+                    handleClose={handleClose}
+                    hide={isNoBackboneError(error)}
+                />
                 </div>{/* end chat column */}
 
                 {/* Execution sidebar — workspace mode only */}
@@ -739,5 +716,76 @@ export function BoardAIChat({
 
             </SheetContent>
         </Sheet>
+    )
+}
+
+/**
+ * Local: input row with slash-palette wired through useSlashTrigger so the
+ * `/` autocomplete works mid-sentence.
+ */
+function BoardChatInput({
+    input,
+    setInput,
+    inputRef,
+    placeholder,
+    isSending,
+    isProcessing,
+    conversationId,
+    handleSend,
+    handleClose,
+    hide,
+}: {
+    input: string
+    setInput: (v: string) => void
+    inputRef: React.RefObject<HTMLInputElement>
+    placeholder: string
+    isSending: boolean
+    isProcessing: boolean
+    conversationId: string | null
+    handleSend: () => void
+    handleClose: () => void
+    hide: boolean
+}) {
+    const slash = useSlashTrigger(input, setInput, inputRef as any)
+    const paletteRef = useRef<SlashPaletteHandle | null>(null)
+    return (
+        <div className={cn('p-3 border-t shrink-0 relative', hide && 'hidden')}>
+            <SlashPalette
+                ref={paletteRef}
+                open={slash.open}
+                query={slash.query}
+                onSelect={(sel: SlashSelection) => slash.insertChip(`[/${sel.skill.name}] `)}
+                onClose={slash.close}
+            />
+            <div className="flex items-center gap-2">
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (slash.open) {
+                            if (e.key === 'ArrowDown') { e.preventDefault(); paletteRef.current?.highlightDelta(1); return }
+                            if (e.key === 'ArrowUp') { e.preventDefault(); paletteRef.current?.highlightDelta(-1); return }
+                            if (e.key === 'Enter') { e.preventDefault(); paletteRef.current?.activate(); return }
+                            if (e.key === 'Escape') { e.preventDefault(); slash.close(); return }
+                            return
+                        }
+                        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+                        if (e.key === 'Escape') handleClose()
+                    }}
+                    placeholder={placeholder + '  ·  Type / for skills'}
+                    disabled={isSending || isProcessing || !conversationId}
+                    className="flex-1 bg-accent/50 border border-border rounded-lg px-3 py-2 text-sm placeholder-muted-foreground outline-none focus:border-primary/30 transition-colors disabled:opacity-50"
+                />
+                <button
+                    onClick={handleSend}
+                    disabled={!input.trim() || isSending || isProcessing || !conversationId}
+                    className="p-2 bg-primary/20 border border-primary/30 rounded-lg text-primary hover:bg-primary/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                    <Send className="w-4 h-4" />
+                </button>
+            </div>
+        </div>
     )
 }
