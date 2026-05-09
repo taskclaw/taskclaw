@@ -58,6 +58,16 @@ function makeConnections(defaultConn: any = null, activeConns: any[] = []) {
   };
 }
 
+/** Build a TokenUsageService mock — F8 added it to the constructor. */
+function makeTokenUsage() {
+  return {
+    record: jest.fn().mockResolvedValue(undefined),
+    estimateCost: jest.fn().mockReturnValue(0),
+    getDashboardSummary: jest.fn().mockResolvedValue({}),
+    runRollup: jest.fn().mockResolvedValue({ days: 0, rows_inserted: 0 }),
+  };
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('BackboneRouterService', () => {
@@ -87,6 +97,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         registry as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       const result = await service.resolve(ACCOUNT_ID, { taskId: 'task-1' });
@@ -112,6 +123,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         makeRegistry() as any,
         makeConnections() as any,
+        makeTokenUsage() as any,
       );
 
       const result = await service.resolve(ACCOUNT_ID, {
@@ -133,6 +145,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         makeRegistry() as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       const result = await service.resolve(ACCOUNT_ID);
@@ -152,6 +165,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         makeRegistry() as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       const result = await service.resolve(ACCOUNT_ID);
@@ -169,6 +183,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         makeRegistry() as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       await expect(service.resolve(ACCOUNT_ID)).rejects.toThrow(
@@ -199,6 +214,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         makeRegistry() as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       const result = await service.resolve(ACCOUNT_ID, { taskId: 'task-1' });
@@ -222,6 +238,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         makeRegistry() as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       await service.resolve(ACCOUNT_ID);
@@ -249,6 +266,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         registry as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       await service.send({
@@ -257,8 +275,8 @@ describe('BackboneRouterService', () => {
           message: 'Hello',
           systemPrompt: 'Base prompt.',
           skills: [
-            { name: 'Summarizer', description: 'Summarizes text' },
-            { name: 'Translator', description: 'Translates text' },
+            { name: 'Summarizer', description: 'Summarizes text', parameters: {} },
+            { name: 'Translator', description: 'Translates text', parameters: {} },
           ],
         },
       });
@@ -284,9 +302,10 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         registry as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
-      const skills = [{ name: 'Tool', description: 'Does things' }];
+      const skills = [{ name: 'Tool', description: 'Does things', parameters: {} }];
       await service.send({
         accountId: ACCOUNT_ID,
         sendOptions: { message: 'test', systemPrompt: 'prompt', skills },
@@ -313,6 +332,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         makeRegistry() as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       await service.send({
@@ -336,6 +356,7 @@ describe('BackboneRouterService', () => {
         supabaseAdmin as any,
         makeRegistry() as any,
         connections as any,
+        makeTokenUsage() as any,
       );
 
       // Should not throw even though tracking fails

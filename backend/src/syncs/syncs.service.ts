@@ -141,6 +141,36 @@ export class SyncsService {
     if (error) throw new BadRequestException(error.message);
   }
 
+  /**
+   * List all skills produced by this sync. Used by the Settings → Syncs UI
+   * to expand a card and show "what did this actually pull in?".
+   */
+  async listSkills(
+    accountId: string,
+    syncId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      name: string;
+      description: string | null;
+      source_uri: string | null;
+      source_version: string | null;
+      locally_available: boolean | null;
+    }>
+  > {
+    // Verify sync ownership.
+    await this.get(accountId, syncId);
+    const client = this.supabaseAdmin.getClient();
+    const { data, error } = await client
+      .from('skills')
+      .select('id, name, description, source_uri, source_version, locally_available')
+      .eq('account_id', accountId)
+      .eq('source_sync_id', syncId)
+      .order('name', { ascending: true });
+    if (error) throw new BadRequestException(error.message);
+    return (data ?? []) as any;
+  }
+
   async listRuns(accountId: string, syncId: string, limit = 20): Promise<SyncRunRow[]> {
     // Verify sync ownership first.
     await this.get(accountId, syncId);

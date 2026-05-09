@@ -24,10 +24,10 @@ describe('BackboneAdapter conformance (§12.4)', () => {
   // here; we never exercise the bodies.
   const cases: Array<{ name: string; build: () => BackboneAdapter; slug: string }> = [
     { name: 'anthropic', build: () => new AnthropicAdapter(), slug: 'anthropic' },
-    { name: 'claude-code', build: () => new ClaudeCodeAdapter(null as any), slug: 'claude-code' },
-    { name: 'codex', build: () => new CodexAdapter(null as any), slug: 'codex' },
+    { name: 'claude-code', build: () => new ClaudeCodeAdapter(), slug: 'claude-code' },
+    { name: 'codex', build: () => new CodexAdapter(), slug: 'codex' },
     { name: 'custom-http', build: () => new CustomHttpAdapter(), slug: 'custom-http' },
-    { name: 'nemoclaw', build: () => new NemoClawAdapter(null as any), slug: 'nemoclaw' },
+    { name: 'nemoclaw', build: () => new NemoClawAdapter(), slug: 'nemoclaw' },
     { name: 'ollama', build: () => new OllamaAdapter(), slug: 'ollama' },
     { name: 'openclaw', build: () => new OpenClawAdapter(), slug: 'openclaw' },
     { name: 'openrouter', build: () => new OpenRouterAdapter(), slug: 'openrouter' },

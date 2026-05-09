@@ -5,6 +5,7 @@ import { usePods, usePodBoards, useAllBoards, useDeletePod } from '@/hooks/use-p
 import { useAgents, usePauseAgent, useResumeAgent } from '@/hooks/use-agents'
 import { CreatePodDialog } from '@/components/pods/create-pod-dialog'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
+import { SlashPalette, type SlashSelection } from '@/components/chat/slash-palette'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -975,14 +976,27 @@ function CommandCenter({ activeConversationId, onConversationChange, openFreshCh
                     </div>
 
                     {/* Input */}
-                    <div className="border-t border-white/5 p-3 shrink-0">
+                    <div className="border-t border-white/5 p-3 shrink-0 relative">
+                        <SlashPalette
+                            open={input.startsWith('/')}
+                            query={input.startsWith('/') ? input.slice(1) : ''}
+                            onQueryChange={(q) => setInput('/' + q)}
+                            onSelect={(sel: SlashSelection) => {
+                                setInput(`[/${sel.skill.name}] `)
+                                requestAnimationFrame(() => inputRef.current?.focus())
+                            }}
+                            onClose={() => { if (input.startsWith('/')) setInput('') }}
+                        />
                         <div className="flex gap-2">
                             <textarea
                                 ref={inputRef}
                                 value={input}
                                 onChange={e => setInput(e.target.value)}
-                                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit() } }}
-                                placeholder="Reply…"
+                                onKeyDown={e => {
+                                    if (input.startsWith('/')) return
+                                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit() }
+                                }}
+                                placeholder="Reply…  ·  Try / for skills"
                                 rows={2}
                                 className="flex-1 bg-muted/20 border border-white/8 rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
                                 disabled={isSending}
@@ -1032,13 +1046,24 @@ function CommandCenter({ activeConversationId, onConversationChange, openFreshCh
                                 style={{ background: 'linear-gradient(135deg, rgba(143,245,255,0.3), rgba(255,81,250,0.3))', filter: 'blur(2px)' }} />
                             <div className="relative rounded-2xl bg-card/60 backdrop-blur-xl border border-white/8 overflow-hidden"
                                 style={{ boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+                                <SlashPalette
+                                    open={input.startsWith('/')}
+                                    query={input.startsWith('/') ? input.slice(1) : ''}
+                                    onQueryChange={(q) => setInput('/' + q)}
+                                    onSelect={(sel: SlashSelection) => {
+                                        setInput(`[/${sel.skill.name}] `)
+                                        requestAnimationFrame(() => inputRef.current?.focus())
+                                    }}
+                                    onClose={() => { if (input.startsWith('/')) setInput('') }}
+                                />
                                 <textarea
                                     value={input}
                                     onChange={(e) => setInput(e.target.value)}
                                     onKeyDown={(e) => {
+                                        if (input.startsWith('/')) return
                                         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit() }
                                     }}
-                                    placeholder="Issue a command, brief a department, or query the workspace…"
+                                    placeholder="Issue a command, brief a department, or query the workspace…  ·  Try / for skills"
                                     className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-foreground placeholder:text-muted-foreground/30 text-base p-5 min-h-[120px] resize-none"
                                     disabled={isInitializing}
                                 />

@@ -98,6 +98,19 @@ export async function listSyncRuns(id: string, limit = 20): Promise<SyncRunRow[]
   return (await call(`/${id}/runs?limit=${limit}`)) as SyncRunRow[];
 }
 
+export interface SyncSkill {
+  id: string;
+  name: string;
+  description: string | null;
+  source_uri: string | null;
+  source_version: string | null;
+  locally_available: boolean | null;
+}
+
+export async function listSyncSkills(id: string): Promise<SyncSkill[]> {
+  return (await call(`/${id}/skills`)) as SyncSkill[];
+}
+
 export async function createSync(input: CreateSyncInput): Promise<SyncRow> {
   return (await call('', { method: 'POST', body: JSON.stringify(input) })) as SyncRow;
 }
