@@ -50,6 +50,39 @@ export class SkillsController {
     return this.skillsService.getAgentsDashboard(req.accessToken, accountId);
   }
 
+  // PRD §5.3 — slash-palette search across available + local + marketplace.
+  // Route declared before `:id` so the literal path wins NestJS routing.
+  @Get('search')
+  search(
+    @Param('accountId') accountId: string,
+    @Query('q') q?: string,
+    @Query('include_local') includeLocal?: string,
+    @Query('include_market') includeMarket?: string,
+  ) {
+    return this.skillsService.search(accountId, q ?? '', {
+      include_local: includeLocal !== 'false',
+      include_market: includeMarket === 'true',
+    });
+  }
+
+  // PRD §5.3 — one-click import for a disk-scan skill.
+  @Post('import')
+  @HttpCode(HttpStatus.OK)
+  importSkill(
+    @Param('accountId') accountId: string,
+    @Body() body: { source_type?: string; source_uri?: string },
+  ) {
+    if (!body?.source_uri) {
+      throw new BadRequestException('source_uri is required');
+    }
+    if (body.source_type && body.source_type !== 'disk-scan') {
+      throw new BadRequestException(
+        `source_type='${body.source_type}' import is not yet supported`,
+      );
+    }
+    return this.skillsService.importFromDisk(accountId, body.source_uri);
+  }
+
   @Get('category-map')
   getCategorySkillsMap(@Request() req, @Param('accountId') accountId: string) {
     return this.skillsService.getCategorySkillsMap(req.accessToken, accountId);

@@ -7,6 +7,7 @@ import { getOrCreateConversation, sendMessageBackground, getMessages, saveAiToTa
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
+import { SlashPalette, type SlashSelection } from '@/components/chat/slash-palette'
 
 interface Message {
     id?: string
@@ -278,7 +279,30 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
         }
     }
 
+    // PRD §5 — slash command palette for skills.
+    // The palette opens whenever the input begins with '/'. The query passed
+    // to the palette is everything after the slash. Selecting a skill replaces
+    // the slash-prefix with a [/SkillName] chip and dismisses the palette.
+    const slashOpen = input.startsWith('/')
+    const slashQuery = slashOpen ? input.slice(1) : ''
+
+    const handleSlashSelect = (sel: SlashSelection) => {
+        const chip = `[/${sel.skill.name}] `
+        setInput(chip)
+        // Defer focus so the palette has time to unmount.
+        requestAnimationFrame(() => inputRef.current?.focus())
+    }
+
+    const closeSlash = useCallback(() => {
+        if (input.startsWith('/')) setInput('')
+    }, [input])
+
     const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (slashOpen) {
+            // Let the palette swallow Enter / arrow keys. Only Escape needs to
+            // bubble — and we handle that inside the palette.
+            return
+        }
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
             handleSend()
@@ -426,7 +450,14 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
             </div>
 
             {/* Input */}
-            <div className="p-3 border-t border-border">
+            <div className="p-3 border-t border-border relative">
+                <SlashPalette
+                    open={slashOpen}
+                    query={slashQuery}
+                    onQueryChange={(q) => setInput('/' + q)}
+                    onSelect={handleSlashSelect}
+                    onClose={closeSlash}
+                />
                 <div className="flex items-center gap-2">
                     {/* Quick-start button: sends task context without typing */}
                     {messages.length === 0 && !isProcessing && !isSending && conversationId && (
@@ -449,7 +480,7 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder={isProcessing ? 'Wait for AI to respond...' : 'Ask the AI assistant...'}
+                        placeholder={isProcessing ? 'Wait for AI to respond...' : 'Ask the AI assistant...  Try / for skills'}
                         disabled={isSending || isProcessing || !conversationId}
                         className="flex-1 bg-accent/50 border border-border rounded-lg px-3 py-2 text-sm placeholder-muted-foreground outline-none focus:border-primary/30 transition-colors disabled:opacity-50"
                     />
