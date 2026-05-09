@@ -17,6 +17,7 @@ import { ConversationsService } from '../conversations/conversations.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 import { DAGExecutorService } from '../board-routing/dag-executor.service';
 import { ExecutionLogService } from '../heartbeat/execution-log.service';
+import { MentionDispatchService } from '../mention/dispatch.service';
 
 interface TaskFilters {
   category_id?: string;
@@ -43,6 +44,7 @@ export class TasksService {
     @Inject(forwardRef(() => DAGExecutorService))
     private readonly dagExecutor: DAGExecutorService,
     private readonly executionLog: ExecutionLogService,
+    private readonly mentionDispatch: MentionDispatchService,
   ) {}
 
   async findAll(
@@ -428,6 +430,31 @@ export class TasksService {
 
     const webhookEvent = data.completed ? 'task.completed' : 'task.updated';
     this.webhookEmitter.emit(accountId, webhookEvent, { task: data });
+
+    // PRD §7 — fire mention dispatch when notes changed. Mention spawning
+    // happens in the background to keep the update response snappy; failures
+    // never block the caller.
+    const notesChanged =
+      typeof updateTaskDto.notes === 'string' &&
+      updateTaskDto.notes !== existingTask.notes;
+    if (notesChanged) {
+      const parentDepth = Number(
+        (existingTask.input_context as any)?.mention_depth ?? 0,
+      );
+      this.mentionDispatch
+        .dispatch({
+          account_id: accountId,
+          source_task_id: id,
+          source_user_id: userId,
+          text: updateTaskDto.notes ?? '',
+          parent_mention_depth: Number.isFinite(parentDepth) ? parentDepth : 0,
+        })
+        .catch((err) =>
+          this.logger.error(
+            `Mention dispatch failed for task ${id}: ${(err as Error).message}`,
+          ),
+        );
+    }
 
     // Fire-and-forget: notify DAG executor when a task is completed
     if (data.completed && data.dag_id) {
