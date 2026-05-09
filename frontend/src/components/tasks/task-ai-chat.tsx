@@ -7,9 +7,8 @@ import { getOrCreateConversation, sendMessageBackground, getMessages, saveAiToTa
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
-import { SlashPalette, type SlashPaletteHandle, type SlashSelection } from '@/components/chat/slash-palette'
+import { SkillPaletteHost } from '@/components/chat/skill-palette-host'
 import { MessageKindRenderer } from '@/components/chat/message-kind'
-import { useSlashTrigger } from '@/hooks/use-slash-trigger'
 
 interface Message {
     id?: string
@@ -283,42 +282,10 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
         }
     }
 
-    // PRD §5 — slash command palette for skills.
-    // useSlashTrigger detects `/` either at start-of-input or right after
-    // whitespace, so "hello /design" works the same as "/design".
-    const slashTrigger = useSlashTrigger(input, setInput, inputRef as any)
-    const paletteRef = useRef<SlashPaletteHandle | null>(null)
-
-    const handleSlashSelect = (sel: SlashSelection) => {
-        slashTrigger.insertChip(`[/${sel.skill.name}] `)
-    }
-
+    // PRD §5 — slash command palette wraps the input via SkillPaletteHost.
+    // Surface-specific behavior (Enter to send) lives in the onInputKeyDown
+    // callback below; the host swallows keys while the palette is open.
     const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (slashTrigger.open) {
-            // Forward arrow / enter / escape into the palette so focus can
-            // stay on the textarea and the user keeps seeing what they type.
-            if (e.key === 'ArrowDown') {
-                e.preventDefault()
-                paletteRef.current?.highlightDelta(1)
-                return
-            }
-            if (e.key === 'ArrowUp') {
-                e.preventDefault()
-                paletteRef.current?.highlightDelta(-1)
-                return
-            }
-            if (e.key === 'Enter') {
-                e.preventDefault()
-                paletteRef.current?.activate()
-                return
-            }
-            if (e.key === 'Escape') {
-                e.preventDefault()
-                slashTrigger.close()
-                return
-            }
-            return
-        }
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
             handleSend()
@@ -473,14 +440,7 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
             </div>
 
             {/* Input */}
-            <div className="p-3 border-t border-border relative">
-                <SlashPalette
-                    ref={paletteRef}
-                    open={slashTrigger.open}
-                    query={slashTrigger.query}
-                    onSelect={handleSlashSelect}
-                    onClose={slashTrigger.close}
-                />
+            <div className="p-3 border-t border-border">
                 <div className="flex items-center gap-2">
                     {/* Quick-start button: sends task context without typing */}
                     {messages.length === 0 && !isProcessing && !isSending && conversationId && (
@@ -497,16 +457,22 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
                             <Play className="w-4 h-4" />
                         </button>
                     )}
-                    <input
-                        ref={inputRef}
-                        type="text"
+                    <SkillPaletteHost
                         value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder={isProcessing ? 'Wait for AI to respond...' : 'Ask the AI assistant...  Try / for skills'}
-                        disabled={isSending || isProcessing || !conversationId}
-                        className="flex-1 bg-accent/50 border border-border rounded-lg px-3 py-2 text-sm placeholder-muted-foreground outline-none focus:border-primary/30 transition-colors disabled:opacity-50"
-                    />
+                        setValue={setInput}
+                        onInputKeyDown={handleKeyDown}
+                        externalRef={inputRef as any}
+                        className="flex-1"
+                    >
+                        <input
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder={isProcessing ? 'Wait for AI to respond...' : 'Ask the AI assistant…  ·  Type / for skills'}
+                            disabled={isSending || isProcessing || !conversationId}
+                            className="w-full bg-accent/50 border border-border rounded-lg px-3 py-2 text-sm placeholder-muted-foreground outline-none focus:border-primary/30 transition-colors disabled:opacity-50"
+                        />
+                    </SkillPaletteHost>
                     <button
                         onClick={() => handleSend()}
                         disabled={!input.trim() || isSending || isProcessing || !conversationId}

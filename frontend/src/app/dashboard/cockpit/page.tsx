@@ -5,8 +5,7 @@ import { usePods, usePodBoards, useAllBoards, useDeletePod } from '@/hooks/use-p
 import { useAgents, usePauseAgent, useResumeAgent } from '@/hooks/use-agents'
 import { CreatePodDialog } from '@/components/pods/create-pod-dialog'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
-import { SlashPalette, type SlashPaletteHandle, type SlashSelection } from '@/components/chat/slash-palette'
-import { useSlashTrigger } from '@/hooks/use-slash-trigger'
+import { SkillPaletteHost } from '@/components/chat/skill-palette-host'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -792,18 +791,14 @@ function CommandCenter({ activeConversationId, onConversationChange, openFreshCh
     const [error, setError] = useState<string | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLTextAreaElement>(null)
-    // Mid-sentence `/` palette trigger (PRD §5). Both the empty-state and
-    // reply textareas share `input`, so a single trigger covers both.
-    const slash = useSlashTrigger(input, setInput, inputRef as any)
-    const paletteRef = useRef<SlashPaletteHandle | null>(null)
-    const handleSlashSelect = (sel: SlashSelection) => slash.insertChip(`[/${sel.skill.name}] `)
-    const slashKeyDown = (e: React.KeyboardEvent) => {
-        if (!slash.open) return false
-        if (e.key === 'ArrowDown') { e.preventDefault(); paletteRef.current?.highlightDelta(1); return true }
-        if (e.key === 'ArrowUp') { e.preventDefault(); paletteRef.current?.highlightDelta(-1); return true }
-        if (e.key === 'Enter') { e.preventDefault(); paletteRef.current?.activate(); return true }
-        if (e.key === 'Escape') { e.preventDefault(); slash.close(); return true }
-        return true // swallow everything while palette is open (typing flows through onChange)
+    // Cmd/Ctrl+Enter sends — the palette host lets this through only when
+    // the slash popover is closed. Otherwise the host swallows Enter so it
+    // can pick the highlighted skill.
+    const cockpitInputKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            handleSubmit()
+        }
     }
     const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -990,28 +985,24 @@ function CommandCenter({ activeConversationId, onConversationChange, openFreshCh
                     </div>
 
                     {/* Input */}
-                    <div className="border-t border-white/5 p-3 shrink-0 relative">
-                        <SlashPalette
-                            ref={paletteRef}
-                            open={slash.open}
-                            query={slash.query}
-                            onSelect={handleSlashSelect}
-                            onClose={slash.close}
-                        />
+                    <div className="border-t border-white/5 p-3 shrink-0">
                         <div className="flex gap-2">
-                            <textarea
-                                ref={inputRef}
+                            <SkillPaletteHost
                                 value={input}
-                                onChange={e => setInput(e.target.value)}
-                                onKeyDown={e => {
-                                    if (slashKeyDown(e)) return
-                                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit() }
-                                }}
-                                placeholder="Reply…  ·  Type / for skills"
-                                rows={2}
-                                className="flex-1 bg-muted/20 border border-white/8 rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
-                                disabled={isSending}
-                            />
+                                setValue={setInput}
+                                externalRef={inputRef as any}
+                                onInputKeyDown={cockpitInputKeyDown}
+                                className="flex-1"
+                            >
+                                <textarea
+                                    value={input}
+                                    onChange={e => setInput(e.target.value)}
+                                    placeholder="Reply…  ·  Type / for skills"
+                                    rows={2}
+                                    className="w-full bg-muted/20 border border-white/8 rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
+                                    disabled={isSending}
+                                />
+                            </SkillPaletteHost>
                             <button
                                 onClick={handleSubmit}
                                 disabled={!input.trim() || isSending}
@@ -1055,27 +1046,23 @@ function CommandCenter({ activeConversationId, onConversationChange, openFreshCh
                         <div className="relative group mb-6">
                             <div className="absolute -inset-px rounded-3xl opacity-30 group-focus-within:opacity-70 transition-opacity pointer-events-none"
                                 style={{ background: 'linear-gradient(135deg, rgba(143,245,255,0.3), rgba(255,81,250,0.3))', filter: 'blur(2px)' }} />
-                            <div className="relative rounded-2xl bg-card/60 backdrop-blur-xl border border-white/8 overflow-hidden"
+                            <div className="rounded-2xl bg-card/60 backdrop-blur-xl border border-white/8"
                                 style={{ boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-                                <SlashPalette
-                                    ref={paletteRef}
-                                    open={slash.open}
-                                    query={slash.query}
-                                    onSelect={handleSlashSelect}
-                                    onClose={slash.close}
-                                />
-                                <textarea
-                                    ref={inputRef}
+                                <SkillPaletteHost
                                     value={input}
-                                    onChange={(e) => setInput(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (slashKeyDown(e)) return
-                                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit() }
-                                    }}
-                                    placeholder="Issue a command, brief a department, or query the workspace…  ·  Type / for skills"
-                                    className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-foreground placeholder:text-muted-foreground/30 text-base p-5 min-h-[120px] resize-none"
-                                    disabled={isInitializing}
-                                />
+                                    setValue={setInput}
+                                    externalRef={inputRef as any}
+                                    onInputKeyDown={cockpitInputKeyDown}
+                                    anchor="bottom"
+                                >
+                                    <textarea
+                                        value={input}
+                                        onChange={(e) => setInput(e.target.value)}
+                                        placeholder="Issue a command, brief a department, or query the workspace…  ·  Type / for skills"
+                                        className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-foreground placeholder:text-muted-foreground/30 text-base p-5 min-h-[120px] resize-none rounded-2xl"
+                                        disabled={isInitializing}
+                                    />
+                                </SkillPaletteHost>
                                 <div className="flex items-center justify-between px-5 pb-4 gap-3">
                                     <BackboneSelector
                                         backbones={backbones as any[]}

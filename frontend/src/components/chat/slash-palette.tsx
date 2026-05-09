@@ -9,7 +9,7 @@ import {
   useState,
 } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { AlertCircle, FolderOpen, Loader2, Sparkles, Store } from 'lucide-react';
+import { AlertCircle, FolderOpen, Loader2, Search, Sparkles, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
@@ -25,13 +25,8 @@ export interface SlashSelection {
   skill: { id: string; name: string; source_uri: string | null };
 }
 
-/**
- * Imperative handle exposed by SlashPalette so the parent textarea can
- * keep keyboard focus while still driving the palette. The textarea
- * forwards Enter / ArrowUp / ArrowDown into these methods.
- */
 export interface SlashPaletteHandle {
-  /** Move highlight up or down. Returns true if a real item received the highlight. */
+  /** Move highlight up or down. Returns true if the move landed on a real item. */
   highlightDelta: (delta: 1 | -1) => boolean;
   /** Activate the currently highlighted item. Returns true if a selection happened. */
   activate: () => boolean;
@@ -40,8 +35,17 @@ export interface SlashPaletteHandle {
 interface SlashPaletteProps {
   open: boolean;
   query: string;
+  /**
+   * Mirror typing from the palette's own search field back to the parent's
+   * input so the slash region in the textarea stays in sync. Optional —
+   * surfaces that prefer "type only in the underlying textarea" can omit it
+   * and the palette field becomes effectively read-only display.
+   */
+  onQueryChange?: (q: string) => void;
   onSelect: (selection: SlashSelection) => void;
   onClose: () => void;
+  /** Where the popover anchors. 'top' = above the input (default). */
+  anchor?: 'top' | 'bottom';
 }
 
 type FlatItem =
@@ -50,18 +54,28 @@ type FlatItem =
   | { kind: 'market'; row: MarketSkill };
 
 /**
- * Passive popover above a chat input. The user keeps typing in the input;
- * `query` flows in from the parent. Up/Down/Enter come in via the
- * imperative handle so focus never jumps.
+ * Slash-command popover (PRD §5).
+ *
+ * Behaviour:
+ *   - Opens when the parent detects a `/` slash region. Renders above
+ *     (default) or below the input depending on `anchor`.
+ *   - Has its own visible search field. Both the parent textarea and this
+ *     field are bidirectionally bound to `query` via `onQueryChange`, so
+ *     the user can type into either and they stay in sync.
+ *   - Up / Down / Enter / Escape come in either via the palette's own
+ *     search field OR via the parent textarea (which forwards them through
+ *     the imperative `SlashPaletteHandle`).
+ *   - Selection (click or Enter) calls `onSelect`. The host inserts a chip
+ *     in place of the slash region and returns focus to the textarea.
  */
 export const SlashPalette = forwardRef<SlashPaletteHandle, SlashPaletteProps>(
-  function SlashPalette({ open, query, onSelect, onClose }, ref) {
+  function SlashPalette({ open, query, onQueryChange, onSelect, onClose, anchor = 'top' }, ref) {
     const { data, loading, error } = useSkillSearch(query);
     const [importingUri, setImportingUri] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const searchRef = useRef<HTMLInputElement | null>(null);
     const [highlightIdx, setHighlightIdx] = useState(0);
 
-    // Build a flat ordered list so the highlight index has a single source of truth.
     const flat: FlatItem[] = useMemo(
       () => [
         ...data.available.map((row) => ({ kind: 'available' as const, row })),
@@ -71,12 +85,10 @@ export const SlashPalette = forwardRef<SlashPaletteHandle, SlashPaletteProps>(
       [data],
     );
 
-    // Reset highlight when the result set changes.
     useEffect(() => {
       setHighlightIdx(0);
     }, [flat.length, query]);
 
-    // Outside-click closes the palette.
     useEffect(() => {
       if (!open) return;
       function handler(e: MouseEvent) {
@@ -87,7 +99,6 @@ export const SlashPalette = forwardRef<SlashPaletteHandle, SlashPaletteProps>(
       return () => document.removeEventListener('mousedown', handler);
     }, [open, onClose]);
 
-    // Keep the highlighted element scrolled into view.
     useEffect(() => {
       if (!open || flat.length === 0) return;
       const el = containerRef.current?.querySelector<HTMLElement>(
@@ -129,7 +140,6 @@ export const SlashPalette = forwardRef<SlashPaletteHandle, SlashPaletteProps>(
           setImportingUri(null);
         }
       }
-      // market: deferred
       toast.info('Marketplace import lands in v1.1.');
       return false;
     }
@@ -139,10 +149,7 @@ export const SlashPalette = forwardRef<SlashPaletteHandle, SlashPaletteProps>(
       (): SlashPaletteHandle => ({
         highlightDelta: (delta) => {
           if (flat.length === 0) return false;
-          setHighlightIdx((i) => {
-            const next = (i + delta + flat.length) % flat.length;
-            return next;
-          });
+          setHighlightIdx((i) => (i + delta + flat.length) % flat.length);
           return true;
         },
         activate: () => {
@@ -159,23 +166,62 @@ export const SlashPalette = forwardRef<SlashPaletteHandle, SlashPaletteProps>(
 
     let renderedIdx = -1;
 
+    const positionClass = anchor === 'top'
+      ? 'bottom-full mb-2'
+      : 'top-full mt-2';
+
     return (
       <div
         ref={containerRef}
-        className="absolute bottom-full left-0 z-50 mb-2 w-full max-w-xl overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-lg"
+        className={cn(
+          'absolute left-0 z-50 w-full max-w-xl rounded-lg border bg-popover text-popover-foreground shadow-lg',
+          positionClass,
+        )}
         role="listbox"
         aria-label="Skill suggestions"
+        // Forward focus-stealing from outside-clicks: keep clicks on the
+        // search input from triggering the document mousedown handler.
+        onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b px-3 py-2 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
-            {loading ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Sparkles className="h-3 w-3" />
-            )}
-            <span>{query ? `Skills matching "${query}"` : 'Skills'}</span>
-          </div>
-          <kbd className="rounded border bg-muted px-1.5 py-0.5 text-[10px]">↑↓ Enter</kbd>
+        {/* Search header — visible field that mirrors the slash query.
+            Auto-focuses on open so the user can keep typing here OR in the
+            parent textarea; both write to `query`. */}
+        <div className="flex items-center gap-2 border-b px-3 py-2">
+          <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <input
+            ref={(el) => {
+              searchRef.current = el;
+            }}
+            value={query}
+            onChange={(e) => onQueryChange?.(e.target.value)}
+            placeholder="Search skills…"
+            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setHighlightIdx((i) => (flat.length === 0 ? 0 : (i + 1) % flat.length));
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setHighlightIdx((i) =>
+                  flat.length === 0 ? 0 : (i - 1 + flat.length) % flat.length,
+                );
+              } else if (e.key === 'Enter') {
+                e.preventDefault();
+                const item = flat[highlightIdx];
+                if (item) void activateItem(item);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                onClose();
+              }
+            }}
+          />
+          {loading ? (
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+          ) : (
+            <kbd className="rounded border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              ↑↓ Enter
+            </kbd>
+          )}
         </div>
 
         <div className="max-h-72 overflow-y-auto">
@@ -317,8 +363,6 @@ function Row({
       role="option"
       aria-selected={highlight}
       onMouseEnter={onMouseEnter}
-      // mousedown — fires before the document mousedown listener that closes
-      // the palette would, so we don't lose the click to outside-detect.
       onMouseDown={(e) => {
         e.preventDefault();
         if (!disabled) onClick();
