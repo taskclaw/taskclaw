@@ -547,6 +547,8 @@ export class ConversationsService {
       await client.from('messages').insert({
         conversation_id: conversationId,
         role: 'system',
+        kind: 'error',
+        author_type: 'system',
         content: `Error: ${error.message}`,
         metadata: { error: true },
       });
@@ -961,6 +963,8 @@ export class ConversationsService {
           await client.from('messages').insert({
             conversation_id: conversationId,
             role: 'system',
+            kind: 'error',
+            author_type: 'system',
             content: `AI processing failed: ${errorMessage}`,
             metadata: { error: true, duration_ms: durationMs },
           });

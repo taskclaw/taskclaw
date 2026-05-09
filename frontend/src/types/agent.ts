@@ -21,6 +21,8 @@ export interface Agent {
   total_tokens_used: number
   last_active_at: string | null
   config: Record<string, any>
+  custom_env?: Record<string, string>
+  custom_args?: string[]
   migrated_from_category_id: string | null
   created_at: string
   updated_at: string
@@ -58,6 +60,8 @@ export interface CreateAgentInput {
   model_override?: string
   max_concurrent_tasks?: number
   config?: Record<string, any>
+  custom_env?: Record<string, string>
+  custom_args?: string[]
 }
 
 export interface UpdateAgentInput extends Partial<CreateAgentInput> {
