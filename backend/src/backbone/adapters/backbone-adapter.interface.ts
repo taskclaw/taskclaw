@@ -70,9 +70,31 @@ export interface BackboneSkillDefinition {
   parameters: Record<string, any>;
 }
 
+/**
+ * A typed segment of an assistant turn (PRD §8 / F5).
+ * Adapters that can split their output (Anthropic, Claude Code, OpenClaw)
+ * populate `segments`; callers that want richer rendering write one
+ * `messages` row per segment with `kind` set. Adapters that don't split
+ * leave `segments` undefined and the caller falls back to `text`.
+ */
+export interface BackboneSegment {
+  kind: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'status' | 'error' | 'log';
+  /** Plaintext content. For tool_use this is a JSON-stringified args blob. */
+  content: string;
+  /** Tool-call metadata for kind === 'tool_use' / 'tool_result'. */
+  metadata?: Record<string, unknown>;
+}
+
 export interface BackboneSendResult {
   /** Final assistant reply text */
   text: string;
+  /**
+   * Optional per-segment breakdown for adapters that split their output
+   * into thinking / tool_use / tool_result / text blocks. Order matches
+   * the order the model emitted them. When absent, callers should treat
+   * `text` as a single kind='text' segment.
+   */
+  segments?: BackboneSegment[];
   /** Token usage (if reported by the backbone) */
   usage?: {
     prompt_tokens?: number;
