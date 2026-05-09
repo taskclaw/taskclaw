@@ -48,13 +48,20 @@ export default async function DashboardLayout({
     // Find active team or default to first
     const activeTeam = teams.find(t => t.id === activeAccountId) || teams[0]
     
-    // Set cookie if not present, or fix stale cookie referencing a non-existent account
+    // Set cookie if not present, or fix stale cookie referencing a non-existent account.
+    // Wrapped in try/catch because Next 15 forbids cookie writes from Server
+    // Components (only Server Actions / Route Handlers may write); the cookie
+    // ends up set on the next action invocation, so silent degrade is fine.
     if ((!activeAccountId || !teams.find(t => t.id === activeAccountId)) && activeTeam) {
         activeAccountId = activeTeam.id
-        cookieStore.set('current_account_id', activeAccountId, {
-            path: '/',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-        })
+        try {
+            cookieStore.set('current_account_id', activeAccountId, {
+                path: '/',
+                maxAge: 60 * 60 * 24 * 7, // 1 week
+            })
+        } catch {
+            // Will get set by the next server-action call (e.g. switch-account).
+        }
     }
 
     // Fetch projects for active team

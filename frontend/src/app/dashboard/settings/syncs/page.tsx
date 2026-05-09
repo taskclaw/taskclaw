@@ -50,6 +50,7 @@ import {
   type CreateSyncInput,
   type SyncSkill,
 } from './actions';
+import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
 
 type SourceKind = SyncRow['source_kind'];
 type SyncType = SyncRow['sync_type'];
@@ -109,6 +110,8 @@ export default function SyncsPage() {
   const [creating, setCreating] = useState(false);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
+  const [confirmDelete, setConfirmDelete] = useState<SyncRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function refresh() {
     try {
@@ -162,16 +165,25 @@ export default function SyncsPage() {
     });
   }
 
-  async function onDelete(row: SyncRow) {
-    if (!confirm(`Delete sync "${row.name}"? Imported skills will keep their last snapshot but stop auto-updating.`)) {
-      return;
-    }
+  // Two-stage delete: open the confirm dialog, then run the actual call from
+  // the dialog's confirm handler. The native confirm() this replaces was
+  // racing with React rerenders and dismissing itself.
+  function onDelete(row: SyncRow) {
+    setConfirmDelete(row);
+  }
+
+  async function handleConfirmDelete() {
+    if (!confirmDelete) return;
+    setDeleting(true);
     try {
-      await deleteSync(row.id);
-      toast.success('Sync removed');
+      await deleteSync(confirmDelete.id);
+      toast.success(`Removed "${confirmDelete.name}"`);
+      setConfirmDelete(null);
       await refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -244,6 +256,16 @@ export default function SyncsPage() {
           setCreating(false);
           await refresh();
         }}
+      />
+
+      <ConfirmDeleteDialog
+        open={confirmDelete !== null}
+        onOpenChange={(o) => { if (!o) setConfirmDelete(null); }}
+        onConfirm={handleConfirmDelete}
+        loading={deleting}
+        title={`Delete sync "${confirmDelete?.name ?? ''}"?`}
+        description="Imported skills keep their last snapshot but stop auto-updating. The sync configuration is removed; you can re-add it later."
+        confirmLabel="Delete sync"
       />
     </div>
   );

@@ -27,6 +27,8 @@ export function NavMain({
         url: string
         icon?: LucideIcon
         isActive?: boolean
+        /** Optional small count chip on the right of the row. 0/null hides it. */
+        badge?: number | null
         items?: {
             title: string
             url: string
@@ -74,6 +76,14 @@ export function NavMain({
                                 <Link href={item.url}>
                                     {item.icon && <item.icon />}
                                     <span>{item.title}</span>
+                                    {item.badge && item.badge > 0 ? (
+                                        <span
+                                            className="ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold text-white"
+                                            aria-label={`${item.badge} pending`}
+                                        >
+                                            {item.badge > 99 ? '99+' : item.badge}
+                                        </span>
+                                    ) : null}
                                 </Link>
                             </SidebarMenuButton>
                         </SidebarMenuItem>
