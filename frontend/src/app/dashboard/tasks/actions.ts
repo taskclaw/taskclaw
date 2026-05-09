@@ -265,6 +265,59 @@ export async function getCategories(): Promise<Category[]> {
     }
 }
 
+// ─── Blocker Escalation ───────────────────────────────────────────────
+
+export async function reportTaskBlocker(
+    taskId: string,
+    body: {
+        reason: string
+        blocker_type?: 'dependency' | 'external_tool' | 'missing_data' | 'human_required'
+        suggested_resolution?: string
+    }
+): Promise<{ data?: any; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/tasks/${taskId}/report-blocker`,
+            { method: 'POST', headers, body: JSON.stringify(body) }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: (err as any).message || 'Failed to report blocker' }
+        }
+        revalidatePath('/dashboard')
+        return { data: await res.json() }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
+export async function resolveTaskBlocker(
+    taskId: string
+): Promise<{ data?: any; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/tasks/${taskId}/resolve-blocker`,
+            { method: 'POST', headers, body: JSON.stringify({}) }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: (err as any).message || 'Failed to resolve blocker' }
+        }
+        revalidatePath('/dashboard')
+        return { data: await res.json() }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
 // ─── Pomodoro ─────────────────────────────────────────────────────────
 
 export async function logPomodoroSession(

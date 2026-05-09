@@ -12,8 +12,9 @@ export interface HeartbeatJobData {
 export class HeartbeatProcessor extends WorkerHost {
   private readonly logger = new Logger(HeartbeatProcessor.name);
 
-  private heartbeatCallback: ((configId: string) => Promise<void>) | null =
-    null;
+  private heartbeatCallback:
+    | ((configId: string) => Promise<void>)
+    | null = null;
 
   setHeartbeatCallback(callback: (configId: string) => Promise<void>) {
     this.heartbeatCallback = callback;

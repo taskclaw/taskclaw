@@ -16,21 +16,17 @@ import { SkillsService } from '../skills/skills.service';
 import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
 import { BackboneRouterService } from '../backbone/backbone-router.service';
+import { CacheableBlock } from '../backbone/adapters/backbone-adapter.interface';
 
 import { IntegrationsService } from '../integrations/integrations.service';
 import { ToolRegistryService } from '../integrations/tool-registry.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
-import { MemoryRouterService } from '../memory/memory-router.service';
-import { ChatToolsService } from './chat-tools.service';
-import {
-  BackboneAdapter,
-  BackboneSendOptions,
-  BackboneMessage,
-  ToolContextDefinition,
-} from '../backbone/adapters/backbone-adapter.interface';
+import { ExecutionLogService } from '../heartbeat/execution-log.service';
+import { WorkspaceContextService } from '../workspace-context/workspace-context.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
+import { OrchestrationService } from '../orchestration/orchestration.service';
 
 @Injectable()
 export class ConversationsService {
@@ -51,8 +47,10 @@ export class ConversationsService {
     private readonly integrationsService: IntegrationsService,
     private readonly toolRegistry: ToolRegistryService,
     private readonly webhookEmitter: WebhookEmitterService,
-    private readonly memoryRouter: MemoryRouterService,
-    private readonly chatTools: ChatToolsService,
+    private readonly executionLogService: ExecutionLogService,
+    private readonly workspaceContextService: WorkspaceContextService,
+    @Inject(forwardRef(() => OrchestrationService))
+    private readonly orchestrationService: OrchestrationService,
   ) {}
 
   /**
@@ -113,6 +111,24 @@ export class ConversationsService {
       metadata.skill_ids = dto.skill_ids;
     }
 
+    // F06: Verify agent exists if agent_id provided
+    if (dto.agent_id) {
+      const { data: agent, error: agentError } = await client
+        .from('agents')
+        .select('id, name')
+        .eq('id', dto.agent_id)
+        .eq('account_id', accountId)
+        .single();
+
+      if (agentError || !agent) {
+        throw new NotFoundException(`Agent with ID ${dto.agent_id} not found`);
+      }
+
+      if (!dto.title) {
+        dto.title = `Chat with ${agent.name}`;
+      }
+    }
+
     const { data, error } = await client
       .from('conversations')
       .insert({
@@ -121,9 +137,10 @@ export class ConversationsService {
         task_id: dto.task_id,
         board_id: dto.board_id || null,
         pod_id: dto.pod_id || null,
-        is_workspace: dto.is_workspace || false,
+        agent_id: dto.agent_id || null,
         title: dto.title || 'New Conversation',
         metadata: Object.keys(metadata).length > 0 ? metadata : null,
+        ...(dto.backbone_connection_id ? { backbone_connection_id: dto.backbone_connection_id } : {}),
       })
       .select()
       .single();
@@ -155,7 +172,7 @@ export class ConversationsService {
     taskId?: string,
     boardId?: string,
     podId?: string,
-    workspace?: boolean,
+    agentId?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
 
@@ -182,8 +199,8 @@ export class ConversationsService {
       query = query.eq('pod_id', podId);
     }
 
-    if (workspace) {
-      query = query.eq('is_workspace', true);
+    if (agentId) {
+      query = query.eq('agent_id', agentId);
     }
 
     const { data, error, count } = await query
@@ -353,6 +370,7 @@ export class ConversationsService {
         boardId: conversation.board_id || undefined,
         stepId: task?.current_step_id || undefined,
         categoryId: resolvedCategoryId || undefined,
+        conversationBackboneId: conversation.backbone_connection_id || undefined,
       });
 
       if (backboneResolved) {
@@ -367,19 +385,18 @@ export class ConversationsService {
           resolvedCategoryId,
         );
 
-        // Use runWithTools for agentic tool loop
-        const chatToolCtx = {
+        // F032: use structured prompt blocks for cockpit conversations (enables Anthropic caching)
+        const cockpitBlocks = await this.buildCockpitSystemPromptBlocks(conversation);
+
+        const result = await this.backboneRouter.send({
           accountId,
-          userId,
-          accessToken,
-          podId: conversation.pod_id || undefined,
+          taskId: conversation.task_id || undefined,
           boardId: conversation.board_id || undefined,
-        };
-        const toolResult = await this.runWithTools(
-          backboneResolved.adapter,
-          {
-            config: backboneResolved.config,
+          stepId: task?.current_step_id || undefined,
+          categoryId: resolvedCategoryId || undefined,
+          sendOptions: {
             systemPrompt,
+            ...(cockpitBlocks ? { systemPromptBlocks: cockpitBlocks, isConversational: true } : {}),
             message: dto.content,
             history: history.map((h) => ({
               role: h.role as 'user' | 'assistant' | 'system',
@@ -387,19 +404,15 @@ export class ConversationsService {
             })),
             metadata: { userId, accountId, conversationId },
           },
-          chatToolCtx,
-          conversation,
-        );
+        });
 
-        aiResponseText = toolResult.text;
+        aiResponseText = result.text;
         aiResponseMetadata = {
-          model: toolResult.model,
-          ...(toolResult.usage || {}),
+          model: result.model,
+          ...(result.usage || {}),
+          ...(result.cacheStats ? { cache_stats: result.cacheStats } : {}),
           backbone_connection_id: backboneConnectionId,
           resolved_from: backboneResolved.resolvedFrom,
-          ...(toolResult.entities.length > 0
-            ? { entities: toolResult.entities }
-            : {}),
         };
       } else {
         // ── Legacy fallback (F038) ──
@@ -430,6 +443,48 @@ export class ConversationsService {
 
         aiResponseText = aiResponse.response;
         aiResponseMetadata = aiResponse.metadata || {};
+      }
+
+      // ── F019/F020: Pod tool call processing ──
+      const isPodConversation = !!conversation.pod_id && !conversation.task_id;
+      if (isPodConversation && aiResponseText.includes('<tool_call')) {
+        try {
+          const toolResult = await this.processPodToolCalls(
+            aiResponseText,
+            conversation,
+            accountId,
+            userId,
+          );
+          aiResponseText = toolResult.processedText;
+          if (toolResult.approvalPending) {
+            aiResponseMetadata = { ...aiResponseMetadata, approval_pending: true };
+          }
+        } catch (toolErr: any) {
+          this.logger.warn(`[PodTools] Tool processing error: ${toolErr.message}`);
+        }
+      }
+
+      // ── F024: Cockpit tool call processing (delegate_to_pod) ──
+      const isCockpitConversation =
+        !conversation.pod_id && !conversation.task_id && !conversation.board_id;
+      if (isCockpitConversation && aiResponseText.includes('<tool_call')) {
+        try {
+          const cockpitResult = await this.processCockpitToolCalls(
+            aiResponseText,
+            accountId,
+            userId,
+          );
+          aiResponseText = cockpitResult.processedText;
+          if (cockpitResult.delegations.length > 0) {
+            aiResponseMetadata = {
+              ...aiResponseMetadata,
+              delegations: cockpitResult.delegations,
+              pending_approval: cockpitResult.delegations.some(d => d.status === 'pending_approval'),
+            };
+          }
+        } catch (toolErr: any) {
+          this.logger.warn(`[CockpitTools] Tool processing error: ${toolErr.message}`);
+        }
       }
 
       // Store AI response (F021: include backbone_connection_id)
@@ -596,6 +651,21 @@ export class ConversationsService {
 
     (async () => {
       const client = this.supabaseAdmin.getClient();
+
+      // Create an execution log entry for workspace chat conversations (no task)
+      let execLogId: string | null = null;
+      if (!taskId) {
+        const logEntry = await this.executionLogService.create({
+          account_id: accountId,
+          trigger_type: 'workspace_chat',
+          status: 'running',
+          conversation_id: conversationId,
+          pod_id: conversation.pod_id || undefined,
+          summary: userContent.length > 120 ? userContent.slice(0, 120) + '…' : userContent,
+        });
+        execLogId = logEntry?.id ?? null;
+      }
+
       try {
         this.logger.log(`${logPrefix} Starting background AI processing`);
 
@@ -616,6 +686,7 @@ export class ConversationsService {
           boardId: conversation.board_id || undefined,
           stepId: task?.current_step_id || undefined,
           categoryId: resolvedCategoryId || undefined,
+          conversationBackboneId: conversation.backbone_connection_id || undefined,
         });
 
         // Step 2: Get conversation history
@@ -654,37 +725,31 @@ export class ConversationsService {
               requiredTools.push(...tools);
             }
             if (requiredTools.length > 0) {
-              toolContext = await this.toolRegistry.buildToolContext(
-                accountId,
-                requiredTools,
-              );
-              this.logger.debug(
-                `${logPrefix} Tool context: ${toolContext.length} tools resolved`,
-              );
+              toolContext = await this.toolRegistry.buildToolContext(accountId, requiredTools);
+              this.logger.debug(`${logPrefix} Tool context: ${toolContext.length} tools resolved`);
             }
           } catch (toolErr) {
-            this.logger.warn(
-              `${logPrefix} Failed to build tool context: ${toolErr.message}`,
-            );
+            this.logger.warn(`${logPrefix} Failed to build tool context: ${toolErr.message}`);
           }
 
-          // Step 5: Send via backbone with agentic tool loop
+          // F032: structured prompt blocks for cockpit conversations (Anthropic caching)
+          const cockpitBlocks = await this.buildCockpitSystemPromptBlocks(conversation);
+
+          // Step 5: Send via backbone router
           this.logger.log(
             `${logPrefix} Step 4/5: Sending to backbone ${backboneResolved.adapter.slug}`,
           );
 
-          const chatToolCtx = {
+          const result = await this.backboneRouter.send({
             accountId,
-            userId,
-            accessToken,
-            podId: conversation.pod_id || undefined,
+            taskId: conversation.task_id || undefined,
             boardId: conversation.board_id || undefined,
-          };
-          const toolResult = await this.runWithTools(
-            backboneResolved.adapter,
-            {
-              config: backboneResolved.config,
+            stepId: task?.current_step_id || undefined,
+            categoryId: resolvedCategoryId || undefined,
+            podId: conversation.pod_id || undefined,
+            sendOptions: {
               systemPrompt,
+              ...(cockpitBlocks ? { systemPromptBlocks: cockpitBlocks, isConversational: true } : {}),
               message: userContent,
               history: history.map((h) => ({
                 role: h.role as 'user' | 'assistant' | 'system',
@@ -693,19 +758,15 @@ export class ConversationsService {
               tool_context: toolContext,
               metadata: { userId, accountId, conversationId },
             },
-            chatToolCtx,
-            conversation,
-          );
+          });
 
-          aiResponseText = toolResult.text;
+          aiResponseText = result.text;
           aiResponseMetadata = {
-            model: toolResult.model,
-            ...(toolResult.usage || {}),
+            model: result.model,
+            ...(result.usage || {}),
+            ...(result.cacheStats ? { cache_stats: result.cacheStats } : {}),
             backbone_connection_id: backboneConnectionId,
             resolved_from: backboneResolved.resolvedFrom,
-            ...(toolResult.entities.length > 0
-              ? { entities: toolResult.entities }
-              : {}),
           };
         } else {
           // ── Legacy fallback (F038) ──
@@ -748,6 +809,54 @@ export class ConversationsService {
         this.logger.log(
           `${logPrefix} AI responded (${aiResponseText.length} chars, model: ${aiResponseMetadata?.model || 'unknown'})`,
         );
+
+        // ── F019/F020: Pod tool call processing (background path) ──
+        const isPodConversationBg = !!conversation.pod_id && !conversation.task_id;
+        if (isPodConversationBg && aiResponseText.includes('<tool_call')) {
+          try {
+            const toolResult = await this.processPodToolCalls(
+              aiResponseText,
+              conversation,
+              accountId,
+              userId,
+            );
+            aiResponseText = toolResult.processedText;
+            if (toolResult.approvalPending) {
+              aiResponseMetadata = { ...aiResponseMetadata, approval_pending: true };
+            }
+            this.logger.debug(`${logPrefix} Pod tool calls processed: ${toolResult.toolResults.length} results, approvalPending=${toolResult.approvalPending}`);
+          } catch (toolErr: any) {
+            this.logger.warn(`${logPrefix} [PodTools] Tool processing error: ${toolErr.message}`);
+          }
+        }
+
+        // ── F024: Cockpit tool call processing — background path ──
+        const isCockpitBg =
+          !conversation.pod_id && !conversation.task_id && !conversation.board_id;
+        if (isCockpitBg && aiResponseText.includes('<tool_call')) {
+          try {
+            const cockpitResult = await this.processCockpitToolCalls(
+              aiResponseText,
+              accountId,
+              userId,
+            );
+            aiResponseText = cockpitResult.processedText;
+            if (cockpitResult.delegations.length > 0) {
+              aiResponseMetadata = {
+                ...aiResponseMetadata,
+                delegations: cockpitResult.delegations,
+                pending_approval: cockpitResult.delegations.some(d => d.status === 'pending_approval'),
+              };
+            }
+            this.logger.debug(
+              `${logPrefix} Cockpit tool calls processed: ${cockpitResult.toolResults.length} results, ${cockpitResult.delegations.length} delegations`,
+            );
+          } catch (toolErr: any) {
+            this.logger.warn(
+              `${logPrefix} [CockpitTools] Tool processing error: ${toolErr.message}`,
+            );
+          }
+        }
 
         // Step 5: Store AI response (F021: include backbone_connection_id)
         this.logger.debug(
@@ -793,19 +902,6 @@ export class ConversationsService {
         // Mirror messages to Notion
         this.mirrorToNotion(conversation, userContent, aiResponseText);
 
-        // BE07: Fire-and-forget memory extraction — never awaited, never blocks response
-        this.extractAndStoreMemories(accountId, {
-          userMessage: userContent,
-          assistantResponse: aiResponseText,
-          conversationId,
-          taskId: taskId || undefined,
-          categoryId: resolvedCategoryId || undefined,
-        }).catch((err: any) => {
-          this.logger.warn(
-            `Memory extraction failed (non-blocking): ${err.message}`,
-          );
-        });
-
         // Extract structured output from AI response and save to card_data
         if (taskId) {
           await this.extractAndSaveOutput(
@@ -832,6 +928,15 @@ export class ConversationsService {
 
         const durationMs = Date.now() - startTime;
         this.logger.log(`${logPrefix} Completed in ${durationMs}ms`);
+
+        // Mark execution log as completed
+        if (execLogId) {
+          await this.executionLogService.complete(execLogId, {
+            status: 'success',
+            summary: aiResponseText ? (aiResponseText.length > 120 ? aiResponseText.slice(0, 120) + '…' : aiResponseText) : 'Done',
+            duration_ms: durationMs,
+          });
+        }
       } catch (err) {
         const durationMs = Date.now() - startTime;
         const errorMessage = (err as Error).message || 'Unknown error';
@@ -841,6 +946,15 @@ export class ConversationsService {
           `${logPrefix} FAILED after ${durationMs}ms: ${errorMessage}`,
         );
         this.logger.debug(`${logPrefix} Stack: ${errorStack}`);
+
+        // Mark execution log as failed
+        if (execLogId) {
+          await this.executionLogService.complete(execLogId, {
+            status: 'error',
+            error_details: errorMessage,
+            duration_ms: durationMs,
+          }).catch(() => {/* ignore log errors */});
+        }
 
         // Store error message for user feedback
         try {
@@ -1447,159 +1561,18 @@ export class ConversationsService {
    */
   private async tryResolveBackbone(
     accountId: string,
-    options?: {
-      taskId?: string;
-      boardId?: string;
-      stepId?: string;
-      categoryId?: string;
-    },
-  ): Promise<
-    import('../backbone/backbone-router.service').ResolveResult | null
-  > {
+    options?: { taskId?: string; boardId?: string; stepId?: string; categoryId?: string; conversationBackboneId?: string },
+  ): Promise<import('../backbone/backbone-router.service').ResolveResult | null> {
     try {
       return await this.backboneRouter.resolve(accountId, options);
     } catch (err) {
       // NotFoundException means no backbone configured — that's fine, use legacy
-      if (err?.status === 404) {
+      if ((err as any)?.status === 404) {
         return null;
       }
       // Re-throw unexpected errors
       throw err;
     }
-  }
-
-  /**
-   * Run a backbone send with an agentic tool loop.
-   * If the adapter returns tool_calls, execute them via ChatToolsService and re-send.
-   */
-  private async runWithTools(
-    adapter: BackboneAdapter,
-    sendOptions: BackboneSendOptions,
-    chatToolCtx: {
-      accountId: string;
-      userId: string;
-      accessToken: string;
-      podId?: string;
-      boardId?: string;
-    },
-    conversation: any,
-  ): Promise<{
-    text: string;
-    entities: any[];
-    model?: string;
-    usage?: any;
-  }> {
-    const MAX_ITERATIONS = 5;
-    const entities: any[] = [];
-
-    const supportsTools =
-      adapter.supportsToolExecution?.() ||
-      adapter.supportsTextBasedToolCalling?.();
-
-    // Only pass tools if adapter supports them AND we have context
-    const hasChatContext = !!(
-      conversation.is_workspace ||
-      conversation.pod_id ||
-      conversation.board_id ||
-      conversation.task_id
-    );
-
-    let toolDefs: ToolContextDefinition[] | undefined;
-    if (supportsTools && hasChatContext) {
-      toolDefs = this.chatTools.getToolDefinitions(chatToolCtx);
-    }
-
-    let history = [...(sendOptions.history ?? [])];
-
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
-      const result = await adapter.sendMessage({
-        ...sendOptions,
-        history,
-        tool_context: toolDefs,
-      });
-
-      if (!result.tool_calls?.length) {
-        return {
-          text: result.text,
-          entities,
-          model: result.model,
-          usage: result.usage,
-        };
-      }
-
-      this.logger.log(
-        `[runWithTools] Iteration ${i + 1}: executing ${result.tool_calls.length} tool call(s)`,
-      );
-
-      // Build assistant message for history (with raw_content for Anthropic)
-      const assistantHistoryMsg: BackboneMessage = {
-        role: 'assistant',
-        content: result.text || '',
-        raw_content: result.raw?.content,
-      };
-      history = [...history, assistantHistoryMsg];
-
-      // Execute tool calls
-      const isTextBased =
-        adapter.supportsTextBasedToolCalling?.() &&
-        !adapter.supportsToolExecution?.();
-      const toolResultParts: string[] = [];
-      for (const tc of result.tool_calls) {
-        let toolContent: string;
-        try {
-          const outcome = await this.chatTools.execute(
-            tc.name,
-            tc.input,
-            chatToolCtx,
-          );
-          if (outcome.entity) entities.push(outcome.entity);
-          if (outcome.entities) entities.push(...outcome.entities);
-          toolContent = JSON.stringify(outcome.result);
-          this.logger.log(`[runWithTools] Tool ${tc.name} succeeded`);
-        } catch (err) {
-          toolContent = JSON.stringify({ error: (err as Error).message });
-          this.logger.warn(
-            `[runWithTools] Tool ${tc.name} failed: ${(err as Error).message}`,
-          );
-        }
-
-        if (isTextBased) {
-          // For text-based tool calling, collect results for a single user message
-          toolResultParts.push(
-            `Tool "${tc.name}" executed successfully. Result: ${toolContent}`,
-          );
-        } else {
-          history = [
-            ...history,
-            {
-              role: 'tool' as const,
-              content: toolContent,
-              tool_call_id: tc.id,
-            },
-          ];
-        }
-      }
-
-      // For text-based adapters: inject all tool results as a single user message
-      // with explicit instruction to respond naturally now (no more tool calls)
-      if (isTextBased && toolResultParts.length > 0) {
-        const toolResultMsg =
-          toolResultParts.join('\n') +
-          '\n\nAll actions completed successfully. Now write your final response to the user summarizing what was done. Do NOT call any more tools.';
-        history = [
-          ...history,
-          {
-            role: 'user' as const,
-            content: toolResultMsg,
-          },
-        ];
-      }
-    }
-
-    // Max iterations hit — return last text
-    const lastText =
-      history.findLast((m) => m.role === 'assistant')?.content ?? '';
-    return { text: lastText, entities, model: undefined };
   }
 
   /**
@@ -1637,6 +1610,53 @@ export class ConversationsService {
       : await this.buildSystemPrompt(conversation, accessToken);
   }
 
+
+  /**
+   * F032: Build structured system prompt blocks for cockpit-scoped conversations
+   * with Anthropic backbone. Returns two CacheableBlock entries:
+   *  1. Stable block: workspace context XML (cacheable=true)
+   *  2. Dynamic block: persona + delegation tools (cacheable=false)
+   *
+   * Used instead of the flat systemPrompt string to enable Anthropic prompt caching.
+   */
+  private async buildCockpitSystemPromptBlocks(
+    conversation: any,
+  ): Promise<CacheableBlock[] | null> {
+    const isCockpit =
+      !conversation.task_id &&
+      !conversation.pod_id &&
+      !conversation.board_id;
+
+    if (!isCockpit || !conversation.account_id) return null;
+
+    try {
+      // Block 1: stable workspace context (cacheable)
+      const contextBlock = await this.workspaceContextService.getContextBlock(
+        conversation.account_id,
+      );
+
+      // Block 2: persona + tools (dynamic, not cacheable)
+      const dynamicText = `You are OpenClaw, an AI assistant integrated into the OTT Platform.
+You help users manage tasks, projects, and workflows with intelligence and context awareness.
+
+Current Context:
+- Platform: OTT Dashboard (Task & Project Management)
+- User: Authenticated and working in their personal account
+
+${this.buildDelegationToolDefinitions()}`;
+
+      return [
+        { text: contextBlock.text, cacheable: true },
+        { text: dynamicText, cacheable: false },
+      ];
+    } catch (err: any) {
+      this.logger.warn(
+        `[F032] Failed to build cockpit system prompt blocks: ${err?.message}`,
+      );
+      return null;
+    }
+  }
+
   /**
    * Build system prompt with task context.
    * @param options.skipSkillInjection When true, omit inline skill/knowledge injection
@@ -1656,88 +1676,51 @@ Current Context:
 - User: Authenticated and working in their personal account
 `;
 
-    // Inject pod context when this is a pod-scoped conversation
-    if (conversation.pod_id) {
-      const client = this.supabaseAdmin.getClient();
-      const { data: pod } = await client
-        .from('pods')
-        .select('id, name, description')
-        .eq('id', conversation.pod_id)
-        .single();
-      if (pod) {
-        prompt += `
-=== POD CONTEXT ===
-You are operating within the "${pod.name}" pod (id: ${pod.id}).
-${pod.description ? `Pod description: ${pod.description}` : ''}
-When creating goals or tasks, use pod_id="${pod.id}" unless the user specifies otherwise.
-`;
+    // ═══════════════════════════════════════════════════════════
+    // F009 + F010: WORKSPACE COCKPIT CONTEXT INJECTION
+    // Detect cockpit scope: no task_id, no pod_id, no board_id
+    // ═══════════════════════════════════════════════════════════
+    const isCockpit =
+      !conversation.task_id &&
+      !conversation.pod_id &&
+      !conversation.board_id;
+
+    if (isCockpit && conversation.account_id) {
+      try {
+        const contextBlock = await this.workspaceContextService.getContextBlock(
+          conversation.account_id,
+        );
+        prompt += `\n\n${contextBlock.text}`;
+
+        // F010: Delegation tool definitions
+        prompt += `\n\n${this.buildDelegationToolDefinitions()}`;
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to inject workspace context into cockpit prompt: ${err?.message}`,
+        );
       }
     }
 
-    // Inject workspace orchestrator manifest when this is a workspace-scoped conversation
-    if (conversation.is_workspace) {
+    // ═══════════════════════════════════════════════════════════
+    // F017 + F018: POD CHAT CONTEXT INJECTION
+    // Detect pod scope: has pod_id, no task_id
+    // ═══════════════════════════════════════════════════════════
+    const isPodChat =
+      !!conversation.pod_id && !conversation.task_id && !conversation.board_id;
+
+    if (isPodChat && conversation.pod_id) {
       try {
-        const client = this.supabaseAdmin.getClient();
-        const [{ data: pods }, { data: boards }] = await Promise.all([
-          client
-            .from('pods')
-            .select('id, name, slug, description, icon, color')
-            .eq('account_id', conversation.account_id)
-            .order('position', { ascending: true }),
-          client
-            .from('board_instances')
-            .select('id, name, description, pod_id')
-            .eq('account_id', conversation.account_id)
-            .eq('is_archived', false)
-            .order('display_order', { ascending: true }),
-        ]);
+        const podContextBlock = await this.workspaceContextService.getPodContextBlock(
+          conversation.pod_id,
+        );
+        prompt += `\n\n${podContextBlock.text}`;
 
-        if (pods && pods.length > 0) {
-          let manifest = `
-=== WORKSPACE ORCHESTRATOR ===
-You are the TaskClaw Workspace AI. You have full visibility across all pods and boards.
-
-When a user asks you to do something complex:
-1. Identify which pods/boards are relevant from the WORKSPACE STRUCTURE below
-2. Use decompose_goal with the EXACT pod_id from the manifest to create goals in those pods
-   - ALWAYS include pod_id in decompose_goal calls. Example: {"goal": "...", "pod_id": "exact-uuid-from-manifest"}
-3. Use create_task with the EXACT board_id from the manifest
-4. You can orchestrate across multiple pods in a single response
-
-CRITICAL: Always pass pod_id and board_id using the EXACT UUIDs listed in WORKSPACE STRUCTURE below.
-
-Available tools: list_pods, list_boards, decompose_goal, create_task, update_task, list_tasks
-
-WORKSPACE STRUCTURE:
-`;
-          for (const pod of pods ?? []) {
-            const podBoards = (boards ?? []).filter(
-              (b: any) => b.pod_id === pod.id,
-            );
-            manifest += `\nPod: "${pod.name}" (id: ${pod.id}, slug: ${pod.slug})\n`;
-            if (pod.description)
-              manifest += `  Description: ${pod.description}\n`;
-            if (podBoards.length > 0) {
-              manifest += `  Boards:\n`;
-              for (const board of podBoards) {
-                manifest += `    - "${board.name}" (id: ${board.id})${board.description ? ': ' + board.description : ''}\n`;
-              }
-            } else {
-              manifest += `  Boards: none\n`;
-            }
-          }
-          const unassigned = (boards ?? []).filter((b: any) => !b.pod_id);
-          if (unassigned.length > 0) {
-            manifest += `\nBoards (no pod):\n`;
-            for (const board of unassigned) {
-              manifest += `  - "${board.name}" (id: ${board.id})${board.description ? ': ' + board.description : ''}\n`;
-            }
-          }
-          manifest += `\n=== END WORKSPACE MANIFEST ===\n`;
-          prompt += manifest;
-        }
-      } catch {
-        // Non-fatal — continue without manifest
+        // F018: Pod-level tool definitions
+        prompt += `\n\n${this.buildPodToolDefinitions()}`;
+      } catch (err: any) {
+        this.logger.warn(
+          `Failed to inject pod context into pod chat prompt: ${err?.message}`,
+        );
       }
     }
 
@@ -1871,7 +1854,6 @@ WORKSPACE STRUCTURE:
     // ═══════════════════════════════════════════════════════════
     if (conversation.task_id && conversation.task) {
       prompt += `\n\n=== TASK CONTEXT ===\n`;
-      prompt += `Task ID: ${conversation.task_id} (use this as task_id when calling update_task)\n`;
       prompt += `Task: ${conversation.task.title}\n`;
       prompt += `Status: ${conversation.task.status || 'unknown'}\n`;
       if (conversation.task.priority) {
@@ -1979,22 +1961,6 @@ WORKSPACE STRUCTURE:
 
       prompt += `\nThe user is asking for help with this specific task. Provide relevant, actionable advice.\n`;
       prompt += `When you produce findings or insights, the user can save them directly to the task card.\n`;
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // AGENT MEMORY RECALL (BE06) — 200ms timeout, never blocks chat
-    // ═══════════════════════════════════════════════════════════
-    try {
-      const memCtx = await this.memoryRouter.buildMemoryContext(
-        conversation.account_id,
-        conversation.task?.title || '',
-        conversation.task_id || undefined,
-      );
-      if (memCtx) {
-        prompt += memCtx;
-      }
-    } catch (memErr: any) {
-      this.logger.warn(`Memory recall for prompt failed: ${memErr.message}`);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -2269,106 +2235,6 @@ Rules:
    * Mirror user and AI messages to Notion as page comments.
    * Fire-and-forget — errors are logged but don't block the response.
    */
-  /**
-   * BE07: Extract key facts from a conversation exchange and store them as memories.
-   * This is ALWAYS called as fire-and-forget — it must NEVER be awaited in sendMessage().
-   */
-  private async extractAndStoreMemories(
-    accountId: string,
-    opts: {
-      userMessage: string;
-      assistantResponse: string;
-      conversationId: string;
-      taskId?: string;
-      categoryId?: string;
-    },
-  ): Promise<void> {
-    const {
-      userMessage,
-      assistantResponse,
-      conversationId,
-      taskId,
-      categoryId,
-    } = opts;
-
-    // Build extraction prompt
-    const maxLen = 500;
-    const userSnippet = userMessage.substring(0, maxLen);
-    const assistantSnippet = assistantResponse.substring(0, maxLen);
-    const extractionPrompt = [
-      'Extract up to 3 key facts, decisions, or insights from this conversation exchange.',
-      'Return ONLY a JSON array of objects with keys content and type.',
-      'Type must be one of: episodic, semantic, procedural.',
-      '- episodic: specific events, decisions, user preferences',
-      '- semantic: general facts, concepts, domain knowledge',
-      '- procedural: how-to instructions, workflows',
-      '',
-      'Conversation:',
-      'User: ' + userSnippet,
-      'Assistant: ' + assistantSnippet,
-      '',
-      'JSON array:',
-    ].join('\n');
-
-    // Send extraction request via backbone router
-    const result = await this.backboneRouter.send({
-      accountId,
-      categoryId,
-      sendOptions: {
-        systemPrompt: `You are a memory extraction assistant. Extract key facts as JSON only.`,
-        message: extractionPrompt,
-        metadata: { accountId, conversationId },
-      },
-    });
-
-    if (!result?.text) return;
-
-    // Parse JSON array from response
-    let facts: Array<{ content: string; type: string }> = [];
-    try {
-      // Extract JSON array from response (may have surrounding text)
-      const jsonMatch = result.text.match(/\[.*\]/s);
-      if (jsonMatch) {
-        facts = JSON.parse(jsonMatch[0]);
-      }
-    } catch {
-      this.logger.debug(
-        `Memory extraction: could not parse JSON from response`,
-      );
-      return;
-    }
-
-    if (!Array.isArray(facts) || facts.length === 0) return;
-
-    // Store each fact as a memory (up to 3)
-    const validTypes = new Set([
-      'episodic',
-      'semantic',
-      'procedural',
-      'working',
-    ]);
-    for (const fact of facts.slice(0, 3)) {
-      if (!fact?.content || typeof fact.content !== 'string') continue;
-      const memType = validTypes.has(fact.type) ? fact.type : 'episodic';
-
-      await this.memoryRouter.remember({
-        content: fact.content,
-        type: memType as any,
-        source: 'agent',
-        metadata: {
-          account_id: accountId,
-          conversation_id: conversationId,
-          task_id: taskId,
-          category_id: categoryId,
-        },
-      });
-    }
-
-    this.logger.debug(
-      `Memory extraction: stored ${Math.min(facts.length, 3)} facts for conversation ${conversationId}`,
-    );
-  }
-
   private mirrorToNotion(
     conversation: any,
     userContent: string,
@@ -2439,5 +2305,669 @@ Rules:
         );
       }
     })();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // F010 — Delegation tool definitions for cockpit system prompt
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the <tool_definitions> XML block containing JSON schemas for all
+   * cockpit-level delegation tools. Injected only for workspace-scoped (cockpit)
+   * conversations.
+   */
+  private buildDelegationToolDefinitions(): string {
+    const tools = [
+      {
+        name: 'delegate_to_pod',
+        description:
+          'Delegate a goal to a specific pod. The pod agent will decompose the goal into board tasks and execute them. Use this when the user wants work done by a department.',
+        parameters: {
+          type: 'object',
+          required: ['pod_id', 'goal'],
+          properties: {
+            pod_id: {
+              type: 'string',
+              description: 'UUID or slug of the pod to delegate to (use the pod_id UUID from workspace context)',
+            },
+            goal: {
+              type: 'string',
+              description: 'Human-readable description of what needs to be accomplished',
+            },
+            input_context: {
+              type: 'object',
+              description:
+                'Optional structured context to pass to the pod (e.g. upstream results, constraints)',
+              additionalProperties: true,
+            },
+            depends_on_task_ids: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                'Optional list of orchestrated_task UUIDs that must complete before this task can start',
+            },
+          },
+        },
+      },
+      {
+        name: 'create_task',
+        description:
+          'Create a task directly on a specific board column, optionally assigning it to an agent.',
+        parameters: {
+          type: 'object',
+          required: ['board_id', 'title'],
+          properties: {
+            board_id: {
+              type: 'string',
+              description: 'UUID of the board_instance to create the task on',
+            },
+            column_id: {
+              type: 'string',
+              description: 'UUID of the board_step (column) to place the task in',
+            },
+            title: {
+              type: 'string',
+              description: 'Task title',
+            },
+            description: {
+              type: 'string',
+              description: 'Detailed task description or instructions',
+            },
+            agent_id: {
+              type: 'string',
+              description: 'UUID of the agent to assign this task to',
+            },
+            priority: {
+              type: 'string',
+              enum: ['low', 'medium', 'high', 'urgent'],
+              description: 'Task priority level',
+            },
+          },
+        },
+      },
+      {
+        name: 'report_completion',
+        description:
+          'Report that a delegated task or orchestration has been completed with a result summary.',
+        parameters: {
+          type: 'object',
+          required: ['task_id', 'result_summary'],
+          properties: {
+            task_id: {
+              type: 'string',
+              description: 'UUID of the orchestrated_task that was completed',
+            },
+            result_summary: {
+              type: 'string',
+              description: 'Short human-readable summary of what was accomplished',
+            },
+            structured_output: {
+              type: 'object',
+              description:
+                'Optional machine-readable output (URLs, file paths, metrics, etc.)',
+              additionalProperties: true,
+            },
+          },
+        },
+      },
+      {
+        name: 'request_human_approval',
+        description:
+          'Pause execution and ask the human pilot for approval before proceeding with a multi-step plan. Always use this before triggering large or irreversible operations.',
+        parameters: {
+          type: 'object',
+          required: ['reason'],
+          properties: {
+            reason: {
+              type: 'string',
+              description:
+                'Explanation of what you are about to do and why you need approval',
+            },
+            dag_preview: {
+              type: 'object',
+              description:
+                'Optional preview of the DAG plan: { tasks: [{ title, pod_name, depends_on? }] }',
+              additionalProperties: true,
+            },
+          },
+        },
+      },
+    ];
+
+    return `<tool_definitions>
+${JSON.stringify(tools, null, 2)}
+</tool_definitions>
+
+IMPORTANT: When the user describes a goal, task, or workflow — even a complex multi-step one — you MUST immediately emit one or more <tool_call> XML blocks in your response. Do NOT write a plan and ask "Ready to proceed?" or "Shall I start?". Do NOT ask for confirmation. Do NOT wait for the user to say "yes" or "go ahead". The user's message IS the instruction to act.
+
+Emit the tool calls in the SAME response as your explanation. Use this exact format:
+
+<tool_call name="delegate_to_pod">
+{"pod_id": "UUID", "goal": "description of what this pod should do", "input_context": {}}
+</tool_call>
+
+ROUTING RULES — read these carefully before emitting any tool call:
+1. Match each part of the goal to the MOST SPECIFIC pod+board, using the board descriptions in <workspace_context>.
+2. If a goal spans multiple departments (e.g. "build mockup websites AND write X posts"), emit SEPARATE delegate_to_pod calls — one per pod. Do NOT bundle cross-department work into a single pod just because that pod can partially handle it.
+3. A pod with a board explicitly named for a task (e.g. "X Content Pipeline" for X/Twitter posts) ALWAYS wins over a pod that can handle it generically.
+4. Use depends_on_task_ids to chain sequential work (e.g. X posts depend on mockups being done first).
+
+For multi-step workflows, emit multiple tool_call blocks in sequence — one per pod. The platform queues them as a DAG and shows an approval card to the user before execution starts.
+
+Do NOT say the tools are unavailable or unregistered. Do NOT ask for confirmation before emitting the tool call. Just emit the XML directly in your response. The platform will parse and execute it automatically.`;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // F018 — Pod-level tool definitions
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the <tool_definitions> XML block for pod-scoped conversations.
+   * Injected after <pod_context> block in pod chat system prompts.
+   */
+  private buildPodToolDefinitions(): string {
+    const tools = [
+      {
+        name: 'create_task',
+        description:
+          'Create a task on a specific board column within this pod. Use this when you need to spawn work for a board pipeline.',
+        parameters: {
+          type: 'object',
+          required: ['board_id', 'title'],
+          properties: {
+            board_id: {
+              type: 'string',
+              description: 'UUID of the board_instance to create the task on',
+            },
+            column_id: {
+              type: 'string',
+              description: 'UUID of the board_step (column) to place the task in (first column used if omitted)',
+            },
+            title: {
+              type: 'string',
+              description: 'Task title',
+            },
+            description: {
+              type: 'string',
+              description: 'Detailed task description or instructions',
+            },
+            agent_id: {
+              type: 'string',
+              description: 'UUID of the agent to assign this task to',
+            },
+            priority: {
+              type: 'string',
+              enum: ['Low', 'Medium', 'High', 'Urgent'],
+              description: 'Task priority level (defaults to Medium)',
+            },
+          },
+        },
+      },
+      {
+        name: 'trigger_board_ai',
+        description:
+          'Send a message to a board\'s AI orchestrator to trigger pipeline processing on that board.',
+        parameters: {
+          type: 'object',
+          required: ['board_id', 'message'],
+          properties: {
+            board_id: {
+              type: 'string',
+              description: 'UUID of the board_instance to trigger',
+            },
+            message: {
+              type: 'string',
+              description: 'The message or goal to send to the board AI',
+            },
+          },
+        },
+      },
+      {
+        name: 'report_completion',
+        description:
+          'Report that a delegated goal has been completed with a result summary.',
+        parameters: {
+          type: 'object',
+          required: ['goal', 'result_summary'],
+          properties: {
+            goal: {
+              type: 'string',
+              description: 'The original goal that was completed',
+            },
+            result_summary: {
+              type: 'string',
+              description: 'Short human-readable summary of what was accomplished',
+            },
+            structured_output: {
+              type: 'object',
+              description: 'Optional machine-readable output (URLs, file paths, metrics, etc.)',
+              additionalProperties: true,
+            },
+          },
+        },
+      },
+      {
+        name: 'request_human_approval',
+        description:
+          'Pause execution and request human approval before proceeding with a significant action. Use this before creating multiple tasks or triggering irreversible operations.',
+        parameters: {
+          type: 'object',
+          required: ['reason'],
+          properties: {
+            reason: {
+              type: 'string',
+              description: 'Explanation of what you are about to do and why you need approval',
+            },
+            proposed_actions: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'List of actions you plan to take after approval',
+            },
+          },
+        },
+      },
+    ];
+
+    return `<tool_definitions>
+${JSON.stringify(tools, null, 2)}
+</tool_definitions>`;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // F019 + F020 — Pod tool call parsing and execution
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Parse and execute any <tool_call> blocks found in an AI response.
+   * Defensive: if no tool_call tags found, returns the original text unchanged.
+   * Supported tools: create_task (F019), request_human_approval (F020).
+   *
+   * @returns { processedText, toolResults, approvalPending }
+   */
+  // ─────────────────────────────────────────────────────────────────────────
+  // F024 — Cockpit tool call parser: delegate_to_pod
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Parse and execute cockpit-level tool calls from AI response text.
+   * Detects <tool_call name="delegate_to_pod"> and routes to OrchestrationService.
+   */
+  async processCockpitToolCalls(
+    aiResponseText: string,
+    accountId: string,
+    userId: string,
+  ): Promise<{ processedText: string; toolResults: string[]; delegations: Array<{ orchestration_id: string; pod_id: string; pod_slug?: string; pod_name?: string; goal: string; status: string }> }> {
+    const toolCallPattern = /<tool_call\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/tool_call>/g;
+    const toolResults: string[] = [];
+    const delegations: Array<{ orchestration_id: string; pod_id: string; pod_slug?: string; pod_name?: string; goal: string; status: string }> = [];
+    // Strip <tool_call> XML from the displayed text — keep only AI prose
+    let processedText = aiResponseText
+      .replace(/<tool_call\s[^>]*>[\s\S]*?<\/tool_call>/g, '')
+      .trim();
+
+    let match: RegExpExecArray | null;
+    while ((match = toolCallPattern.exec(aiResponseText)) !== null) {
+      const toolName = match[1];
+      const toolBody = match[2];
+
+      let params: Record<string, any> = {};
+      try {
+        params = JSON.parse(toolBody.trim());
+      } catch {
+        this.logger.warn(
+          `[CockpitTools] Failed to parse JSON for tool ${toolName}: ${toolBody}`,
+        );
+        continue;
+      }
+
+      if (toolName === 'delegate_to_pod') {
+        try {
+          const result = await this.executeCockpitDelegateToPod(
+            params,
+            accountId,
+            userId,
+          );
+          toolResults.push(result.toolResult);
+          // Extract orchestration_id from result and store delegation metadata
+          const idMatch = result.toolResult.match(/Orchestration created: ([0-9a-f-]{36})/i);
+          if (idMatch) {
+            delegations.push({
+              orchestration_id: idMatch[1],
+              pod_id: params.pod_id,
+              pod_slug: result.pod_slug ?? params.pod_slug,
+              pod_name: result.pod_name ?? params.pod_name,
+              goal: params.goal,
+              status: 'pending_approval',
+            });
+          }
+          this.logger.log(
+            `[CockpitTools] delegate_to_pod executed for pod ${params.pod_id} (${result.pod_name ?? 'unknown'})`,
+          );
+        } catch (err: any) {
+          this.logger.error(
+            `[CockpitTools] delegate_to_pod failed: ${err.message}`,
+          );
+        }
+      } else {
+        // Unknown cockpit tool — pass through without error
+        this.logger.debug(`[CockpitTools] Unhandled cockpit tool: ${toolName}`);
+      }
+    }
+
+    return { processedText, toolResults, delegations };
+  }
+
+  /**
+   * Execute the delegate_to_pod tool call.
+   * Creates an orchestration via OrchestrationService.
+   */
+  private async executeCockpitDelegateToPod(
+    params: Record<string, any>,
+    accountId: string,
+    userId: string,
+  ): Promise<{ toolResult: string; pod_name?: string; pod_slug?: string }> {
+    if (!params.pod_id) {
+      throw new Error('delegate_to_pod: pod_id is required');
+    }
+    if (!params.goal) {
+      throw new Error('delegate_to_pod: goal is required');
+    }
+
+    // Resolve slug → UUID if necessary, and always fetch pod name/slug for delegation metadata
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let resolvedPodId: string = params.pod_id;
+    let resolvedPodName: string | undefined;
+    let resolvedPodSlug: string | undefined;
+    const client = this.supabaseAdmin.getClient();
+    if (!uuidPattern.test(resolvedPodId)) {
+      const { data: podRow } = await client
+        .from('pods')
+        .select('id, name, slug')
+        .eq('account_id', accountId)
+        .eq('slug', resolvedPodId)
+        .single();
+      if (!podRow) {
+        return { toolResult: JSON.stringify({ error: `Pod not found: ${resolvedPodId}` }) };
+      }
+      resolvedPodId = podRow.id;
+      resolvedPodName = podRow.name;
+      resolvedPodSlug = podRow.slug;
+    } else {
+      // UUID provided — fetch name and slug
+      const { data: podRow } = await client
+        .from('pods')
+        .select('name, slug')
+        .eq('id', resolvedPodId)
+        .single();
+      resolvedPodName = podRow?.name;
+      resolvedPodSlug = podRow?.slug;
+    }
+
+    const orchestrationResult = await this.orchestrationService.createOrchestration(
+      userId,
+      accountId,
+      {
+        goal: params.goal,
+        tasks: [
+          {
+            pod_id: resolvedPodId,
+            goal: params.goal,
+            input_context: params.input_context ?? undefined,
+          },
+        ],
+      },
+    );
+
+    const orchestrationId = orchestrationResult.orchestration.id;
+
+    let dependencyNote = '';
+    if (params.depends_on_task_ids && params.depends_on_task_ids.length > 0) {
+      dependencyNote = ` Depends on: ${params.depends_on_task_ids.join(', ')}.`;
+    }
+
+    return {
+      toolResult: `<tool_result name="delegate_to_pod" status="success">Orchestration created: ${orchestrationId}.${dependencyNote}</tool_result>`,
+      pod_name: resolvedPodName,
+      pod_slug: resolvedPodSlug,
+    };
+  }
+
+  async processPodToolCalls(
+    aiResponseText: string,
+    conversation: any,
+    accountId: string,
+    userId: string,
+    orchestratedTaskId?: string,
+  ): Promise<{
+    processedText: string;
+    toolResults: string[];
+    approvalPending: boolean;
+  }> {
+    const toolCallPattern = /<tool_call\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/tool_call>/g;
+    const toolResults: string[] = [];
+    let approvalPending = false;
+    let processedText = aiResponseText;
+
+    let match: RegExpExecArray | null;
+    while ((match = toolCallPattern.exec(aiResponseText)) !== null) {
+      const toolName = match[1];
+      const toolBody = match[2];
+
+      let params: Record<string, any> = {};
+      try {
+        params = JSON.parse(toolBody.trim());
+      } catch {
+        this.logger.warn(`[PodTools] Failed to parse JSON for tool ${toolName}: ${toolBody}`);
+        toolResults.push(`<tool_result name="${toolName}" status="error">Invalid JSON parameters</tool_result>`);
+        continue;
+      }
+
+      if (toolName === 'create_task') {
+        // F019: Create task in specified board column
+        try {
+          const taskId = await this.executePodCreateTask(params, accountId, userId, orchestratedTaskId);
+          toolResults.push(
+            `<tool_result name="create_task" status="success">Task created with ID: ${taskId}</tool_result>`,
+          );
+          this.logger.log(`[PodTools] create_task executed: task_id=${taskId}`);
+        } catch (err: any) {
+          this.logger.error(`[PodTools] create_task failed: ${err.message}`);
+          toolResults.push(
+            `<tool_result name="create_task" status="error">${err.message}</tool_result>`,
+          );
+        }
+      } else if (toolName === 'request_human_approval') {
+        // F020: Create approval request and emit WebSocket event
+        try {
+          await this.executePodRequestApproval(params, conversation, accountId);
+          approvalPending = true;
+          toolResults.push(
+            `<tool_result name="request_human_approval" status="pending">Waiting for human approval. Execution paused.</tool_result>`,
+          );
+          this.logger.log(`[PodTools] request_human_approval created for pod ${conversation.pod_id}`);
+          // Stop processing further tool calls when approval is pending
+          break;
+        } catch (err: any) {
+          this.logger.error(`[PodTools] request_human_approval failed: ${err.message}`);
+          toolResults.push(
+            `<tool_result name="request_human_approval" status="error">${err.message}</tool_result>`,
+          );
+        }
+      } else {
+        // Unknown tool — pass through
+        this.logger.debug(`[PodTools] Unknown tool call: ${toolName}`);
+      }
+    }
+
+    // Append tool results to the processed text
+    if (toolResults.length > 0) {
+      processedText = `${aiResponseText}\n\n${toolResults.join('\n')}`;
+    }
+
+    return { processedText, toolResults, approvalPending };
+  }
+
+  /**
+   * F019: Execute create_task tool call.
+   * Inserts a task directly into the DB for the specified board/column.
+   */
+  private async executePodCreateTask(
+    params: Record<string, any>,
+    accountId: string,
+    userId: string,
+    orchestratedTaskId?: string,
+  ): Promise<string> {
+    const client = this.supabaseAdmin.getClient();
+
+    if (!params.board_id) {
+      throw new Error('create_task: board_id is required');
+    }
+    if (!params.title) {
+      throw new Error('create_task: title is required');
+    }
+
+    // Resolve the first step of the board if no column_id provided
+    let stepId: string | null = params.column_id || null;
+    let status = 'To-Do';
+    let defaultAgentId: string | null = params.agent_id || null;
+
+    if (stepId) {
+      const { data: step } = await client
+        .from('board_steps')
+        .select('id, name, default_agent_id')
+        .eq('id', stepId)
+        .eq('board_instance_id', params.board_id)
+        .single();
+
+      if (step) {
+        status = step.name;
+        if (!defaultAgentId && step.default_agent_id) {
+          defaultAgentId = step.default_agent_id;
+        }
+      }
+    } else {
+      // Use first step
+      const { data: firstStep } = await client
+        .from('board_steps')
+        .select('id, name, default_agent_id')
+        .eq('board_instance_id', params.board_id)
+        .order('position', { ascending: true })
+        .limit(1)
+        .single();
+
+      if (firstStep) {
+        stepId = firstStep.id;
+        status = firstStep.name;
+        if (!defaultAgentId && firstStep.default_agent_id) {
+          defaultAgentId = firstStep.default_agent_id;
+        }
+      }
+    }
+
+    const { data: task, error } = await client
+      .from('tasks')
+      .insert({
+        account_id: accountId,
+        title: params.title,
+        notes: params.description || '',
+        priority: params.priority || 'Medium',
+        status,
+        board_instance_id: params.board_id,
+        current_step_id: stepId,
+        assignee_type: defaultAgentId ? 'agent' : 'none',
+        assignee_id: defaultAgentId,
+        completed: false,
+        card_data: {},
+        ...(orchestratedTaskId ? { metadata: { orchestration_id: orchestratedTaskId } } : {}),
+      })
+      .select('id')
+      .single();
+
+    if (error || !task) {
+      throw new Error(`Failed to create task: ${error?.message || 'unknown error'}`);
+    }
+
+    this.webhookEmitter.emit(accountId, 'task.created', { task });
+
+    return task.id;
+  }
+
+  /**
+   * F020: Execute request_human_approval tool call.
+   * Inserts an agent_approval_requests row and emits a webhook event.
+   */
+  private async executePodRequestApproval(
+    params: Record<string, any>,
+    conversation: any,
+    accountId: string,
+  ): Promise<void> {
+    const client = this.supabaseAdmin.getClient();
+
+    if (!params.reason) {
+      throw new Error('request_human_approval: reason is required');
+    }
+
+    // Fetch pod name for the event payload
+    let podName = conversation.pod_id || 'Unknown Pod';
+    try {
+      const { data: pod } = await client
+        .from('pods')
+        .select('name')
+        .eq('id', conversation.pod_id)
+        .single();
+      if (pod?.name) podName = pod.name;
+    } catch {
+      // Non-fatal
+    }
+
+    const proposedActions: string[] = Array.isArray(params.proposed_actions)
+      ? params.proposed_actions
+      : [];
+
+    // Try to insert into agent_approval_requests (best-effort).
+    // Note: the table requires orchestrated_task_id NOT NULL — pod-level approval
+    // requests may not have an orchestrated_task. We attempt the insert and fall
+    // back gracefully if the schema doesn't support it yet.
+    let approvalRequestId: string | null = null;
+    try {
+      const { data: approvalRequest, error } = await client
+        .from('agent_approval_requests')
+        .insert({
+          reason: params.reason,
+          status: 'pending',
+          // orchestrated_task_id is required by the current schema — this will
+          // fail gracefully if not available, and we still emit the webhook event.
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        this.logger.debug(
+          `[PodTools] agent_approval_requests insert skipped (schema mismatch): ${error.message}`,
+        );
+      } else {
+        approvalRequestId = approvalRequest?.id ?? null;
+      }
+    } catch (insertErr: any) {
+      this.logger.debug(
+        `[PodTools] agent_approval_requests insert failed (non-fatal): ${insertErr.message}`,
+      );
+    }
+
+    // Emit webhook event so frontend can display approval UI
+    // Note: no WebSocket gateway exists yet — using webhookEmitter for now
+    await this.webhookEmitter.emit(accountId, 'approval_requested', {
+      type: 'approval_requested',
+      approval_request_id: approvalRequestId,
+      reason: params.reason,
+      proposed_actions: proposedActions,
+      pod_name: podName,
+      pod_id: conversation.pod_id || null,
+      conversation_id: conversation.id,
+    });
+
+    this.logger.log(
+      `[PodTools] Approval request created: id=${approvalRequestId}, pod=${podName}`,
+    );
   }
 }

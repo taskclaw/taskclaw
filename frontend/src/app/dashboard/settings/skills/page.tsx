@@ -7,16 +7,11 @@ import {
   uploadSkillAttachment, removeSkillAttachment, getAttachmentContent,
 } from './actions';
 import { getCategories } from '../categories/actions';
-import { Plus, Edit, Trash2, Save, X, Power, PowerOff, Link2, FileText, Download, PenLine, FolderUp, Plug, BrainCircuit, Search } from 'lucide-react';
+import { Plus, Edit, Trash2, Save, X, Power, PowerOff, Tag, Link2, FileText, Download, PenLine, FolderUp, Plug, BrainCircuit } from 'lucide-react';
 import { FileDropZone, type DroppedFile } from '@/components/ui/file-drop-zone';
 import { toast } from 'sonner';
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
 import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { ViewToggle } from '@/components/view-toggle';
-import { PageLayout, PageHeader, PageFilterBar, PageContent } from '@/components/page-layout';
 
 interface Attachment {
   name: string;
@@ -58,8 +53,6 @@ export default function SkillsPage() {
   const [skillCategoryMap, setSkillCategoryMap] = useState<Map<string, string[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [pageTab, setPageTab] = useState<'my-skills' | 'integration-skills'>('my-skills');
-  const [view, setView] = useState<'grid' | 'list'>('list');
-  const [search, setSearch] = useState('');
   const [viewingIntegrationSkill, setViewingIntegrationSkill] = useState<Skill | null>(null);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -409,444 +402,435 @@ export default function SkillsPage() {
 
   const getCategoryById = (id: string) => categories.find((c) => c.id === id);
 
-  const filteredSkills = search.trim()
-    ? skills.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()) || (s.description || '').toLowerCase().includes(search.toLowerCase()))
-    : skills;
-
-  const filteredIntegrationSkills = search.trim()
-    ? integrationSkills.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()) || (s.description || '').toLowerCase().includes(search.toLowerCase()))
-    : integrationSkills;
-
-  const activeList = pageTab === 'my-skills' ? filteredSkills : filteredIntegrationSkills;
-
   return (
-    <>
-      <PageLayout
-        header={
-          <PageHeader
-            icon={<BrainCircuit className="w-4 h-4 text-primary" />}
-            title="Skills"
-            meta={
-              <span className="text-xs text-muted-foreground px-2 py-0.5 bg-accent rounded-full">
-                {pageTab === 'my-skills' ? skills.length : integrationSkills.length}
+    <div className="p-6 max-w-6xl mx-auto">
+      {/* Header */}
+      <div className="mb-6">
+        <div className="flex justify-between items-center mb-2">
+          <div>
+            <h1 className="text-3xl font-bold">Skills Management</h1>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Create custom AI behaviors with instruction sets. Link skills to agents for automatic provider sync.
+            </p>
+          </div>
+          {pageTab === 'my-skills' && (
+            <button
+              onClick={startCreate}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              New Skill
+            </button>
+          )}
+        </div>
+
+        {/* Page Tabs */}
+        <div className="flex border-b mt-4">
+          <button
+            onClick={() => setPageTab('my-skills')}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              pageTab === 'my-skills'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            <BrainCircuit className="w-4 h-4" />
+            My Skills
+            {skills.length > 0 && (
+              <span className="ml-1 text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">
+                {skills.length}
               </span>
-            }
-            actions={
-              pageTab === 'my-skills' ? (
-                <Button size="sm" onClick={startCreate}>
-                  <Plus className="h-3.5 w-3.5 mr-1.5" />
-                  New Skill
-                </Button>
-              ) : undefined
-            }
-          />
-        }
-        filterBar={
-          <PageFilterBar
-            left={
-              <div className="flex items-center gap-3">
-                {/* Tab switcher */}
-                <div className="flex items-center gap-0.5 border border-border rounded-lg p-0.5 bg-muted/40">
-                  <button
-                    onClick={() => setPageTab('my-skills')}
-                    className={cn(
-                      'flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors',
-                      pageTab === 'my-skills'
-                        ? 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    <BrainCircuit className="w-3.5 h-3.5" />
-                    My Skills
-                    {skills.length > 0 && (
-                      <span className="text-[10px] text-muted-foreground">{skills.length}</span>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setPageTab('integration-skills')}
-                    className={cn(
-                      'flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors',
-                      pageTab === 'integration-skills'
-                        ? 'bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    <Plug className="w-3.5 h-3.5" />
-                    Integrations
-                    {integrationSkills.length > 0 && (
-                      <span className="text-[10px] text-muted-foreground">{integrationSkills.length}</span>
-                    )}
-                  </button>
-                </div>
+            )}
+          </button>
+          <button
+            onClick={() => setPageTab('integration-skills')}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              pageTab === 'integration-skills'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            <Plug className="w-4 h-4" />
+            Integration Skills
+            {integrationSkills.length > 0 && (
+              <span className="ml-1 text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">
+                {integrationSkills.length}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
 
-                {/* Search */}
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <Input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search skills..."
-                    className="pl-8 h-8 w-52 text-sm"
-                  />
-                </div>
-              </div>
-            }
-            right={<ViewToggle mode={view} onChange={setView} />}
-          />
-        }
-      >
-        <PageContent className="p-4 max-w-5xl mx-auto w-full">
+      {/* Integration Skills Tab */}
+      {pageTab === 'integration-skills' && (
+        <>
           {loading ? (
-            <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
-              Loading skills...
-            </div>
-          ) : activeList.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-              {pageTab === 'integration-skills' ? (
-                <>
-                  <Plug className="w-10 h-10 mb-3 opacity-20" />
-                  <p className="text-sm">No integration skills found</p>
-                  <p className="text-xs mt-1 opacity-60">Connect integrations from the Marketplace</p>
-                </>
-              ) : (
-                <>
-                  <BrainCircuit className="w-10 h-10 mb-3 opacity-20" />
-                  <p className="text-sm">{search ? 'No skills match your search' : 'No skills yet'}</p>
-                  {!search && (
-                    <Button variant="outline" size="sm" className="mt-3" onClick={startCreate}>
-                      <Plus className="h-3 w-3 mr-1.5" />
-                      Create your first skill
-                    </Button>
-                  )}
-                </>
-              )}
-            </div>
-          ) : view === 'grid' ? (
-            /* ── Grid view ── */
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {activeList.map((skill) => {
-                const linkedCategoryIds = skillCategoryMap.get(skill.id) || [];
-                return (
-                  <div
-                    key={skill.id}
-                    className={cn(
-                      'group flex flex-col border border-border rounded-xl p-4 bg-card transition-all',
-                      skill.is_active ? 'hover:bg-accent/30 hover:border-primary/30' : 'opacity-60',
-                      deletingId === skill.id && 'animate-deleting',
-                    )}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                          {pageTab === 'integration-skills'
-                            ? <Plug className="w-3.5 h-3.5 text-primary" />
-                            : <BrainCircuit className="w-3.5 h-3.5 text-primary" />
-                          }
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold truncate">{skill.name}</p>
-                          {skill.description && (
-                            <p className="text-[11px] text-muted-foreground truncate mt-0.5">{skill.description}</p>
-                          )}
-                        </div>
-                      </div>
-                      <Badge variant={skill.is_active ? 'default' : 'secondary'} className="text-[9px] px-1.5 py-0 shrink-0 ml-1">
-                        {skill.is_active ? 'Active' : 'Off'}
-                      </Badge>
-                    </div>
-
-                    {/* Linked agents */}
-                    {pageTab === 'my-skills' && (
-                      <div className="flex flex-wrap gap-1 mb-3 flex-1">
-                        {linkedCategoryIds.length > 0 ? linkedCategoryIds.map((catId) => {
-                          const cat = getCategoryById(catId);
-                          if (!cat) return null;
-                          return (
-                            <span
-                              key={catId}
-                              className="text-[10px] px-2 py-0.5 rounded-full border"
-                              style={{ backgroundColor: `${cat.color || '#71717a'}15`, borderColor: `${cat.color || '#71717a'}40`, color: cat.color || '#71717a' }}
-                            >
-                              {cat.name}
-                            </span>
-                          );
-                        }) : (
-                          <span className="text-[10px] text-muted-foreground/50">No agents linked</span>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="flex items-center justify-between pt-2 border-t border-border/50">
-                      <span className="text-[10px] text-muted-foreground">
-                        {new Date(skill.updated_at).toLocaleDateString()}
-                      </span>
-                      {pageTab === 'my-skills' && (
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => handleToggleActive(skill)}
-                            className={cn('p-1.5 rounded-md hover:bg-accent', skill.is_active ? 'text-green-500' : 'text-muted-foreground')}
-                            title={skill.is_active ? 'Deactivate' : 'Activate'}
-                          >
-                            {skill.is_active ? <Power className="w-3.5 h-3.5" /> : <PowerOff className="w-3.5 h-3.5" />}
-                          </button>
-                          <button onClick={() => startEdit(skill)} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground">
-                            <Edit className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => setDeleteTarget({ id: skill.id, name: skill.name })} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-destructive">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="text-center py-8 text-gray-500">Loading...</div>
+          ) : integrationSkills.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Plug className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p>No integration skills found.</p>
+              <p className="text-xs mt-1">Connect integrations from the Marketplace to see their skills here.</p>
             </div>
           ) : (
-            /* ── List view ── */
-            <div className="rounded-xl border border-border overflow-hidden">
-              <div className="flex items-center gap-4 px-4 py-2 bg-muted/50 border-b border-border">
-                <p className="flex-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Skill</p>
-                <p className="hidden md:block w-[180px] text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Agents</p>
-                <p className="shrink-0 w-20 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Status</p>
-                <p className="shrink-0 w-24 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Updated</p>
-                {pageTab === 'my-skills' && <div className="shrink-0 w-20" />}
-              </div>
-              {activeList.map((skill) => {
-                const linkedCategoryIds = skillCategoryMap.get(skill.id) || [];
-                const unlinkedCategories = categories.filter((c) => !linkedCategoryIds.includes(c.id));
-                return (
-                  <div
-                    key={skill.id}
-                    className={cn(
-                      'group flex items-center gap-4 px-4 py-3 border-b border-border last:border-0',
-                      'hover:bg-accent/30 transition-colors relative',
-                      !skill.is_active && 'opacity-60',
-                      deletingId === skill.id && 'animate-deleting',
-                    )}
-                  >
-                    {/* Name + desc */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        {pageTab === 'integration-skills'
-                          ? <Plug className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          : <BrainCircuit className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                        }
-                        <p className="text-sm font-medium truncate">{skill.name}</p>
+            <div className="grid gap-4">
+              {integrationSkills.map((skill) => (
+                <div
+                  key={skill.id}
+                  className="border rounded-lg p-4 bg-white dark:bg-gray-800"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Plug className="w-4 h-4 text-blue-500" />
+                        <h3 className="text-lg font-semibold">{skill.name}</h3>
+                        <span className="px-2 py-1 text-xs rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
+                          Integration
+                        </span>
+                        {!skill.account_id && (
+                          <span className="px-2 py-1 text-xs rounded-full bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300">
+                            System
+                          </span>
+                        )}
                       </div>
                       {skill.description && (
-                        <p className="text-[11px] text-muted-foreground truncate mt-0.5 pl-5">{skill.description}</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                          {skill.description}
+                        </p>
                       )}
+                      <details className="text-sm text-gray-700 dark:text-gray-300">
+                        <summary className="cursor-pointer text-blue-600 hover:underline">
+                          View Instructions ({skill.instructions?.length || 0} chars)
+                        </summary>
+                        <pre className="mt-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-md overflow-x-auto whitespace-pre-wrap text-xs max-h-96 overflow-y-auto">
+                          {skill.instructions}
+                        </pre>
+                      </details>
+                      <p className="text-xs text-gray-500 mt-2">
+                        Updated {new Date(skill.updated_at).toLocaleDateString()}
+                      </p>
                     </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
-                    {/* Linked agents */}
-                    {pageTab === 'my-skills' ? (
-                      <div className="hidden md:flex flex-wrap gap-1 w-[180px] items-center">
-                        {linkedCategoryIds.length > 0 ? linkedCategoryIds.slice(0, 2).map((catId) => {
+      {/* My Skills Tab */}
+      {pageTab === 'my-skills' && (
+        <>
+      {loading ? (
+        <div className="text-center py-8 text-gray-500">Loading...</div>
+      ) : skills.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          <p>No skills yet. Create your first AI skill!</p>
+        </div>
+      ) : (
+        <div className="grid gap-4">
+          {skills.map((skill) => {
+            const linkedCategoryIds = skillCategoryMap.get(skill.id) || [];
+            const unlinkedCategories = categories.filter(
+              (c) => !linkedCategoryIds.includes(c.id),
+            );
+
+            return (
+              <div
+                key={skill.id}
+                className={cn(
+                  'border rounded-lg p-4',
+                  skill.is_active
+                    ? 'bg-white dark:bg-gray-800'
+                    : 'bg-gray-50 dark:bg-gray-900 opacity-60',
+                  deletingId === skill.id && 'animate-deleting',
+                )}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h3 className="text-lg font-semibold">{skill.name}</h3>
+                      <span
+                        className={`px-2 py-1 text-xs rounded-full ${
+                          skill.is_active
+                            ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
+                            : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                        }`}
+                      >
+                        {skill.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    {skill.description && (
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        {skill.description}
+                      </p>
+                    )}
+
+                    {/* Linked Categories */}
+                    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                      <Tag className="h-3.5 w-3.5 text-gray-400" />
+                      {linkedCategoryIds.length > 0 ? (
+                        linkedCategoryIds.map((catId) => {
                           const cat = getCategoryById(catId);
                           if (!cat) return null;
                           return (
                             <span
                               key={catId}
-                              className="text-[10px] px-2 py-0.5 rounded-full border inline-flex items-center gap-1"
-                              style={{ backgroundColor: `${cat.color || '#71717a'}15`, borderColor: `${cat.color || '#71717a'}40`, color: cat.color || '#71717a' }}
+                              className="inline-flex items-center gap-1 text-xs rounded-md px-2 py-0.5 border"
+                              style={{
+                                backgroundColor: `${cat.color || '#71717a'}15`,
+                                borderColor: `${cat.color || '#71717a'}40`,
+                                color: cat.color || '#71717a',
+                              }}
                             >
+                              {cat.icon && <span>{cat.icon}</span>}
                               {cat.name}
-                              <button onClick={() => handleUnlinkCategory(skill.id, catId)} className="hover:opacity-70">
-                                <X className="h-2.5 w-2.5" />
+                              <button
+                                onClick={() => handleUnlinkCategory(skill.id, catId)}
+                                className="ml-0.5 hover:opacity-70"
+                                title={`Unlink from ${cat.name}`}
+                              >
+                                <X className="h-3 w-3" />
                               </button>
                             </span>
                           );
-                        }) : <span className="text-[10px] text-muted-foreground/50">None</span>}
-                        {linkedCategoryIds.length > 2 && (
-                          <span className="text-[10px] text-muted-foreground/60">+{linkedCategoryIds.length - 2}</span>
-                        )}
-                        <button
-                          onClick={() => setLinkingSkillId(linkingSkillId === skill.id ? null : skill.id)}
-                          className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 border border-dashed border-border rounded-full text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                        >
-                          <Link2 className="h-2.5 w-2.5" />
-                        </button>
-                        {/* Inline link dropdown */}
-                        {linkingSkillId === skill.id && (
-                          <div className="absolute z-10 top-full left-48 mt-1 w-44 rounded-lg border border-border bg-popover shadow-md p-1 space-y-0.5">
-                            {unlinkedCategories.length > 0 ? unlinkedCategories.map((cat) => (
+                        })
+                      ) : (
+                        <span className="text-xs text-gray-400">No agents linked</span>
+                      )}
+                      <button
+                        onClick={() => setLinkingSkillId(linkingSkillId === skill.id ? null : skill.id)}
+                        className="inline-flex items-center gap-1 text-xs rounded-md px-2 py-0.5 border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                      >
+                        <Link2 className="h-3 w-3" />
+                        Link
+                      </button>
+                    </div>
+
+                    {/* Category linking dropdown */}
+                    {linkingSkillId === skill.id && (
+                      <div className="mb-3 p-2 rounded-lg border bg-gray-50 dark:bg-gray-800 space-y-1">
+                        {unlinkedCategories.length > 0 ? (
+                          <>
+                            <p className="text-xs text-gray-500 mb-1">Link to agent:</p>
+                            {unlinkedCategories.map((cat) => (
                               <button
                                 key={cat.id}
                                 onClick={() => handleLinkCategory(skill.id, cat.id)}
-                                className="flex items-center gap-2 w-full text-left text-xs rounded px-2 py-1.5 hover:bg-accent transition-colors"
+                                className="flex items-center gap-2 w-full text-left text-xs rounded px-2 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                               >
-                                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cat.color || '#71717a' }} />
-                                {cat.name}
+                                <span
+                                  className="w-3 h-3 rounded-full"
+                                  style={{ backgroundColor: cat.color || '#71717a' }}
+                                />
+                                {cat.icon && <span>{cat.icon}</span>}
+                                <span>{cat.name}</span>
                               </button>
-                            )) : (
-                              <p className="text-xs text-muted-foreground px-2 py-1.5">All linked</p>
-                            )}
-                          </div>
+                            ))}
+                          </>
+                        ) : (
+                          <p className="text-xs text-gray-500">
+                            Already linked to all agents.
+                          </p>
                         )}
                       </div>
-                    ) : (
-                      <div className="hidden md:flex w-[180px] gap-1">
-                        <Badge variant="secondary" className="text-[9px]">Integration</Badge>
-                        {!skill.account_id && <Badge variant="outline" className="text-[9px]">System</Badge>}
-                      </div>
                     )}
 
-                    {/* Status */}
-                    <div className="shrink-0 w-20">
-                      <Badge variant={skill.is_active ? 'default' : 'secondary'} className="text-[9px] px-1.5 py-0">
-                        {skill.is_active ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </div>
-
-                    {/* Updated */}
-                    <span className="shrink-0 w-24 text-[11px] text-muted-foreground">
-                      {new Date(skill.updated_at).toLocaleDateString()}
-                    </span>
-
-                    {/* Actions */}
-                    {pageTab === 'my-skills' && (
-                      <div className="shrink-0 w-20 flex items-center gap-0.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => handleToggleActive(skill)}
-                          className={cn('p-1.5 rounded-md hover:bg-accent', skill.is_active ? 'text-green-500' : 'text-muted-foreground')}
-                          title={skill.is_active ? 'Deactivate' : 'Activate'}
-                        >
-                          {skill.is_active ? <Power className="w-3.5 h-3.5" /> : <PowerOff className="w-3.5 h-3.5" />}
-                        </button>
-                        <button onClick={() => startEdit(skill)} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground">
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => setDeleteTarget({ id: skill.id, name: skill.name })} className="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-destructive">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
+                    <details className="text-sm text-gray-700 dark:text-gray-300">
+                      <summary className="cursor-pointer text-blue-600 hover:underline">
+                        View Instructions
+                        {(skill.file_attachments?.length || 0) > 0 && (
+                          <span className="ml-2 text-xs text-gray-400">
+                            + {skill.file_attachments!.length} reference file{skill.file_attachments!.length > 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </summary>
+                      <pre className="mt-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-md overflow-x-auto whitespace-pre-wrap">
+                        {skill.instructions}
+                      </pre>
+                    </details>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Updated {new Date(skill.updated_at).toLocaleDateString()}
+                    </p>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </PageContent>
-      </PageLayout>
+                  <div className="flex gap-2 ml-4">
+                    <button
+                      onClick={() => handleToggleActive(skill)}
+                      className={`p-2 ${
+                        skill.is_active
+                          ? 'text-green-600 hover:text-green-700'
+                          : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                      title={skill.is_active ? 'Deactivate' : 'Activate'}
+                    >
+                      {skill.is_active ? (
+                        <Power className="w-4 h-4" />
+                      ) : (
+                        <PowerOff className="w-4 h-4" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => startEdit(skill)}
+                      className="p-2 text-gray-500 hover:text-blue-600"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setDeleteTarget({ id: skill.id, name: skill.name })}
+                      className="p-2 text-gray-500 hover:text-red-600"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Editor Modal */}
       {(editingSkill || isCreating) && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-background border border-border rounded-xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-xl">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-6xl max-h-[90vh] flex flex-col">
             {/* Modal Header */}
-            <div className="border-b border-border px-5 py-4 flex justify-between items-center shrink-0">
-              <h2 className="text-base font-semibold">
+            <div className="border-b p-4 flex justify-between items-center">
+              <h2 className="text-xl font-bold">
                 {editingSkill ? 'Edit Skill' : 'New Skill'}
               </h2>
-              <button onClick={cancelEdit} className="text-muted-foreground hover:text-foreground p-1 rounded-md hover:bg-accent">
-                <X className="w-5 h-5" />
+              <button onClick={cancelEdit} className="text-gray-500 hover:text-gray-700">
+                <X className="w-6 h-6" />
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+              {/* Name & Description — always visible */}
               <div>
-                <label className="block text-sm font-medium mb-1.5">Name *</label>
-                <Input
+                <label className="block text-sm font-medium mb-1">Name *</label>
+                <input
+                  type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
                   placeholder="e.g., Code Review Expert"
                 />
               </div>
+
               <div>
-                <label className="block text-sm font-medium mb-1.5">Description</label>
-                <Input
+                <label className="block text-sm font-medium mb-1">Description</label>
+                <input
+                  type="text"
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600"
                   placeholder="Brief description (optional)"
                 />
               </div>
 
-              {/* Inner Tabs: Write / Import */}
+              {/* Tabs */}
               <div>
-                <div className="flex gap-0.5 border-b border-border mb-4">
+                <div className="flex border-b">
                   <button
                     onClick={() => setActiveTab('write')}
-                    className={cn(
-                      'flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors',
-                      activeTab === 'write' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
-                    )}
+                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === 'write'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
                   >
-                    <PenLine className="w-3.5 h-3.5" />
+                    <PenLine className="w-4 h-4" />
                     Write
                   </button>
                   <button
                     onClick={() => setActiveTab('import')}
-                    className={cn(
-                      'flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors',
-                      activeTab === 'import' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground',
-                    )}
+                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === 'import'
+                        ? 'border-blue-600 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
                   >
-                    <FolderUp className="w-3.5 h-3.5" />
+                    <FolderUp className="w-4 h-4" />
                     Import
                   </button>
                 </div>
 
                 {/* Write Tab */}
                 {activeTab === 'write' && (
-                  <div>
-                    <label className="block text-sm font-medium mb-1.5">
+                  <div className="pt-4">
+                    <label className="block text-sm font-medium mb-1">
                       {activeFile === '__SKILL_MD__' ? 'Instructions *' : activeFile}
                       {activeFile !== '__SKILL_MD__' && modifiedFiles.has(activeFile) && (
                         <span className="ml-2 text-xs text-amber-500">(modified)</span>
                       )}
                     </label>
-                    <div className="flex border border-border rounded-lg overflow-hidden" style={{ height: '400px' }}>
+
+                    <div className="flex gap-0 border rounded-md overflow-hidden" style={{ height: '400px' }}>
+                      {/* File Sidebar */}
                       {sidebarFiles.length > 0 && (
-                        <div className="w-48 shrink-0 border-r border-border bg-muted/30 overflow-y-auto">
+                        <div className="w-48 flex-shrink-0 border-r bg-gray-50 dark:bg-gray-900 overflow-y-auto">
                           <button
                             onClick={() => handleSelectFile('__SKILL_MD__')}
                             className={cn(
-                              'w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-accent transition-colors',
-                              activeFile === '__SKILL_MD__' && 'bg-primary/10 text-primary border-r-2 border-primary',
+                              'w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors',
+                              activeFile === '__SKILL_MD__' && 'bg-blue-50 dark:bg-blue-950/30 text-blue-600 border-r-2 border-blue-600',
                             )}
                           >
-                            <PenLine className="w-3.5 h-3.5 shrink-0" />
+                            <PenLine className="w-3.5 h-3.5 flex-shrink-0" />
                             <span className="truncate">SKILL.md</span>
                           </button>
+
                           <div className="px-3 py-1.5">
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Reference Files</p>
+                            <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
+                              Reference Files
+                            </p>
                           </div>
+
                           {sidebarFiles.map((att) => {
                             const editable = isTextFile(att.name);
                             const isActive = activeFile === att.name;
-                            const isLoad = loadingFiles.has(att.name);
-                            const isMod = modifiedFiles.has(att.name);
+                            const isLoading = loadingFiles.has(att.name);
+                            const isModified = modifiedFiles.has(att.name);
+
                             return (
                               <button
                                 key={att.name}
                                 onClick={() => editable && handleSelectFile(att.name)}
-                                disabled={!editable || isLoad}
+                                disabled={!editable || isLoading}
                                 className={cn(
-                                  'w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors',
-                                  editable ? 'hover:bg-accent cursor-pointer' : 'opacity-50 cursor-not-allowed',
-                                  isActive && 'bg-primary/10 text-primary border-r-2 border-primary',
+                                  'w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition-colors',
+                                  editable
+                                    ? 'hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer'
+                                    : 'opacity-50 cursor-not-allowed',
+                                  isActive && 'bg-blue-50 dark:bg-blue-950/30 text-blue-600 border-r-2 border-blue-600',
                                 )}
                                 title={editable ? att.name : `${att.name} (binary, not editable)`}
                               >
-                                {isLoad ? (
-                                  <div className="w-3.5 h-3.5 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin shrink-0" />
+                                {isLoading ? (
+                                  <div className="w-3.5 h-3.5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                                 ) : (
-                                  <FileText className="w-3.5 h-3.5 shrink-0" />
+                                  <FileText className="w-3.5 h-3.5 flex-shrink-0" />
                                 )}
                                 <span className="truncate">{att.name}</span>
-                                {isMod && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0 ml-auto" />}
+                                {isModified && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0 ml-auto" />
+                                )}
                               </button>
                             );
                           })}
                         </div>
                       )}
+
+                      {/* Editor */}
                       <textarea
                         value={currentEditorContent}
                         onChange={(e) => handleEditorChange(e.target.value)}
-                        className="flex-1 px-3 py-2 bg-background font-mono text-sm resize-none focus:outline-none min-w-0"
-                        placeholder="When reviewing code, check for:&#10;1. Security vulnerabilities&#10;2. Performance bottlenecks&#10;3. Clean code principles..."
+                        className="flex-1 px-3 py-2 dark:bg-gray-700 font-mono text-sm resize-none focus:outline-none min-w-0"
+                        placeholder={
+                          activeFile === '__SKILL_MD__'
+                            ? 'When reviewing code, check for:\n1. Security vulnerabilities\n2. Performance bottlenecks\n3. Clean code principles...'
+                            : `Edit ${activeFile}...`
+                        }
                       />
                     </div>
                   </div>
@@ -854,7 +838,7 @@ export default function SkillsPage() {
 
                 {/* Import Tab */}
                 {activeTab === 'import' && (
-                  <div className="space-y-3">
+                  <div className="pt-4 space-y-3">
                     <FileDropZone
                       onFilesDropped={handleFilesDropped}
                       onMainContent={(content) => setFormData((prev) => ({ ...prev, instructions: content }))}
@@ -862,54 +846,89 @@ export default function SkillsPage() {
                       disabled={uploadingFiles.size > 0}
                       className="py-10"
                     />
+
                     {formData.instructions && (
-                      <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-green-500/10 border border-green-500/20 text-sm text-green-600 dark:text-green-400">
-                        <PenLine className="w-4 h-4 shrink-0" />
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 text-sm text-green-700 dark:text-green-300">
+                        <PenLine className="w-4 h-4 flex-shrink-0" />
                         Instructions loaded ({formData.instructions.length} chars)
                       </div>
                     )}
+
+                    {/* Uploaded attachments (editing existing skill) */}
                     {(attachments.length > 0 || uploadingFiles.size > 0) && (
                       <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-1">Uploaded Files</p>
+                        <p className="text-xs font-medium text-gray-500 mb-1">Uploaded Files</p>
                         <div className="space-y-1">
                           {attachments.map((att) => (
-                            <div key={att.name} className="flex items-center justify-between px-3 py-1.5 rounded-md bg-accent/50 text-sm">
+                            <div
+                              key={att.name}
+                              className="flex items-center justify-between px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm"
+                            >
                               <div className="flex items-center gap-2 min-w-0">
-                                <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                                <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
                                 <span className="truncate">{att.name}</span>
-                                <span className="text-xs text-muted-foreground shrink-0">{formatFileSize(att.size)}</span>
+                                <span className="text-xs text-gray-400 flex-shrink-0">
+                                  {formatFileSize(att.size)}
+                                </span>
                               </div>
-                              <div className="flex items-center gap-1 ml-2 shrink-0">
-                                <a href={att.url} target="_blank" rel="noopener noreferrer" className="p-1 text-muted-foreground hover:text-primary" title="Download" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                                <a
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1 text-gray-400 hover:text-blue-500"
+                                  title="Download"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
                                   <Download className="w-3.5 h-3.5" />
                                 </a>
-                                <button onClick={() => handleRemoveAttachment(att.name)} className="p-1 text-muted-foreground hover:text-destructive" title="Remove">
+                                <button
+                                  onClick={() => handleRemoveAttachment(att.name)}
+                                  className="p-1 text-gray-400 hover:text-red-500"
+                                  title="Remove"
+                                >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </div>
                           ))}
                           {[...uploadingFiles].map((name) => (
-                            <div key={name} className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-accent/50 text-sm text-muted-foreground">
-                              <div className="w-4 h-4 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin shrink-0" />
+                            <div
+                              key={name}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700/50 text-sm text-gray-400"
+                            >
+                              <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                               <span className="truncate">Uploading {name}...</span>
                             </div>
                           ))}
                         </div>
                       </div>
                     )}
+
+                    {/* Pending files (creating new skill) */}
                     {pendingFiles.length > 0 && (
                       <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-1">Queued Files (will upload on save)</p>
+                        <p className="text-xs font-medium text-gray-500 mb-1">
+                          Queued Files (will upload on save)
+                        </p>
                         <div className="space-y-1">
                           {pendingFiles.map((f) => (
-                            <div key={f.path} className="flex items-center justify-between px-3 py-1.5 rounded-md bg-primary/5 border border-primary/20 text-sm">
+                            <div
+                              key={f.path}
+                              className="flex items-center justify-between px-3 py-1.5 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-sm"
+                            >
                               <div className="flex items-center gap-2 min-w-0">
-                                <FileText className="w-4 h-4 text-primary shrink-0" />
+                                <FileText className="w-4 h-4 text-blue-400 flex-shrink-0" />
                                 <span className="truncate">{f.path}</span>
-                                <span className="text-xs text-muted-foreground shrink-0">{formatFileSize(f.file.size)}</span>
+                                <span className="text-xs text-gray-400 flex-shrink-0">
+                                  {formatFileSize(f.file.size)}
+                                </span>
                               </div>
-                              <button onClick={() => handleRemoveAttachment(f.path)} className="p-1 text-muted-foreground hover:text-destructive shrink-0" title="Remove">
+                              <button
+                                onClick={() => handleRemoveAttachment(f.path)}
+                                className="p-1 text-gray-400 hover:text-red-500 flex-shrink-0"
+                                title="Remove"
+                              >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
@@ -917,7 +936,8 @@ export default function SkillsPage() {
                         </div>
                       </div>
                     )}
-                    <p className="text-xs text-muted-foreground">
+
+                    <p className="text-xs text-gray-400">
                       Drop a skill folder — SKILL.md fills instructions, other files become references.
                     </p>
                   </div>
@@ -939,12 +959,20 @@ export default function SkillsPage() {
             </div>
 
             {/* Modal Footer */}
-            <div className="border-t border-border px-5 py-4 flex justify-end gap-2 shrink-0">
-              <Button variant="outline" onClick={cancelEdit}>Cancel</Button>
-              <Button onClick={handleSave}>
-                <Save className="w-4 h-4 mr-1.5" />
+            <div className="border-t p-4 flex justify-end gap-2">
+              <button
+                onClick={cancelEdit}
+                className="px-4 py-2 border rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
+              >
+                <Save className="w-4 h-4" />
                 Save
-              </Button>
+              </button>
             </div>
           </div>
         </div>
@@ -958,6 +986,8 @@ export default function SkillsPage() {
         description={`This will permanently delete "${deleteTarget?.name || ''}" and its reference files.`}
         loading={deleteLoading}
       />
-    </>
+        </>
+      )}
+    </div>
   );
 }

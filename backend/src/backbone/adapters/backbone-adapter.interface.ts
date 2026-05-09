@@ -5,6 +5,16 @@
  * interface so the router can talk to it in a unified way.
  */
 
+/**
+ * A structured system prompt block with an optional cache marker (F011).
+ * When cacheable=true, Anthropic adapter wraps with cache_control:{type:'ephemeral'}.
+ * OpenClaw adapter uses this to implement session-level context pinning.
+ */
+export interface CacheableBlock {
+  text: string;
+  cacheable: boolean; // true = wrap with cache_control for Anthropic
+}
+
 export interface ToolContextDefinition {
   name: string;
   description: string;
@@ -17,8 +27,20 @@ export interface ToolContextDefinition {
 export interface BackboneSendOptions {
   /** Decrypted connection config (api_url, api_key, model, etc.) */
   config: Record<string, any>;
-  /** System prompt to inject */
-  systemPrompt: string;
+  /** System prompt to inject (legacy flat string — backward compat) */
+  systemPrompt?: string;
+  /**
+   * Structured system prompt blocks with cache markers (F011).
+   * When provided alongside isConversational=true, Anthropic adapter uses
+   * cache_control blocks; OpenClaw adapter uses session-level pinning.
+   * Falls back to systemPrompt if not provided.
+   */
+  systemPromptBlocks?: CacheableBlock[];
+  /**
+   * true = interactive chat session; enable prompt caching optimizations.
+   * false/undefined = single-shot autonomous task; skip caching (avoids 1.25x penalty).
+   */
+  isConversational?: boolean;
   /** User message */
   message: string;
   /** Conversation history (role + content pairs) */
@@ -35,19 +57,11 @@ export interface BackboneSendOptions {
   tool_context?: ToolContextDefinition[];
 }
 
-export interface ToolCallRequest {
-  id: string;
-  name: string;
-  input: Record<string, any>;
-}
-
 export interface BackboneMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   /** Tool call metadata when role === 'tool' */
   tool_call_id?: string;
-  /** Anthropic raw content blocks (for tool_use round-trips) */
-  raw_content?: any[];
 }
 
 export interface BackboneSkillDefinition {
@@ -65,12 +79,16 @@ export interface BackboneSendResult {
     completion_tokens?: number;
     total_tokens?: number;
   };
+  /** Prompt caching stats (F012) — populated by AnthropicAdapter when caching is active */
+  cacheStats?: {
+    cache_creation_input_tokens: number;
+    cache_read_input_tokens: number;
+    input_tokens: number;
+  };
   /** Model that actually served the request */
   model?: string;
   /** Raw response from the backbone (for debugging / logging) */
   raw?: any;
-  /** Tool calls requested by the model */
-  tool_calls?: ToolCallRequest[];
 }
 
 export interface BackboneHealthResult {
@@ -112,10 +130,4 @@ export interface BackboneAdapter {
    * When true the router may pass tool definitions for the adapter to use.
    */
   supportsToolExecution?(): boolean;
-
-  /**
-   * Optional: whether this backbone supports text-based tool calling (e.g. OpenClaw).
-   * When true, tool definitions are injected as text instructions and responses are parsed for XML tool calls.
-   */
-  supportsTextBasedToolCalling?(): boolean;
 }

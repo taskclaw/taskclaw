@@ -35,20 +35,19 @@ export class PodsService {
       throw new Error(`Failed to fetch pods: ${error.message}`);
     }
 
-    // Get board counts per pod using SQL aggregation (no full row transfer)
+    // Get board counts per pod
     const podIds = data.map((p) => p.id);
     if (podIds.length > 0) {
       const { data: boardCounts, error: countError } = await client
         .from('board_instances')
-        .select('pod_id, count()')
-        .in('pod_id', podIds)
-        .eq('is_archived', false);
+        .select('pod_id')
+        .in('pod_id', podIds);
 
       if (!countError && boardCounts) {
         const countMap: Record<string, number> = {};
-        (boardCounts as any[]).forEach((b) => {
+        boardCounts.forEach((b) => {
           if (b.pod_id) {
-            countMap[b.pod_id] = Number(b.count) || 0;
+            countMap[b.pod_id] = (countMap[b.pod_id] || 0) + 1;
           }
         });
         data.forEach((pod) => {
@@ -162,9 +161,9 @@ export class PodsService {
     if (dto.color !== undefined) updateData.color = dto.color;
     if (dto.backbone_connection_id !== undefined)
       updateData.backbone_connection_id = dto.backbone_connection_id;
-    if (dto.agent_config !== undefined)
-      updateData.agent_config = dto.agent_config;
+    if (dto.agent_config !== undefined) updateData.agent_config = dto.agent_config;
     if (dto.position !== undefined) updateData.position = dto.position;
+    if (dto.autonomy_level !== undefined) updateData.autonomy_level = dto.autonomy_level;
 
     const { data, error } = await client
       .from('pods')

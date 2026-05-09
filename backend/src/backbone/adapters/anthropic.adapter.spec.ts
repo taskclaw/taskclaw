@@ -25,9 +25,7 @@ describe('AnthropicAdapter', () => {
 
   // Skip API tests since no ANTHROPIC_API_KEY
   it.skip('should pass health check (requires ANTHROPIC_API_KEY)', async () => {
-    const result = await adapter.healthCheck({
-      api_key: process.env.ANTHROPIC_API_KEY,
-    });
+    const result = await adapter.healthCheck({ api_key: process.env.ANTHROPIC_API_KEY });
     expect(result.healthy).toBe(true);
   });
 });

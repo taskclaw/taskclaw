@@ -33,6 +33,8 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { BoardRoutingModule } from './board-routing/board-routing.module';
 import { HeartbeatModule } from './heartbeat/heartbeat.module';
+import { AgentsModule } from './agents/agents.module';
+import { OrchestrationModule } from './orchestration/orchestration.module';
 import { MemoryModule } from './memory/memory.module';
 import { PilotModule } from './pilot/pilot.module';
 
@@ -92,6 +94,8 @@ const editionModules = isCloudEdition
     WebhooksModule,
     BoardRoutingModule,
     HeartbeatModule,
+    AgentsModule,
+    OrchestrationModule,
     MemoryModule,
     PilotModule,
   ],

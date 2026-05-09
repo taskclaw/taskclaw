@@ -1,8 +1,9 @@
 {
-  "bundle_version": "1.0",
+  "bundle_version": "1.1",
   "name": "TaskClaw Default Boards",
-  "description": "Default seed boards for new TaskClaw accounts. Includes the X Content Pipeline and Personal Board with all required categories, skills, and agent configurations.",
+  "description": "Default seed boards for new TaskClaw accounts. Includes the X Content Pipeline and Personal Board with agents, skills, and board configurations.",
   "created_at": "2026-03-12",
+  "updated_at": "2026-04-12",
   "author": "system@taskclaw.co",
 
   "boards": [
@@ -11,20 +12,26 @@
   ],
 
   "_readme": {
-    "how_slugs_work": "Every entity uses a deterministic slug for cross-referencing. When imported, the system creates UUIDs but maintains slug-based lookups so categories, skills, and board steps stay connected.",
-    "import_order": "1) Categories → 2) Skills → 3) category_skills junction → 4) Board template → 5) Board instance + steps with linked_category_id resolved from slugs",
+    "manifest_version": "1.1 adds agents[] array and default_agent_slug on steps. categories[] and linked_category_slug are kept for backward compatibility during the F14 soak period.",
+    "how_slugs_work": "Every entity uses a deterministic slug for cross-referencing. When imported, the system creates UUIDs but maintains slug-based lookups so agents, skills, and board steps stay connected.",
+    "import_order": "1) Agents (+ categories for legacy) → 2) Skills → 3) agent_skills junction (+ category_skills for legacy) → 4) Board template → 5) Board instance + steps with default_agent_id resolved from default_agent_slug",
     "entity_relationships": {
-      "board.default_category_slug": "References a category by slug. Resolved to default_category_id on import.",
-      "step.linked_category_slug": "References a category by slug. Resolved to linked_category_id on import.",
-      "category.skills[].slug": "Skills embedded in the category. Created and linked via category_skills junction.",
-      "category.knowledge_docs[]": "Knowledge docs embedded in the category. Created with category_id FK."
+      "agent.slug": "Unique per account. Used to resolve default_agent_id on board steps.",
+      "agent.persona": "System prompt for the agent. Compiled with skills/knowledge into SKILL.md on sync.",
+      "agent.skills[].slug": "Skills embedded in the agent. Created and linked via agent_skills junction.",
+      "agent.knowledge_docs[]": "Knowledge docs embedded in the agent. Created with agent_id FK.",
+      "step.default_agent_slug": "References an agent by slug. Resolved to default_agent_id on import (F02+).",
+      "step.linked_category_slug": "LEGACY — references a category by slug. Resolved to linked_category_id. Kept until F14 deprecation.",
+      "category.skills[].slug": "LEGACY — skills linked via category_skills junction. Migrated to agent_skills on import.",
+      "category.knowledge_docs[]": "LEGACY — knowledge docs with category_id FK. Migrated to agent_id on import."
     },
     "slug_conventions": {
       "boards": "kebab-case, globally unique per account (e.g., x-content-pipeline)",
-      "categories": "kebab-case, unique per account (e.g., x-copywriter, personal-secretary)",
+      "agents": "kebab-case, unique per account (e.g., x-copywriter, personal-secretary)",
+      "categories": "LEGACY — same slugs as agents during dual-write period",
       "skills": "kebab-case, unique per account (e.g., x-post-writer, personal-task-planner)",
       "steps": "kebab-case, unique per board (e.g., idea, drafting, inbox, planning)"
     },
-    "extending": "To add a new seed board: create a new JSON file following the manifest_version 1.0 schema, add it to the boards array, and run the seed migration."
+    "extending": "To add a new seed board: create a new JSON file using manifest_version 1.1 schema with agents[] (primary). categories[] is optional during the F14 soak period. Add the $ref to the boards array here."
   }
 }

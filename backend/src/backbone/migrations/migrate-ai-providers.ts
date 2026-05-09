@@ -68,9 +68,7 @@ export class MigrateAiProvidersService {
     }
 
     if (!rows || rows.length === 0) {
-      this.logger.log(
-        'No un-migrated ai_provider_configs found. Nothing to do.',
-      );
+      this.logger.log('No un-migrated ai_provider_configs found. Nothing to do.');
       return result;
     }
 

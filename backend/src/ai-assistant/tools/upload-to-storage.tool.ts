@@ -45,7 +45,7 @@ export function createUploadToStorageTool(
           });
         }
 
-        const result = await response.json();
+        const result = (await response.json()) as any;
 
         return JSON.stringify({
           url: result.urls?.get ?? result.url ?? null,

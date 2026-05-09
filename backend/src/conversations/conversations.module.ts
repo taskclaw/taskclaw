@@ -2,7 +2,6 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 import { OpenClawService } from './openclaw.service';
-import { ChatToolsService } from './chat-tools.service';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { AiProviderModule } from '../ai-provider/ai-provider.module';
@@ -11,10 +10,11 @@ import { SkillsModule } from '../skills/skills.module';
 import { AdaptersModule } from '../adapters/adapters.module';
 import { AgentSyncModule } from '../agent-sync/agent-sync.module';
 import { BackboneModule } from '../backbone/backbone.module';
-import { BoardRoutingModule } from '../board-routing/board-routing.module';
+import { WorkspaceContextModule } from '../workspace-context/workspace-context.module';
 
 import { IntegrationsModule } from '../integrations/integrations.module';
-import { MemoryModule } from '../memory/memory.module';
+import { HeartbeatModule } from '../heartbeat/heartbeat.module';
+import { OrchestrationModule } from '../orchestration/orchestration.module';
 
 @Module({
   imports: [
@@ -26,12 +26,13 @@ import { MemoryModule } from '../memory/memory.module';
     AdaptersModule,
     forwardRef(() => AgentSyncModule),
     forwardRef(() => BackboneModule),
-    forwardRef(() => BoardRoutingModule),
     IntegrationsModule,
-    forwardRef(() => MemoryModule),
+    HeartbeatModule,
+    WorkspaceContextModule,
+    forwardRef(() => OrchestrationModule),
   ],
   controllers: [ConversationsController],
-  providers: [ConversationsService, OpenClawService, ChatToolsService],
+  providers: [ConversationsService, OpenClawService],
   exports: [ConversationsService, OpenClawService],
 })
 export class ConversationsModule {}

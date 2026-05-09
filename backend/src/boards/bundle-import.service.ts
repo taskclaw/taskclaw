@@ -150,16 +150,10 @@ export class BundleImportService {
     if (bundle.boards && bundle.boards.length > 0) {
       for (const boardManifest of bundle.boards) {
         try {
-          // Resolve pod_id for this board from pod_slug or pod reference
-          const podSlug =
-            boardManifest.pod_slug || (bundle.pod ? bundle.pod.slug : null);
-          const podId = podSlug ? podSlugToId[podSlug] || null : null;
-
           await this.boardTemplatesService.importManifest(
             userId,
             accountId,
             boardManifest,
-            podId,
           );
           result.boards_created++;
         } catch (error: any) {

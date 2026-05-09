@@ -306,7 +306,6 @@ export class PilotService {
           status: 'success',
           summary: summary.slice(0, 500),
           duration_ms: Date.now() - startTime,
-          conversation_id: conversationId ?? undefined,
         });
       }
 

@@ -25,7 +25,7 @@ export class BoardStepsService {
     const { data, error } = await client
       .from('board_steps')
       .select(
-        '*, linked_category:categories!linked_category_id(id, name, color, icon)',
+        '*, linked_category:categories!linked_category_id(id, name, color, icon), default_agent:agents!default_agent_id(id, name, color, avatar_url, status)',
       )
       .eq('board_instance_id', boardId)
       .order('position', { ascending: true });
@@ -97,6 +97,7 @@ export class BoardStepsService {
         position,
         color: dto.color || null,
         linked_category_id: dto.linked_category_id || null,
+        default_agent_id: (dto as any).default_agent_id || null,
         backbone_connection_id: dto.backbone_connection_id || null,
       })
       .select()

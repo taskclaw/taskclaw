@@ -10,15 +10,8 @@
 import WebSocket from 'ws';
 import { v4 as uuid } from 'uuid';
 
-const OPENCLAW_URL = process.env.OPENCLAW_URL || 'ws://77.42.40.6:18789';
-const API_KEY = process.env.OPENCLAW_API_KEY;
-
-if (!API_KEY) {
-  console.error('ERROR: OPENCLAW_API_KEY environment variable is required.');
-  console.error('Set it in backend/.env.secrets (gitignored) and run:');
-  console.error('  source backend/.env.secrets && npx ts-node backend/test-openclaw-ws.ts');
-  process.exit(1);
-}
+const OPENCLAW_URL = 'ws://77.42.40.6:18789';
+const API_KEY = 'REDACTED_OPENCLAW_TOKEN';
 
 interface TestResult {
   name: string;

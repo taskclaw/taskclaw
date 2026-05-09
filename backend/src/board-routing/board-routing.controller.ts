@@ -10,14 +10,11 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  Req,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import type { Request } from 'express';
 import { AuthGuard } from '../common/guards/auth.guard';
 import { BoardRoutingService } from './board-routing.service';
 import { CoordinatorService } from './coordinator.service';
-import { DagApprovalService } from './dag-approval.service';
 import { CreateBoardRouteDto } from './dto/create-board-route.dto';
 import { UpdateBoardRouteDto } from './dto/update-board-route.dto';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
@@ -29,19 +26,13 @@ export class BoardRoutingController {
   constructor(
     private readonly routingService: BoardRoutingService,
     private readonly coordinatorService: CoordinatorService,
-    private readonly dagApprovalService: DagApprovalService,
     private readonly supabaseAdmin: SupabaseAdminService,
   ) {}
 
   @Get('routes')
-  @ApiOperation({
-    summary: 'List board routes (optionally filtered by pod_id)',
-  })
-  findAllRoutes(
-    @Param('accountId') accountId: string,
-    @Query('pod_id') podId?: string,
-  ) {
-    return this.routingService.findAllRoutes(accountId, podId);
+  @ApiOperation({ summary: 'List board routes' })
+  findAllRoutes(@Param('accountId') accountId: string) {
+    return this.routingService.findAllRoutes(accountId);
   }
 
   @Post('routes')
@@ -52,18 +43,6 @@ export class BoardRoutingController {
     @Body() dto: CreateBoardRouteDto,
   ) {
     return this.routingService.createRoute(accountId, dto);
-  }
-
-  @Get('routes/board/:boardId/manual')
-  @ApiOperation({
-    summary:
-      'List manual + ai_decision routes for a board (for Send-to-Board UI)',
-  })
-  findManualRoutes(
-    @Param('accountId') accountId: string,
-    @Param('boardId') boardId: string,
-  ) {
-    return this.routingService.findManualRoutesForBoard(accountId, boardId);
   }
 
   @Get('routes/:routeId')
@@ -95,23 +74,6 @@ export class BoardRoutingController {
     return this.routingService.deleteRoute(accountId, routeId);
   }
 
-  /**
-   * Manual route trigger: human or frontend explicitly sends a task through a route.
-   * Works for trigger='manual', 'ai_decision', or any trigger type.
-   */
-  @Post('routes/:routeId/trigger')
-  @ApiOperation({
-    summary: 'Manually trigger a board route for a specific task',
-  })
-  @HttpCode(HttpStatus.OK)
-  triggerRoute(
-    @Param('accountId') accountId: string,
-    @Param('routeId') routeId: string,
-    @Body() body: { task_id: string },
-  ) {
-    return this.routingService.triggerRoute(body.task_id, routeId);
-  }
-
   @Post('decompose-goal')
   @ApiOperation({ summary: 'Decompose a high-level goal into tasks via AI' })
   async decomposeGoal(
@@ -131,7 +93,6 @@ export class BoardRoutingController {
   async getDags(
     @Param('accountId') accountId: string,
     @Query('status') status?: string,
-    @Query('pod_id') podId?: string,
   ) {
     const client = this.supabaseAdmin.getClient();
     let query = client
@@ -142,9 +103,6 @@ export class BoardRoutingController {
 
     if (status) {
       query = query.eq('status', status);
-    }
-    if (podId) {
-      query = query.eq('pod_id', podId);
     }
 
     const { data, error } = await query;
@@ -185,42 +143,5 @@ export class BoardRoutingController {
       .eq('dag_id', dagId);
 
     return { ...dag, tasks: tasks ?? [], dependencies: deps ?? [] };
-  }
-
-  // ─── DAG Approval Endpoints (BE11) ──────────────────────────────────────
-
-  @Get('dags/:dagId/approval')
-  @ApiOperation({ summary: 'Get the approval record for a DAG' })
-  getDagApproval(
-    @Param('accountId') accountId: string,
-    @Param('dagId') dagId: string,
-  ) {
-    return this.dagApprovalService.getApproval(dagId);
-  }
-
-  @Post('dags/:dagId/approve')
-  @ApiOperation({ summary: 'Approve a pending DAG and start execution' })
-  @HttpCode(HttpStatus.OK)
-  approveDag(
-    @Param('accountId') accountId: string,
-    @Param('dagId') dagId: string,
-    @Body() body: { notes?: string },
-    @Req() req: Request,
-  ) {
-    const userId = (req as any)['user']?.id ?? 'system';
-    return this.dagApprovalService.approve(dagId, userId, body.notes);
-  }
-
-  @Post('dags/:dagId/reject')
-  @ApiOperation({ summary: 'Reject a pending DAG' })
-  @HttpCode(HttpStatus.OK)
-  rejectDag(
-    @Param('accountId') accountId: string,
-    @Param('dagId') dagId: string,
-    @Body() body: { notes?: string },
-    @Req() req: Request,
-  ) {
-    const userId = (req as any)['user']?.id ?? 'system';
-    return this.dagApprovalService.reject(dagId, userId, body.notes);
   }
 }

@@ -16,7 +16,7 @@ import { NotionAdapter } from '../adapters/notion/notion.adapter';
 import { ConversationsService } from '../conversations/conversations.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 import { DAGExecutorService } from '../board-routing/dag-executor.service';
-import { BoardRoutingService } from '../board-routing/board-routing.service';
+import { ExecutionLogService } from '../heartbeat/execution-log.service';
 
 interface TaskFilters {
   category_id?: string;
@@ -42,8 +42,7 @@ export class TasksService {
     private readonly webhookEmitter: WebhookEmitterService,
     @Inject(forwardRef(() => DAGExecutorService))
     private readonly dagExecutor: DAGExecutorService,
-    @Inject(forwardRef(() => BoardRoutingService))
-    private readonly boardRoutingService: BoardRoutingService,
+    private readonly executionLog: ExecutionLogService,
   ) {}
 
   async findAll(
@@ -59,7 +58,7 @@ export class TasksService {
     let query = client
       .from('tasks')
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .eq('account_id', accountId);
 
@@ -110,7 +109,7 @@ export class TasksService {
     const { data, error } = await client
       .from('tasks')
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), dag:task_dags!dag_id(id, goal, status, pod_id, pods!pod_id(slug))',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .eq('id', id)
       .eq('account_id', accountId)
@@ -161,16 +160,18 @@ export class TasksService {
       }
     }
 
-    // Resolve status from board step if board context provided
+    // Resolve status and default agent from board step if board context provided
     let status = createTaskDto.status || 'To-Do';
+    let defaultAgentId: string | null = null;
     if (createTaskDto.current_step_id) {
       const { data: step } = await client
         .from('board_steps')
-        .select('name')
+        .select('name, default_agent_id')
         .eq('id', createTaskDto.current_step_id)
         .single();
       if (step) {
         status = step.name;
+        defaultAgentId = step.default_agent_id ?? null;
       }
     }
 
@@ -189,9 +190,12 @@ export class TasksService {
         board_instance_id: createTaskDto.board_instance_id || null,
         current_step_id: createTaskDto.current_step_id || null,
         card_data: createTaskDto.card_data || {},
+        // F02: auto-assign to column's default agent if one exists
+        assignee_type: defaultAgentId ? 'agent' : 'none',
+        assignee_id: defaultAgentId,
       })
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .single();
 
@@ -265,7 +269,7 @@ export class TasksService {
       .from('tasks')
       .insert(rows)
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       );
 
     if (error) {
@@ -379,7 +383,7 @@ export class TasksService {
     ) {
       const { data: step } = await client
         .from('board_steps')
-        .select('name, step_type')
+        .select('name, step_type, default_agent_id')
         .eq('id', updateTaskDto.current_step_id)
         .single();
       if (step) {
@@ -388,6 +392,11 @@ export class TasksService {
         if (step.step_type === 'done' && !existingTask.completed) {
           updateData.completed = true;
           updateData.completed_at = new Date().toISOString();
+        }
+        // F02: auto-assign to new column's default agent if task is currently unassigned
+        if (step.default_agent_id && existingTask.assignee_type === 'none') {
+          updateData.assignee_type = 'agent';
+          updateData.assignee_id = step.default_agent_id;
         }
       }
     }
@@ -398,7 +407,7 @@ export class TasksService {
       .eq('id', id)
       .eq('account_id', accountId)
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .single();
 
@@ -431,56 +440,7 @@ export class TasksService {
         );
     }
 
-    // BE10: Fire-and-forget board route auto-trigger on completion or step change
-    const completedChanged =
-      updateTaskDto.completed === true && !existingTask.completed;
-    const stepChanged =
-      updateTaskDto.current_step_id &&
-      updateTaskDto.current_step_id !== existingTask.current_step_id;
-
-    if ((completedChanged || stepChanged) && data.board_instance_id) {
-      this.triggerAutoRoutes(data).catch((err) =>
-        this.logger.warn(
-          `Board route auto-trigger failed for task ${id}: ${(err as Error).message}`,
-        ),
-      );
-    }
-
     return data;
-  }
-
-  /**
-   * BE10: Find and trigger all matching auto board routes for a task
-   * after it completes or moves to a done-type step.
-   * This is always called fire-and-forget.
-   */
-  private async triggerAutoRoutes(task: any) {
-    const client = this.supabaseAdmin.getClient();
-
-    const { data: routes } = await client
-      .from('board_routes')
-      .select('id')
-      .eq('source_board_id', task.board_instance_id)
-      .eq('trigger', 'auto')
-      .eq('trigger_on_step_complete', true)
-      .eq('is_active', true)
-      .or(`source_step_id.eq.${task.current_step_id},source_step_id.is.null`);
-
-    if (!routes?.length) return;
-
-    this.logger.log(
-      `Auto-triggering ${routes.length} board route(s) for task ${task.id}`,
-    );
-
-    for (const route of routes) {
-      this.boardRoutingService
-        .triggerRoute(task.id, route.id)
-        .catch((err) =>
-          this.logger.warn(
-            `Board route ${route.id} trigger failed for task ${task.id}: ${(err as Error).message}`,
-          ),
-        );
-    }
   }
 
   async remove(
@@ -657,7 +617,7 @@ export class TasksService {
       .eq('id', taskId)
       .eq('account_id', accountId)
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .single();
 
@@ -738,7 +698,7 @@ export class TasksService {
     const { data, error } = await client
       .from('tasks')
       .select(
-        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon)',
+        '*, categories:categories!category_id(id, name, color, icon), sources(id, provider), override_category:categories!override_category_id(id, name, color, icon), assignee_agent:agents!assignee_id(id, name, color, avatar_url)',
       )
       .eq('account_id', accountId)
       .or(`title.ilike.${searchTerm},notes.ilike.${searchTerm}`)
@@ -850,5 +810,133 @@ export class TasksService {
       last_synced_at: task.last_synced_at,
       source: task.sources,
     };
+  }
+
+  /**
+   * Report a blocker on a task, escalating it to the pod and cockpit.
+   *
+   * Sets task.status = 'blocked' and stores the blocker details in metadata.
+   * Writes an execution_log entry so the cockpit timeline shows the event.
+   * Emits a webhook event for external integrations.
+   *
+   * Supabase Realtime broadcasts the tasks UPDATE automatically, so the
+   * cockpit UI will receive the blocker notification without polling.
+   */
+  async reportBlocker(
+    userId: string,
+    accountId: string,
+    taskId: string,
+    dto: {
+      reason: string;
+      blocker_type?: 'dependency' | 'external_tool' | 'missing_data' | 'human_required';
+      suggested_resolution?: string;
+    },
+    accessToken?: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    const task = await this.findOne(userId, accountId, taskId, accessToken);
+
+    const blockerMeta = {
+      reason: dto.reason,
+      blocker_type: dto.blocker_type ?? 'missing_data',
+      suggested_resolution: dto.suggested_resolution ?? null,
+      reported_at: new Date().toISOString(),
+    };
+
+    // Merge blocker into existing metadata, preserve other fields
+    const updatedMetadata = {
+      ...(task.metadata ?? {}),
+      blocker: blockerMeta,
+    };
+
+    const { data: updatedTask, error } = await client
+      .from('tasks')
+      .update({
+        status: 'blocked',
+        metadata: updatedMetadata,
+      })
+      .eq('id', taskId)
+      .eq('account_id', accountId)
+      .select('*, categories:categories!category_id(id, name, color), assignee_agent:agents!assignee_id(id, name)')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to report blocker: ${error.message}`);
+    }
+
+    // Log execution event — appears in 24H cockpit timeline
+    await this.executionLog.create({
+      account_id: accountId,
+      trigger_type: 'manual',
+      status: 'error',
+      task_id: taskId,
+      board_id: task.board_instance_id ?? undefined,
+      summary: `Blocker reported: ${dto.reason}`,
+      error_details: dto.suggested_resolution ?? undefined,
+      metadata: {
+        blocker_type: dto.blocker_type ?? 'missing_data',
+        task_title: task.title,
+      },
+    });
+
+    // Emit webhook for external integrations
+    this.webhookEmitter.emit(accountId, 'task.blocked', {
+      task: updatedTask,
+      blocker: blockerMeta,
+    });
+
+    this.logger.log(`Blocker reported on task ${taskId}: ${dto.reason}`);
+
+    return { task: updatedTask, blocker: blockerMeta };
+  }
+
+  /**
+   * Resolve a blocker on a task, restoring it to its previous active status.
+   */
+  async resolveBlocker(
+    userId: string,
+    accountId: string,
+    taskId: string,
+    accessToken?: string,
+  ) {
+    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+
+    const task = await this.findOne(userId, accountId, taskId, accessToken);
+
+    // Remove the blocker from metadata
+    const { blocker: _removed, ...metadataWithoutBlocker } = (task.metadata ?? {}) as any;
+
+    const { data: updatedTask, error } = await client
+      .from('tasks')
+      .update({
+        status: 'in_progress',
+        metadata: metadataWithoutBlocker,
+      })
+      .eq('id', taskId)
+      .eq('account_id', accountId)
+      .select('*, categories:categories!category_id(id, name, color), assignee_agent:agents!assignee_id(id, name)')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to resolve blocker: ${error.message}`);
+    }
+
+    await this.executionLog.create({
+      account_id: accountId,
+      trigger_type: 'manual',
+      status: 'success',
+      task_id: taskId,
+      board_id: task.board_instance_id ?? undefined,
+      summary: `Blocker resolved on task: ${task.title}`,
+    });
+
+    this.webhookEmitter.emit(accountId, 'task.blocker_resolved', { task: updatedTask });
+
+    this.logger.log(`Blocker resolved on task ${taskId}`);
+
+    return { task: updatedTask };
   }
 }

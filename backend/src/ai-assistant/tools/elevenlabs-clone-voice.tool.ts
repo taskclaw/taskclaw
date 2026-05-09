@@ -78,17 +78,14 @@ export function createElevenLabsCloneVoiceTool(
           Buffer.from(footer),
         ]);
 
-        const response = await fetch(
-          'https://api.elevenlabs.io/v1/voices/add',
-          {
-            method: 'POST',
-            headers: {
-              'xi-api-key': apiKey,
-              'Content-Type': `multipart/form-data; boundary=${boundary}`,
-            },
-            body,
+        const response = await fetch('https://api.elevenlabs.io/v1/voices/add', {
+          method: 'POST',
+          headers: {
+            'xi-api-key': apiKey,
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
           },
-        );
+          body,
+        });
 
         if (!response.ok) {
           const errorText = await response.text();

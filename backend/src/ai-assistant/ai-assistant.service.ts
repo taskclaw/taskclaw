@@ -362,9 +362,7 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
     }
   }
 
-  private async getAvatarTools(
-    accountId: string,
-  ): Promise<DynamicStructuredTool[]> {
+  private async getAvatarTools(accountId: string): Promise<DynamicStructuredTool[]> {
     const tools: DynamicStructuredTool[] = [];
 
     try {
@@ -427,9 +425,7 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
               tools.push(createElevenLabsCloneVoiceTool(apiKey));
             }
           } catch (err: any) {
-            this.logger.warn(
-              `Failed to decrypt ElevenLabs credentials: ${err.message}`,
-            );
+            this.logger.warn(`Failed to decrypt ElevenLabs credentials: ${err.message}`);
           }
         }
       }
@@ -450,16 +446,12 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
               tools.push(createReplicatePollTool(apiKey));
             }
           } catch (err: any) {
-            this.logger.warn(
-              `Failed to decrypt Replicate credentials: ${err.message}`,
-            );
+            this.logger.warn(`Failed to decrypt Replicate credentials: ${err.message}`);
           }
         }
       }
     } catch (e: any) {
-      this.logger.warn(
-        `getAvatarTools failed for account ${accountId}: ${e.message}`,
-      );
+      this.logger.warn(`getAvatarTools failed for account ${accountId}: ${e.message}`);
     }
 
     return tools;

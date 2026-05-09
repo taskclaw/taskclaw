@@ -11,9 +11,7 @@ export function createReplicatePredictTool(
     schema: z.object({
       audio_url: z
         .string()
-        .describe(
-          'Public URL of the audio file (from upload_to_storage or ElevenLabs).',
-        ),
+        .describe('Public URL of the audio file (from upload_to_storage or ElevenLabs).'),
       image_url: z
         .string()
         .describe('Public URL of the face image to animate.'),
@@ -26,37 +24,31 @@ export function createReplicatePredictTool(
         .boolean()
         .optional()
         .default(false)
-        .describe(
-          'Use GFPGAN face enhancer for higher quality. Slower. Default false.',
-        ),
+        .describe('Use GFPGAN face enhancer for higher quality. Slower. Default false.'),
     }),
     func: async ({ audio_url, image_url, still_mode, use_enhancer }) => {
       try {
-        const response = await fetch(
-          'https://api.replicate.com/v1/predictions',
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              version:
-                'a519cc0cfebaaeade068b23899165a11ec76aaa1d2b313d40d214f204ec957a3',
-              input: {
-                source_image: image_url,
-                driven_audio: audio_url,
-                preprocess: 'crop',
-                still_mode: still_mode ?? true,
-                use_enhancer: use_enhancer ?? false,
-                size_of_image: 256,
-                pose_style: 0,
-                facerender: 'facevid2vid',
-                expression_scale: 1.0,
-              },
-            }),
+        const response = await fetch('https://api.replicate.com/v1/predictions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
           },
-        );
+          body: JSON.stringify({
+            version: 'a519cc0cfebaaeade068b23899165a11ec76aaa1d2b313d40d214f204ec957a3',
+            input: {
+              source_image: image_url,
+              driven_audio: audio_url,
+              preprocess: 'crop',
+              still_mode: still_mode ?? true,
+              use_enhancer: use_enhancer ?? false,
+              size_of_image: 256,
+              pose_style: 0,
+              facerender: 'facevid2vid',
+              expression_scale: 1.0,
+            },
+          }),
+        });
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -65,7 +57,7 @@ export function createReplicatePredictTool(
           });
         }
 
-        const result = await response.json();
+        const result = (await response.json()) as any;
 
         return JSON.stringify({
           prediction_id: result.id ?? null,

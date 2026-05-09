@@ -244,3 +244,18 @@
   animation: delete-pulse 0.5s ease-out forwards;
   pointer-events: none;
 }
+
+/* Cockpit panel scrollbar */
+.custom-cockpit-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.custom-cockpit-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-cockpit-scroll::-webkit-scrollbar-thumb {
+  background: rgba(143, 245, 255, 0.08);
+  border-radius: 10px;
+}
+.custom-cockpit-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(143, 245, 255, 0.18);
+}

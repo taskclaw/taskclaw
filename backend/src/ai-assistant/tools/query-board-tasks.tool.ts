@@ -13,9 +13,7 @@ export function createQueryBoardTasksTool(
     schema: z.object({
       board_name: z
         .string()
-        .describe(
-          'The board name to search for (partial match, case-insensitive).',
-        ),
+        .describe('The board name to search for (partial match, case-insensitive).'),
       step_name: z
         .string()
         .optional()
@@ -42,9 +40,7 @@ export function createQueryBoardTasksTool(
           .limit(1);
 
         if (boardError) {
-          return JSON.stringify({
-            error: `Board lookup error: ${boardError.message}`,
-          });
+          return JSON.stringify({ error: `Board lookup error: ${boardError.message}` });
         }
 
         if (!boards || boards.length === 0) {
@@ -66,9 +62,7 @@ export function createQueryBoardTasksTool(
             .limit(1);
 
           if (stepError) {
-            return JSON.stringify({
-              error: `Step lookup error: ${stepError.message}`,
-            });
+            return JSON.stringify({ error: `Step lookup error: ${stepError.message}` });
           }
 
           if (!steps || steps.length === 0) {
@@ -99,9 +93,7 @@ export function createQueryBoardTasksTool(
         const { data: tasks, error: taskError } = await taskQuery.limit(50);
 
         if (taskError) {
-          return JSON.stringify({
-            error: `Task query error: ${taskError.message}`,
-          });
+          return JSON.stringify({ error: `Task query error: ${taskError.message}` });
         }
 
         const formattedTasks = (tasks || []).map((t: any) => ({

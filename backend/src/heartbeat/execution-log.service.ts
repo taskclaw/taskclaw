@@ -41,16 +41,7 @@ export class ExecutionLogService {
     return data;
   }
 
-  async complete(
-    logId: string,
-    update: {
-      status: string;
-      summary?: string;
-      error_details?: string;
-      duration_ms?: number;
-      conversation_id?: string;
-    },
-  ) {
+  async complete(logId: string, update: { status: string; summary?: string; error_details?: string; duration_ms?: number }) {
     const { error } = await this.supabaseAdmin
       .getClient()
       .from('execution_log')
@@ -61,9 +52,7 @@ export class ExecutionLogService {
       .eq('id', logId);
 
     if (error) {
-      this.logger.error(
-        `Failed to update execution log ${logId}: ${error.message}`,
-      );
+      this.logger.error(`Failed to update execution log ${logId}: ${error.message}`);
     }
   }
 

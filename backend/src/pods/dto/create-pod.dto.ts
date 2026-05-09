@@ -39,4 +39,8 @@ export class CreatePodDto {
   @IsNumber()
   @IsOptional()
   position?: number;
+
+  @IsNumber()
+  @IsOptional()
+  autonomy_level?: number;
 }

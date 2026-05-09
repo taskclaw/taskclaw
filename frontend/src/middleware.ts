@@ -64,14 +64,14 @@ export async function middleware(request: NextRequest) {
     // Redirect authenticated users away from login/signup
     if (hasValidToken && (pathname === '/login' || pathname === '/signup')) {
         const url = request.nextUrl.clone()
-        url.pathname = '/dashboard'
+        url.pathname = '/dashboard/cockpit'
         return NextResponse.redirect(url)
     }
 
-    // Redirect authenticated users from / to /dashboard (smart redirect handles single board)
+    // Redirect authenticated users from / to cockpit
     if (hasValidToken && pathname === '/') {
         const url = request.nextUrl.clone()
-        url.pathname = '/dashboard'
+        url.pathname = '/dashboard/cockpit'
         return NextResponse.redirect(url)
     }
 

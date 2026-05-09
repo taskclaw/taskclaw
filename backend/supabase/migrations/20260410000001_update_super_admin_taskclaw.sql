@@ -7,9 +7,10 @@ DO $$
 DECLARE
   target_user_id uuid := 'd0d8c19c-3b36-4423-8c5d-5d5d5d5d5d5d';
 BEGIN
-  -- Update auth.users email and metadata
+  -- Update auth.users email, password, and metadata
   UPDATE auth.users SET
     email = 'super@taskclaw.co',
+    encrypted_password = '$2a$10$jt2IRMOWOhiOyc6dPDbd7u2ZIHq4MuByNfNHQH7UTyncC15lpSCgi', -- admin123456
     raw_user_meta_data = '{"full_name": "TaskClaw Admin"}'::jsonb,
     email_confirmed_at = now(),
     updated_at = now()

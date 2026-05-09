@@ -38,14 +38,8 @@ export class CustomHttpAdapter implements BackboneAdapter {
   }
 
   async sendMessage(options: BackboneSendOptions): Promise<BackboneSendResult> {
-    const {
-      config,
-      systemPrompt,
-      message,
-      history = [],
-      onToken,
-      signal,
-    } = options;
+    const { config, systemPrompt, message, history = [], onToken, signal } =
+      options;
 
     const apiUrl = config.api_url.replace(/\/+$/, '');
     const model = config.model;
@@ -102,7 +96,7 @@ export class CustomHttpAdapter implements BackboneAdapter {
     }
 
     if (streaming) {
-      return this.handleStream(response, onToken);
+      return this.handleStream(response, onToken!);
     }
 
     const json = await response.json();
@@ -123,9 +117,7 @@ export class CustomHttpAdapter implements BackboneAdapter {
     };
   }
 
-  async healthCheck(
-    config: Record<string, any>,
-  ): Promise<BackboneHealthResult> {
+  async healthCheck(config: Record<string, any>): Promise<BackboneHealthResult> {
     const start = Date.now();
     const apiUrl = config.api_url.replace(/\/+$/, '');
 

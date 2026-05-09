@@ -33,17 +33,13 @@ export class BackboneHealthService {
       .eq('is_active', true);
 
     if (error) {
-      this.logger.error(
-        `Failed to load connections for health check: ${error.message}`,
-      );
+      this.logger.error(`Failed to load connections for health check: ${error.message}`);
       return;
     }
 
     if (!rows || rows.length === 0) return;
 
-    this.logger.debug(
-      `Running health checks for ${rows.length} backbone connections`,
-    );
+    this.logger.debug(`Running health checks for ${rows.length} backbone connections`);
 
     const results = await Promise.allSettled(
       rows.map((row) => this.checkOne(row)),
@@ -62,7 +58,9 @@ export class BackboneHealthService {
    * Check a single connection and persist the result.
    * Exposed publicly so the controller can trigger a verify.
    */
-  async checkOne(connection: any): Promise<'healthy' | 'degraded' | 'down'> {
+  async checkOne(
+    connection: any,
+  ): Promise<'healthy' | 'degraded' | 'down'> {
     try {
       if (!this.registry.has(connection.backbone_type)) {
         await this.connections.updateHealth(
@@ -84,14 +82,22 @@ export class BackboneHealthService {
           : 'healthy'
         : 'down';
 
-      await this.connections.updateHealth(connection.id, status, result.error);
+      await this.connections.updateHealth(
+        connection.id,
+        status,
+        result.error,
+      );
 
       return status;
     } catch (err) {
       this.logger.error(
         `Health check failed for connection ${connection.id}: ${err.message}`,
       );
-      await this.connections.updateHealth(connection.id, 'down', err.message);
+      await this.connections.updateHealth(
+        connection.id,
+        'down',
+        err.message,
+      );
       return 'down';
     }
   }

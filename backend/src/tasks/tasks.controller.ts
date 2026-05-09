@@ -245,4 +245,40 @@ export class TasksController {
       req.accessToken,
     );
   }
+
+  @Post(':id/report-blocker')
+  @ApiOperation({ summary: 'Report a blocker on a task — escalates to cockpit timeline' })
+  reportBlocker(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('id') id: string,
+    @Body() body: {
+      reason: string;
+      blocker_type?: 'dependency' | 'external_tool' | 'missing_data' | 'human_required';
+      suggested_resolution?: string;
+    },
+  ) {
+    return this.tasksService.reportBlocker(
+      req.user.id,
+      accountId,
+      id,
+      body,
+      req.accessToken,
+    );
+  }
+
+  @Post(':id/resolve-blocker')
+  @ApiOperation({ summary: 'Resolve a blocker on a task, restoring it to in_progress' })
+  resolveBlocker(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Param('id') id: string,
+  ) {
+    return this.tasksService.resolveBlocker(
+      req.user.id,
+      accountId,
+      id,
+      req.accessToken,
+    );
+  }
 }

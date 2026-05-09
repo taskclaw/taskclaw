@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import {
   MessageCircle,
   Plus,
@@ -15,6 +16,7 @@ import {
   Trash2,
   Edit2,
   AlertTriangle,
+  Bell,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -25,11 +27,16 @@ import {
   sendMessage as sendMessageAction,
   deleteConversation as deleteConversationAction,
   updateConversationTitle as updateTitleAction,
+  getAccountId as getAccountIdAction,
+  getAuthTokenForClient,
 } from './actions';
 import { getAiProviderConfig } from '@/app/dashboard/settings/ai-provider/actions';
 import { toast } from 'sonner';
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog';
 import { cn } from '@/lib/utils';
+import { DAGApprovalCard } from '@/components/orchestration/dag-approval-card';
+import { OrchestrationTimelineLive } from '@/components/orchestration/orchestration-timeline-live';
+import { useOrchestrationEvents, type ApprovalRequestedEvent } from '@/hooks/use-orchestration-events';
 
 interface Conversation {
   id: string;
@@ -69,6 +76,33 @@ export default function ChatPage() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Orchestration state
+  const [accountId, setAccountId] = useState<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequestedEvent[]>([]);
+  const [activeOrchestrationId, setActiveOrchestrationId] = useState<string | null>(null);
+
+  // Load account ID and auth token on mount
+  useEffect(() => {
+    getAccountIdAction().then(setAccountId);
+    getAuthTokenForClient().then(setAuthToken);
+  }, []);
+
+  // Poll for pending orchestration approvals
+  const handleApprovalRequested = useCallback((event: ApprovalRequestedEvent) => {
+    setPendingApprovals(prev => {
+      if (prev.some(a => a.orchestrationId === event.orchestrationId)) return prev;
+      toast('Orchestration approval required', { description: event.goal });
+      return [...prev, event];
+    });
+  }, []);
+
+  const { pendingCount } = useOrchestrationEvents({
+    accountId,
+    authToken,
+    onApprovalRequested: handleApprovalRequested,
+  });
 
   // Load conversations and check AI config on mount
   useEffect(() => {
@@ -354,26 +388,36 @@ export default function ChatPage() {
                     </p>
                   )}
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={async () => {
-                    const newTitle = prompt(
-                      'Enter new title:',
-                      currentConversation.title
-                    );
-                    if (newTitle && currentConversation) {
-                      const result = await updateTitleAction(currentConversation.id, newTitle);
-                      if (!result.error) {
-                        setCurrentConversation({ ...currentConversation, title: newTitle });
-                        await loadConversations();
+                <div className="flex items-center gap-2">
+                  {pendingCount > 0 && (
+                    <div className="relative">
+                      <Bell className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+                      <Badge className="absolute -top-2 -right-2 h-4 w-4 p-0 flex items-center justify-center text-[10px] bg-yellow-500 text-white border-0">
+                        {pendingCount}
+                      </Badge>
+                    </div>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      const newTitle = prompt(
+                        'Enter new title:',
+                        currentConversation.title
+                      );
+                      if (newTitle && currentConversation) {
+                        const result = await updateTitleAction(currentConversation.id, newTitle);
+                        if (!result.error) {
+                          setCurrentConversation({ ...currentConversation, title: newTitle });
+                          await loadConversations();
+                        }
                       }
-                    }
-                  }}
-                >
-                  <Edit2 className="h-4 w-4 mr-2" />
-                  Rename
-                </Button>
+                    }}
+                  >
+                    <Edit2 className="h-4 w-4 mr-2" />
+                    Rename
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -424,6 +468,49 @@ export default function ChatPage() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Inline DAG approval cards — shown below messages */}
+                  {pendingApprovals.map((approval) => (
+                    <div key={approval.orchestrationId} className="flex justify-start">
+                      <div className="w-full max-w-[90%]">
+                        <DAGApprovalCard
+                          orchestrationId={approval.orchestrationId}
+                          goal={approval.goal}
+                          tasks={approval.tasks}
+                          riskLevel={approval.riskLevel}
+                          estimatedDuration={approval.estimatedDuration}
+                          accountId={accountId ?? undefined}
+                          authToken={authToken}
+                          onApprove={() => {
+                            setActiveOrchestrationId(approval.orchestrationId);
+                            setPendingApprovals(prev =>
+                              prev.filter(a => a.orchestrationId !== approval.orchestrationId)
+                            );
+                          }}
+                          onReject={() => {
+                            setPendingApprovals(prev =>
+                              prev.filter(a => a.orchestrationId !== approval.orchestrationId)
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Orchestration timeline — shown while DAG is running */}
+                  {activeOrchestrationId && accountId && (
+                    <div className="flex justify-start">
+                      <div className="w-full max-w-[90%]">
+                        <OrchestrationTimelineLive
+                          orchestrationId={activeOrchestrationId}
+                          accountId={accountId}
+                          authToken={authToken}
+                          onComplete={() => setActiveOrchestrationId(null)}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div ref={messagesEndRef} />
                 </div>
               )}

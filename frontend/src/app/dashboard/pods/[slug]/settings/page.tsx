@@ -6,6 +6,7 @@ import { usePod, useUpdatePod, useDeletePod } from '@/hooks/use-pods'
 import { ExecutionHistoryPanel } from '@/components/pods/execution-history-panel'
 import { HeartbeatConfigForm } from '@/components/pods/heartbeat-config-form'
 import { ConfirmDeleteDialog } from '@/components/confirm-delete-dialog'
+import { AutonomyDial } from '@/components/orchestration/autonomy-dial'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
@@ -139,6 +140,7 @@ export default function PodSettingsPage({ params }: { params: Promise<{ slug: st
                 <Tabs defaultValue="general">
                     <TabsList>
                         <TabsTrigger value="general">General</TabsTrigger>
+                        <TabsTrigger value="autonomy">Autonomy</TabsTrigger>
                         <TabsTrigger value="heartbeat">Heartbeat</TabsTrigger>
                         <TabsTrigger value="execution-log">Execution Log</TabsTrigger>
                     </TabsList>
@@ -215,6 +217,16 @@ export default function PodSettingsPage({ params }: { params: Promise<{ slug: st
                         </div>
                     </TabsContent>
 
+                    <TabsContent value="autonomy" className="pt-4 space-y-4">
+                        <div>
+                            <h3 className="text-sm font-semibold mb-1">Autonomy Level</h3>
+                            <p className="text-xs text-muted-foreground mb-4">
+                                Control how independently this pod&apos;s AI agent operates.
+                            </p>
+                            <AutonomyDialWrapper pod={pod} />
+                        </div>
+                    </TabsContent>
+
                     <TabsContent value="heartbeat" className="pt-4">
                         <HeartbeatConfigForm podId={pod.id} />
                     </TabsContent>
@@ -234,5 +246,30 @@ export default function PodSettingsPage({ params }: { params: Promise<{ slug: st
                 loading={deleteLoading}
             />
         </div>
+    )
+}
+
+// ── AutonomyDialWrapper ─────────────────────────────────────────────────────
+// Wraps AutonomyDial with useUpdatePod mutation.
+
+function AutonomyDialWrapper({ pod }: { pod: { id: string; account_id: string; autonomy_level?: number } }) {
+    const updatePod = useUpdatePod()
+    const [currentLevel, setCurrentLevel] = useState(pod.autonomy_level ?? 1)
+
+    const handleLevelChange = async (level: number) => {
+        await updatePod.mutateAsync({
+            podId: pod.id,
+            payload: { autonomy_level: level },
+        })
+        setCurrentLevel(level)
+        toast.success('Autonomy level updated')
+    }
+
+    return (
+        <AutonomyDial
+            currentLevel={currentLevel}
+            onLevelChange={handleLevelChange}
+            saving={updatePod.isPending}
+        />
     )
 }

@@ -6,6 +6,7 @@ import { registerConversationTools } from './tools/conversation-tools.js';
 import { registerSkillTools } from './tools/skill-tools.js';
 import { registerIntegrationTools } from './tools/integration-tools.js';
 import { registerAccountTools } from './tools/account-tools.js';
+import { registerAgentTools } from './tools/agent-tools.js';
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({
@@ -21,6 +22,7 @@ export function createMcpServer(): McpServer {
   registerSkillTools(server);
   registerIntegrationTools(server);
   registerAccountTools(server);
+  registerAgentTools(server); // F11: Agent CRUD MCP tools
 
   return server;
 }

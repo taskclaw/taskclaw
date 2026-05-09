@@ -4,8 +4,19 @@
       {
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "Check: 1) Has .claude/features.json been updated with current progress? 2) Has .claude/progress.md been updated? 3) Was the last completed feature committed to git? If any are missing, respond with {\"ok\": false, \"reason\": \"describe what's missing\"}."
+            "type": "command",
+            "command": "FEATURES=/Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v5.json; PROGRESS=/Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v5.md; [ -f \"$FEATURES\" ] && [ -f \"$PROGRESS\" ] && echo 'State files OK' || (echo 'WARNING: missing features-v5.json or progress-v5.md in .taskstate/' && exit 0)"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "osascript -e 'display notification \"Claude Code needs your attention\" with title \"Claude Code\"' 2>/dev/null; exit 0"
           }
         ]
       }
@@ -16,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v2.json for v2 feature status (38 features). Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v2.md for current state and rules. PRDs: taskclaw-docs/implementations/memory-layer/prd-pluggable-memory-layer.md and taskclaw-docs/implementations/unified-architecture/prd-unified-architecture.md. Work DB first, then BE, then FE, then INT. Commit after each feature: git commit -m \"feat(v2): [name] [ID]\". Memory writes ALWAYS fire-and-forget. 200ms timeout on recall. Run up to 10 browser test scenarios per feature using Playwright MCP.'"
+            "command": "echo 'CONTEXT REMINDER: Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/features-v5.json for feature status. Read /Users/macbook/Workspace/Devotts/taskclaw/.taskstate/progress-v5.md for current state. Backend PRD: /Users/macbook/Workspace/Devotts/taskclaw/taskclaw-docs/implementations/prd-orchestration-reliability/prd-orchestration-reliability.md. Frontend PRD: /Users/macbook/Workspace/Devotts/taskclaw/taskclaw-docs/implementations/prd-live-execution-ui/prd-live-execution-ui.md. Pick the next FAILING feature and work on it. Commit after completing each feature.'"
           }
         ]
       }

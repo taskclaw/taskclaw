@@ -12,9 +12,11 @@ import {
  * Where in the resolution cascade the backbone was found.
  */
 export type ResolvedFrom =
+  | 'conversation'
   | 'task'
   | 'step'
   | 'board'
+  | 'agent'
   | 'category'
   | 'pod'
   | 'account_default'
@@ -35,7 +37,9 @@ export interface BackboneRouterSendOptions {
   stepId?: string;
   /** Optional: narrow resolution to a specific board */
   boardId?: string;
-  /** Optional: narrow resolution to a specific category */
+  /** Optional: narrow resolution to a specific agent */
+  agentId?: string;
+  /** Optional: narrow resolution to a specific category (legacy) */
   categoryId?: string;
   /** Optional: narrow resolution to a specific pod */
   podId?: string;
@@ -67,15 +71,18 @@ export class BackboneRouterService {
    */
   async resolve(
     accountId: string,
-    options?: {
-      taskId?: string;
-      stepId?: string;
-      boardId?: string;
-      categoryId?: string;
-      podId?: string;
-    },
+    options?: { taskId?: string; stepId?: string; boardId?: string; categoryId?: string; agentId?: string; podId?: string; conversationBackboneId?: string },
   ): Promise<ResolveResult> {
     const client = this.supabaseAdmin.getClient();
+
+    // -1. Conversation-pinned backbone (explicit user selection, highest priority)
+    if (options?.conversationBackboneId) {
+      const result = await this.loadConnection(
+        options.conversationBackboneId,
+        'conversation',
+      );
+      if (result) return result;
+    }
 
     // 0. Task-level override (highest priority)
     if (options?.taskId) {
@@ -128,7 +135,24 @@ export class BackboneRouterService {
       }
     }
 
-    // 3. Category-level override
+    // 3. Agent-level override (new — replaces category level for assigned tasks)
+    if (options?.agentId) {
+      const { data: agent } = await client
+        .from('agents')
+        .select('backbone_connection_id')
+        .eq('id', options.agentId)
+        .maybeSingle();
+
+      if (agent?.backbone_connection_id) {
+        const result = await this.loadConnection(
+          agent.backbone_connection_id,
+          'agent',
+        );
+        if (result) return result;
+      }
+    }
+
+    // 3b. Category-level override (legacy — kept for backward compat during migration)
     if (options?.categoryId) {
       const { data: category } = await client
         .from('categories')
@@ -205,6 +229,7 @@ export class BackboneRouterService {
       taskId: options.taskId,
       stepId: options.stepId,
       boardId: options.boardId,
+      agentId: options.agentId,
       categoryId: options.categoryId,
       podId: options.podId,
     });
@@ -217,7 +242,7 @@ export class BackboneRouterService {
     let systemPrompt = options.sendOptions.systemPrompt;
     if (resolved.adapter.transformSystemPrompt) {
       systemPrompt = resolved.adapter.transformSystemPrompt(
-        systemPrompt,
+        systemPrompt ?? '',
         resolved.config,
       );
     }
@@ -233,7 +258,7 @@ export class BackboneRouterService {
       const skillBlock = skills
         .map((s) => `- ${s.name}: ${s.description}`)
         .join('\n');
-      systemPrompt += `\n\nAvailable skills:\n${skillBlock}`;
+      systemPrompt = (systemPrompt ?? '') + `\n\nAvailable skills:\n${skillBlock}`;
       skills = undefined;
     }
 

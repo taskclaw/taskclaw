@@ -101,7 +101,6 @@ The backend follows NestJS module-based architecture. Each module is a self-cont
 | Module | Path | Purpose |
 |---|---|---|
 | **BoardsModule** | `src/boards/` | Multi-board workflow engine. Manages `board_templates` (shareable JSON manifests), `board_instances` (user's active boards), and `board_steps` (pipeline stages/columns with AI config). Templates can be installed (creating a snapshot), exported, and imported as bundles |
-| **BoardRoutingModule** | `src/board-routing/` | Goal decomposition, DAG execution engine, board routing logic. `CoordinatorService` decomposes goals via AI, `DagApprovalService` manages human approval gate, `DAGExecutorService` runs tasks with dependency cascade |
 
 ### Cloud-Only Modules (`ee/`)
 
@@ -246,31 +245,6 @@ User sends message in /dashboard/chat
     ← Stream or return response
   ← Display in chat UI
 ```
-
-### DAG Execution Flow (Goal Decomposition)
-
-```
-User submits a Goal in Pod Chat
-  → CoordinatorService calls AI backbone to decompose the goal
-    → AI returns a structured plan: tasks + dependency edges
-      → DagApprovalService stores the plan in task_dags + task_dependencies
-        → Human reviews and approves the DAG in the UI
-          → DAGExecutorService begins execution:
-            - Identifies root tasks (no upstream dependencies)
-            - Dispatches root tasks to AI backbone in parallel
-            - On task success: marks task complete, checks downstream tasks
-              - If all upstream deps of a task are complete → enqueue it
-            - On task result = refusal/clarification:
-              - Set task status = needs_review
-              - Hold downstream tasks (do not cascade)
-            - On task error:
-              - Set downstream tasks status = blocked
-            ← Task results stored in tasks.result
-          ← DAG reaches terminal state (all done / needs_review / blocked)
-  ← UI reflects live task statuses with DAG Badge on AI-created tasks
-```
-
-Key services: `CoordinatorService`, `DagApprovalService`, `DAGExecutorService` (all in `src/board-routing/`). Task statuses used: `pending`, `running`, `complete`, `needs_review`, `blocked`.
 
 ## Backbone System
 

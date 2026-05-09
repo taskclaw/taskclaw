@@ -30,7 +30,7 @@ export function createReplicatePollTool(apiKey: string): DynamicStructuredTool {
           });
         }
 
-        const result = await response.json();
+        const result = (await response.json()) as any;
 
         return JSON.stringify({
           status: result.status ?? 'unknown',

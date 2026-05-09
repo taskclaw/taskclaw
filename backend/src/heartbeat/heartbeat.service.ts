@@ -2,7 +2,6 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  Optional,
 } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { SupabaseAdminService } from '../supabase/supabase-admin.service';
@@ -11,34 +10,19 @@ import { ExecutionLogService } from './execution-log.service';
 import { HEARTBEAT_QUEUE_NAME } from './heartbeat-queue.module';
 import { CreateHeartbeatDto } from './dto/create-heartbeat.dto';
 import { UpdateHeartbeatDto } from './dto/update-heartbeat.dto';
-import { BackboneRouterService } from '../backbone/backbone-router.service';
-
-// PilotService is injected lazily to avoid circular dependency at module load time
-
-type PilotServiceLike = {
-  runPodPilot(accountId: string, podId: string): Promise<any>;
-};
+import { BACKBONE_DISPATCH_QUEUE_NAME } from '../backbone/backbone-dispatch-queue.module';
 
 @Injectable()
 export class HeartbeatService {
   private readonly logger = new Logger(HeartbeatService.name);
   private heartbeatQueue?: Queue;
-  private pilotService?: PilotServiceLike;
+  private backboneDispatchQueue?: Queue;
 
   constructor(
     private readonly supabaseAdmin: SupabaseAdminService,
     private readonly circuitBreaker: CircuitBreakerService,
     private readonly executionLog: ExecutionLogService,
-    private readonly backboneRouter: BackboneRouterService,
   ) {}
-
-  /**
-   * BE15: Allow PilotModule to inject PilotService after boot to avoid circular deps.
-   */
-  setPilotService(pilotService: PilotServiceLike) {
-    this.pilotService = pilotService;
-    this.logger.log('PilotService wired into HeartbeatService.');
-  }
 
   /**
    * Called by HeartbeatModule.onModuleInit to inject the BullMQ queue
@@ -48,6 +32,16 @@ export class HeartbeatService {
   setBullQueue(queue: Queue) {
     this.heartbeatQueue = queue;
     this.logger.log('BullMQ queue attached to HeartbeatService.');
+  }
+
+  /**
+   * Called by HeartbeatModule.onModuleInit to inject the backbone-dispatch queue
+   * if Redis is available. Used by B7 to route heartbeat execution through the
+   * backbone-dispatch queue for concurrency control.
+   */
+  setBackboneDispatchQueue(queue: Queue) {
+    this.backboneDispatchQueue = queue;
+    this.logger.log('Backbone dispatch queue attached to HeartbeatService.');
   }
 
   async initSchedules() {
@@ -116,7 +110,9 @@ export class HeartbeatService {
       .order('created_at', { ascending: false });
 
     if (error) {
-      throw new Error(`Failed to fetch heartbeat configs: ${error.message}`);
+      throw new Error(
+        `Failed to fetch heartbeat configs: ${error.message}`,
+      );
     }
 
     return data;
@@ -146,7 +142,8 @@ export class HeartbeatService {
         name: dto.name,
         schedule: dto.schedule ?? '0 */4 * * *',
         prompt:
-          dto.prompt ?? 'Review pending tasks and take appropriate actions.',
+          dto.prompt ??
+          'Review pending tasks and take appropriate actions.',
         is_active: dto.is_active ?? false,
         dry_run: dto.dry_run ?? false,
         max_tasks_per_run: dto.max_tasks_per_run ?? 5,
@@ -157,7 +154,9 @@ export class HeartbeatService {
       .single();
 
     if (error) {
-      throw new Error(`Failed to create heartbeat config: ${error.message}`);
+      throw new Error(
+        `Failed to create heartbeat config: ${error.message}`,
+      );
     }
 
     // Schedule if active
@@ -183,7 +182,9 @@ export class HeartbeatService {
       .single();
 
     if (error) {
-      throw new Error(`Failed to update heartbeat config: ${error.message}`);
+      throw new Error(
+        `Failed to update heartbeat config: ${error.message}`,
+      );
     }
 
     // Re-schedule if schedule or active state changed
@@ -214,7 +215,9 @@ export class HeartbeatService {
       .eq('id', id);
 
     if (error) {
-      throw new Error(`Failed to delete heartbeat config: ${error.message}`);
+      throw new Error(
+        `Failed to delete heartbeat config: ${error.message}`,
+      );
     }
 
     return { message: 'Heartbeat config deleted successfully' };
@@ -235,7 +238,9 @@ export class HeartbeatService {
       .single();
 
     if (error) {
-      throw new Error(`Failed to toggle heartbeat config: ${error.message}`);
+      throw new Error(
+        `Failed to toggle heartbeat config: ${error.message}`,
+      );
     }
 
     await this.scheduleConfig(data);
@@ -257,13 +262,53 @@ export class HeartbeatService {
     return { message: 'Heartbeat triggered (direct)' };
   }
 
+  /**
+   * B7: Enqueues heartbeat execution via backbone-dispatch queue for concurrency control.
+   * When backbone-dispatch queue is available, adds a job with priority 5.
+   * Falls back to direct execution if the queue is not available.
+   *
+   * This method is called by HeartbeatProcessor when a scheduled heartbeat fires.
+   */
   async executeHeartbeat(configId: string) {
+    if (this.backboneDispatchQueue) {
+      const idempotencyKey = `heartbeat-exec-${configId}-${Date.now()}`;
+      await this.backboneDispatchQueue.add(
+        'dispatch',
+        {
+          type: 'heartbeat',
+          heartbeatConfigId: configId,
+          priority: 5,
+          idempotencyKey,
+        },
+        {
+          priority: 5,
+          jobId: idempotencyKey,
+        },
+      );
+      this.logger.log(
+        `Heartbeat ${configId} enqueued to backbone-dispatch (priority 5)`,
+      );
+      return;
+    }
+
+    // Fallback: direct execution when backbone-dispatch queue is unavailable
+    this.logger.debug(
+      `backbone-dispatch queue not available — executing heartbeat ${configId} directly`,
+    );
+    await this.executeHeartbeatCore(configId);
+  }
+
+  /**
+   * Core heartbeat execution logic. Called by BackboneDispatchProcessor
+   * (type: 'heartbeat') or directly as fallback.
+   */
+  async executeHeartbeatCore(configId: string) {
     const startTime = Date.now();
     const config = await this.findOne(configId);
 
     // Check circuit breaker
     if (
-      this.circuitBreaker.isOpen(
+      await this.circuitBreaker.isOpen(
         configId,
         config.circuit_breaker_threshold ?? 3,
       )
@@ -332,64 +377,12 @@ export class HeartbeatService {
 
       const { data: tasks } = await tasksQuery;
 
-      // Build task list context for backbone
-      const taskListContext =
-        tasks && tasks.length > 0
-          ? tasks
-              .map(
-                (t: any) =>
-                  `- [${t.priority ?? 'Medium'}] ${t.title} (status: ${t.status ?? 'unknown'})`,
-              )
-              .join('\n')
-          : 'No pending tasks found.';
-
-      let summary: string;
-
-      if (config.dry_run) {
-        summary = `[DRY RUN] Would send: ${taskListContext}`;
-      } else if (config.pilot_enabled && config.pod_id && this.pilotService) {
-        // BE15: Delegate to PilotService when pilot_enabled + pod_id configured
-        try {
-          const pilotResult = await this.pilotService.runPodPilot(
-            config.account_id,
-            config.pod_id,
-          );
-          summary = pilotResult
-            ? `Pilot: ${pilotResult.actions_taken} actions — ${pilotResult.summary}`
-            : `Pilot ran but no active config found for pod ${config.pod_id}`;
-        } catch (pilotErr) {
-          this.logger.warn(
-            `Heartbeat "${config.name}" pilot run failed: ${(pilotErr as Error).message}`,
-          );
-          summary = `Pilot failed: ${(pilotErr as Error).message}`;
-        }
-      } else if (config.prompt) {
-        // Call backbone with task list as user context
-        try {
-          const result = await this.backboneRouter.send({
-            accountId: config.account_id,
-            podId: config.pod_id ?? undefined,
-            boardId: config.board_id ?? undefined,
-            sendOptions: {
-              systemPrompt:
-                'You are an AI task manager. Review the task list and provide actionable insights.',
-              message: config.prompt,
-              history: [{ role: 'user', content: taskListContext }],
-            },
-          });
-          summary = result.text ?? `Processed ${tasks?.length ?? 0} tasks`;
-        } catch (backboneErr) {
-          this.logger.warn(
-            `Heartbeat "${config.name}" backbone call failed: ${(backboneErr as Error).message}`,
-          );
-          summary = `Processed ${tasks?.length ?? 0} tasks (backbone unavailable: ${(backboneErr as Error).message})`;
-        }
-      } else {
-        summary = `Processed ${tasks?.length ?? 0} tasks`;
-      }
+      const summary = config.dry_run
+        ? `[DRY RUN] Would process ${tasks?.length ?? 0} tasks`
+        : `Processed ${tasks?.length ?? 0} tasks`;
 
       // Update config with success
-      this.circuitBreaker.recordSuccess(configId);
+      await this.circuitBreaker.recordSuccess(configId);
 
       await this.supabaseAdmin
         .getClient()
@@ -413,7 +406,7 @@ export class HeartbeatService {
     } catch (err) {
       const errorMessage = (err as Error).message;
 
-      const isOpen = this.circuitBreaker.recordFailure(
+      const isOpen = await this.circuitBreaker.recordFailure(
         configId,
         config.circuit_breaker_threshold ?? 3,
       );

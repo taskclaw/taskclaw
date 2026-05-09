@@ -1,20 +1,12 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, X, Loader2, FileDown, CheckCircle, ExternalLink, BrainCircuit, Play, Brain, Zap } from 'lucide-react'
+import { Send, X, Loader2, FileDown, CheckCircle, ExternalLink, BrainCircuit, Play } from 'lucide-react'
 import { useMemo } from 'react'
 import { getOrCreateConversation, sendMessageBackground, getMessages, saveAiToTask } from '@/app/dashboard/chat/actions'
-import { getBackboneConnections } from '@/app/dashboard/settings/backbones/actions'
 import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { renderMarkdown } from '@/lib/markdown'
-import { getMemoryEntries } from '@/app/dashboard/settings/memory/actions'
-import type { BackboneConnection } from '@/types/backbone'
-import {
-    Popover,
-    PopoverContent,
-    PopoverTrigger,
-} from '@/components/ui/popover'
 
 interface Message {
     id?: string
@@ -44,8 +36,6 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
     const [savingMessageId, setSavingMessageId] = useState<string | null>(null)
     const [savedMessages, setSavedMessages] = useState<Set<string>>(new Set())
     const [syncFeedback, setSyncFeedback] = useState<Record<string, string>>({})
-    const [taskMemories, setTaskMemories] = useState<{ id: string; content: string }[]>([])
-    const [activeBackbone, setActiveBackbone] = useState<BackboneConnection | null>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const inputRef = useRef<HTMLInputElement>(null)
     const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -116,34 +106,6 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
     useEffect(() => {
         return () => stopPolling()
     }, [stopPolling])
-
-    // Fetch active backbone for badge
-    useEffect(() => {
-        getBackboneConnections().then((connections) => {
-            if (!Array.isArray(connections)) return
-            const active = connections.filter((b) => b.is_active)
-            const def = active.find((b) => b.is_default) ?? active[0] ?? null
-            setActiveBackbone(def)
-        }).catch(() => {})
-    }, [])
-
-    // Load task-specific memories (top 5)
-    // NOTE: Depends on BE07 (async memory extraction). Shows pill once memories exist.
-    useEffect(() => {
-        let cancelled = false
-        async function loadMemories() {
-            try {
-                const entries = await getMemoryEntries({ task_id: taskId, limit: 5 })
-                if (!cancelled && Array.isArray(entries)) {
-                    setTaskMemories(entries.map((e) => ({ id: e.id, content: e.content })))
-                }
-            } catch {
-                // API not ready yet — silent fail
-            }
-        }
-        loadMemories()
-        return () => { cancelled = true }
-    }, [taskId])
 
     // Initialize conversation on mount — reuses existing conversation if available.
     // Only depends on taskId to avoid unnecessary re-runs from callback ref changes.
@@ -345,40 +307,6 @@ export function TaskAIChat({ taskId, taskTitle, taskDescription, sourceProvider,
                             <ExternalLink className="w-2.5 h-2.5 inline mr-0.5" />
                             {sourceProvider}
                         </span>
-                    )}
-                    {/* Backbone badge */}
-                    {activeBackbone && (
-                        <span
-                            className="flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium border border-emerald-500/20"
-                            title={`Using backbone: ${activeBackbone.name || activeBackbone.backbone_type}`}
-                        >
-                            <Zap className="w-2.5 h-2.5" />
-                            {activeBackbone.name || activeBackbone.backbone_type}
-                        </span>
-                    )}
-                    {/* Memory indicator pill — shown only when memories exist */}
-                    {taskMemories.length > 0 && (
-                        <Popover>
-                            <PopoverTrigger asChild>
-                                <button className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-600 dark:text-violet-400 hover:bg-violet-500/25 transition-colors">
-                                    <Brain className="w-3 h-3" />
-                                    {taskMemories.length} {taskMemories.length === 1 ? 'memory' : 'memories'}
-                                </button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-72 p-3 text-xs" align="start">
-                                <p className="font-semibold mb-2 text-xs">Task memories</p>
-                                <ul className="space-y-1.5">
-                                    {taskMemories.map((m) => (
-                                        <li
-                                            key={m.id}
-                                            className="text-muted-foreground leading-snug border-b last:border-0 pb-1.5 last:pb-0"
-                                        >
-                                            {m.content.length > 60 ? m.content.slice(0, 60) + '…' : m.content}
-                                        </li>
-                                    ))}
-                                </ul>
-                            </PopoverContent>
-                        </Popover>
                     )}
                 </div>
                 <button

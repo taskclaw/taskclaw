@@ -5,7 +5,7 @@ import {
   BackboneSendResult,
   BackboneHealthResult,
   BackboneMessage,
-  ToolCallRequest,
+  CacheableBlock,
 } from './backbone-adapter.interface';
 
 /**
@@ -43,9 +43,7 @@ export class AnthropicAdapter implements BackboneAdapter {
 
   // ── BackboneAdapter: healthCheck ──
 
-  async healthCheck(
-    config: Record<string, any>,
-  ): Promise<BackboneHealthResult> {
+  async healthCheck(config: Record<string, any>): Promise<BackboneHealthResult> {
     const start = Date.now();
     try {
       const response = await fetch('https://api.anthropic.com/v1/models', {
@@ -80,28 +78,11 @@ export class AnthropicAdapter implements BackboneAdapter {
     this.validateConfig(config);
 
     // Build messages array in Anthropic format
-    const messages: Array<{ role: string; content: any }> = [];
+    const messages: Array<{ role: string; content: string }> = [];
     if (history && history.length > 0) {
       for (const msg of history) {
         if (msg.role === 'system') continue; // system goes in separate field
-        if (msg.role === 'tool') {
-          // Anthropic requires tool results as user messages with tool_result content blocks
-          messages.push({
-            role: 'user',
-            content: [
-              {
-                type: 'tool_result',
-                tool_use_id: msg.tool_call_id,
-                content: msg.content,
-              },
-            ],
-          });
-        } else if (msg.role === 'assistant' && msg.raw_content) {
-          // Preserve raw content blocks (includes tool_use blocks for round-trips)
-          messages.push({ role: 'assistant', content: msg.raw_content });
-        } else {
-          messages.push({ role: msg.role, content: msg.content });
-        }
+        messages.push({ role: msg.role, content: msg.content });
       }
     }
     messages.push({ role: 'user', content: message });
@@ -117,7 +98,16 @@ export class AnthropicAdapter implements BackboneAdapter {
       stream: isStreaming,
     };
 
-    if (systemPrompt) {
+    // F012: Structured system prompt blocks with prompt caching support
+    if (options.systemPromptBlocks && options.isConversational) {
+      // Structured blocks — cacheable ones get cache_control:{type:'ephemeral'}
+      requestBody.system = options.systemPromptBlocks.map((block: CacheableBlock) => ({
+        type: 'text' as const,
+        text: block.text,
+        ...(block.cacheable ? { cache_control: { type: 'ephemeral' } } : {}),
+      }));
+    } else if (systemPrompt) {
+      // Legacy flat string — backward compat
       requestBody.system = systemPrompt;
     }
 
@@ -130,7 +120,7 @@ export class AnthropicAdapter implements BackboneAdapter {
     }
 
     this.logger.log(
-      `[Anthropic] Sending ${messages.length} messages (stream=${isStreaming})`,
+      `[Anthropic] Sending ${messages.length} messages (stream=${isStreaming}, caching=${!!(options.systemPromptBlocks && options.isConversational)})`,
     );
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -139,6 +129,7 @@ export class AnthropicAdapter implements BackboneAdapter {
         'Content-Type': 'application/json',
         'x-api-key': config.api_key,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31', // F012: required for cache_control blocks
       },
       body: JSON.stringify(requestBody),
       signal: signal || AbortSignal.timeout(120000),
@@ -164,21 +155,13 @@ export class AnthropicAdapter implements BackboneAdapter {
   ): Promise<BackboneSendResult> {
     const data = await response.json();
 
-    // Extract text from text blocks
-    const textBlocks = (data.content ?? []).filter(
-      (b: any) => b.type === 'text',
-    );
-    const text = textBlocks.map((b: any) => b.text).join('') || '';
+    const text =
+      data.content && data.content[0] ? data.content[0].text : '';
 
-    // Extract tool_use blocks as tool calls
-    const toolUseBlocks = (data.content ?? []).filter(
-      (b: any) => b.type === 'tool_use',
-    );
-    const tool_calls: ToolCallRequest[] = toolUseBlocks.map((b: any) => ({
-      id: b.id,
-      name: b.name,
-      input: b.input,
-    }));
+    // F012: Parse cache stats from usage field
+    const hasCacheStats =
+      data.usage?.cache_creation_input_tokens !== undefined ||
+      data.usage?.cache_read_input_tokens !== undefined;
 
     return {
       text,
@@ -188,11 +171,20 @@ export class AnthropicAdapter implements BackboneAdapter {
             prompt_tokens: data.usage.input_tokens,
             completion_tokens: data.usage.output_tokens,
             total_tokens:
-              (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0),
+              (data.usage.input_tokens || 0) +
+              (data.usage.output_tokens || 0),
+          }
+        : undefined,
+      cacheStats: hasCacheStats
+        ? {
+            cache_creation_input_tokens:
+              data.usage?.cache_creation_input_tokens ?? 0,
+            cache_read_input_tokens:
+              data.usage?.cache_read_input_tokens ?? 0,
+            input_tokens: data.usage?.input_tokens ?? 0,
           }
         : undefined,
       raw: data,
-      ...(tool_calls.length > 0 ? { tool_calls } : {}),
     };
   }
 
@@ -211,6 +203,7 @@ export class AnthropicAdapter implements BackboneAdapter {
     const decoder = new TextDecoder();
     let fullText = '';
     let usage: any = null;
+    let cacheStats: any = null;
     let model = requestModel;
     let buffer = '';
 
@@ -246,6 +239,19 @@ export class AnthropicAdapter implements BackboneAdapter {
                 usage = {
                   prompt_tokens: event.message.usage.input_tokens,
                 };
+                // F012: Capture cache stats from streaming message_start
+                if (
+                  event.message.usage.cache_creation_input_tokens !== undefined ||
+                  event.message.usage.cache_read_input_tokens !== undefined
+                ) {
+                  cacheStats = {
+                    cache_creation_input_tokens:
+                      event.message.usage.cache_creation_input_tokens ?? 0,
+                    cache_read_input_tokens:
+                      event.message.usage.cache_read_input_tokens ?? 0,
+                    input_tokens: event.message.usage.input_tokens ?? 0,
+                  };
+                }
               }
             }
 
@@ -271,6 +277,7 @@ export class AnthropicAdapter implements BackboneAdapter {
       text: fullText,
       model,
       usage: usage || undefined,
+      cacheStats: cacheStats || undefined,
     };
   }
 }

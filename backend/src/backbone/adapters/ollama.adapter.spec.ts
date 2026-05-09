@@ -12,10 +12,7 @@ describe('OllamaAdapter', () => {
   });
 
   it.skip('should pass health check (requires Ollama running)', async () => {
-    const result = await adapter.healthCheck({
-      api_url: OLLAMA_URL,
-      model: OLLAMA_MODEL,
-    });
+    const result = await adapter.healthCheck({ api_url: OLLAMA_URL, model: OLLAMA_MODEL });
     expect(result.healthy).toBe(true);
   });
 
@@ -24,9 +21,7 @@ describe('OllamaAdapter', () => {
   });
 
   it('should validate config - missing model', () => {
-    expect(() =>
-      adapter.validateConfig({ api_url: 'http://localhost:11434' }),
-    ).toThrow();
+    expect(() => adapter.validateConfig({ api_url: 'http://localhost:11434' })).toThrow();
   });
 
   it('should have slug = ollama', () => {

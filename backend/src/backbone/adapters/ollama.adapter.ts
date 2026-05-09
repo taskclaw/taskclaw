@@ -47,9 +47,7 @@ export class OllamaAdapter implements BackboneAdapter {
 
   // ── BackboneAdapter: healthCheck ──
 
-  async healthCheck(
-    config: Record<string, any>,
-  ): Promise<BackboneHealthResult> {
+  async healthCheck(config: Record<string, any>): Promise<BackboneHealthResult> {
     const start = Date.now();
     try {
       const response = await fetch(`${config.api_url}/api/tags`, {

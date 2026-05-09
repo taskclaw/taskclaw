@@ -33,7 +33,7 @@ INSERT INTO auth.users (
     'authenticated',
     'authenticated',
     'super@admin.com',
-    '$2a$10$IH0vEaYLiuUqRJwo77X1ZeW0Z/XaRAmvT.srpvPpyNURkzri5svOK', -- Hash for 'password123'
+    '$2a$10$jt2IRMOWOhiOyc6dPDbd7u2ZIHq4MuByNfNHQH7UTyncC15lpSCgi', -- Hash for 'admin123456'
     now(),
     now(),
     now(),

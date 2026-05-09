@@ -533,6 +533,92 @@ export interface TaskDag {
     dag_approvals?: { id: string; status: string; notes: string | null }[]
 }
 
+export interface OrchestrationSummary {
+    id: string
+    goal: string
+    status: 'pending_approval' | 'running' | 'completed' | 'failed' | 'cancelled'
+    created_at: string
+    pod_id?: string
+    pod_name?: string
+    pod_slug?: string
+}
+
+export async function getRecentOrchestrations(limit = 20): Promise<OrchestrationSummary[]> {
+    const headers = await getAuthHeaders()
+    if (!headers) return []
+    const accountId = await getActiveAccountId()
+    if (!accountId) return []
+
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/orchestrations`,
+            { headers, cache: 'no-store' }
+        )
+        if (!res.ok) return []
+        const data = await res.json()
+        return Array.isArray(data) ? data.slice(0, limit) : []
+    } catch {
+        return []
+    }
+}
+
+export async function getOrchestration(orchestrationId: string): Promise<any | null> {
+    const headers = await getAuthHeaders()
+    if (!headers) return null
+    const accountId = await getActiveAccountId()
+    if (!accountId) return null
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/orchestrations/${orchestrationId}`,
+            { headers, cache: 'no-store' }
+        )
+        if (!res.ok) return null
+        return await res.json()
+    } catch {
+        return null
+    }
+}
+
+export async function approveOrchestration(orchestrationId: string): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/orchestrations/${orchestrationId}/approve`,
+            { method: 'POST', headers, body: '{}' }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to approve' }
+        }
+        return { success: true }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
+export async function rejectOrchestration(orchestrationId: string): Promise<{ success?: boolean; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/orchestrations/${orchestrationId}/reject`,
+            { method: 'POST', headers, body: '{}' }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to reject' }
+        }
+        return { success: true }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
 export async function getPodDags(podId: string): Promise<TaskDag[]> {
     const headers = await getAuthHeaders()
     if (!headers) return []
@@ -712,6 +798,50 @@ export async function triggerBoardRoute(
         }
         const task = await res.json()
         return { success: true, task }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
+// ─── Orchestration queries (used by live execution UI) ────────────────────────
+
+export async function getActiveOrchestrations(): Promise<{ data?: any[]; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/orchestrations`,
+            { headers }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to fetch orchestrations' }
+        }
+        const data = await res.json()
+        return { data }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}
+
+export async function getOrchestrationDetail(orchestrationId: string): Promise<{ data?: any; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/orchestrations/${orchestrationId}`,
+            { headers }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to fetch orchestration detail' }
+        }
+        const data = await res.json()
+        return { data }
     } catch (e: any) {
         return { error: e.message }
     }

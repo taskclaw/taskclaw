@@ -66,58 +66,6 @@ A unit of work. Unchanged. Lives in a Column on a Board in a Pod in a Workspace.
 
 ---
 
-## Goal & DAG (Goal Decomposition)
-
-### Goal
-A high-level objective the user types into Pod Chat (e.g. "Grow revenue through dental practice software"). Goals live at the Pod level and are the starting point for AI-driven task planning. When the user submits a Goal, the AI decomposes it into a structured task plan (a DAG).
-
-**Data model:** Stored as the user's chat message. The resulting plan is stored in `task_dags`.
-
----
-
-### DAG (Directed Acyclic Graph)
-The structured task plan the AI creates from a Goal. Each node is a task; each directed edge is a dependency ("task B can only start after task A completes"). The graph is acyclic — no circular dependencies. Stored in the `task_dags` table and linked to the Pod that originated the Goal.
-
-**Data model:** Real entity. `task_dags` table. Tasks within the DAG are regular `tasks` rows with their `dag_id` set.
-
----
-
-### Task Dependency
-A directed edge between two tasks in a DAG. The `source_task_id` must complete before `target_task_id` can execute. Stored in the `task_dependencies` table as a (`source_task_id`, `target_task_id`) pair.
-
-**Data model:** `task_dependencies` table.
-
----
-
-### Root Task
-A task in a DAG with no upstream dependencies — the first tasks to execute when the DAG begins running. Root tasks are identified at execution time by finding DAG tasks with no incoming edges.
-
----
-
-### Needs Review
-A task status indicating the AI backbone responded with a refusal or "I need more context" instead of completing the task. The AI output is stored in `tasks.result` but the task is flagged for human review rather than cascading to downstream dependents. A human must inspect and resolve it before the DAG can continue past that node.
-
-**Status value:** `needs_review`
-
----
-
-### Blocked
-A task status indicating an upstream task failed, preventing this task from executing. The task has unresolved upstream dependencies that errored out, so the DAG executor skips it until the upstream issue is resolved.
-
-**Status value:** `blocked`
-
----
-
-### AI Output
-The text result stored in `tasks.result` after an AI backbone executes a task. Visible in the task detail panel's collapsible "AI Output" section. May be the final deliverable (success), a refusal/clarification request (triggers `needs_review`), or absent (task not yet executed).
-
----
-
-### DAG Badge
-A visual indicator displayed on task cards to show that the task was created by AI goal decomposition rather than manually by a user. Helps the human distinguish AI-planned work from manually created tasks on the same board.
-
----
-
 ## Vocabulary rules for the PRD
 
 These should be enforced consistently in copy, UI, API, and documentation:

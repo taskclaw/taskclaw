@@ -13,32 +13,13 @@ import {
     getAllBoards,
 } from '@/app/dashboard/pods/actions'
 import type { CreatePodPayload, UpdatePodPayload } from '@/types/pod'
-import { getSidebarCache, setSidebarCache, clearSidebarCache } from '@/lib/sidebar-cache'
-import type { Pod } from '@/types/pod'
-
-function getActiveAccountId(): string {
-    if (typeof document === 'undefined') return ''
-    const match = document.cookie.match(/(?:^|;\s*)current_account_id=([^;]*)/)
-    return match ? decodeURIComponent(match[1]) : ''
-}
 
 export function usePods() {
-    const accountId = getActiveAccountId()
-    const cached = getSidebarCache<Pod[]>('pods', accountId)
-
     return useQuery({
         queryKey: ['pods'],
-        queryFn: async () => {
-            const data = await getPods()
-            if (accountId && data) {
-                setSidebarCache('pods', accountId, data)
-            }
-            return data
-        },
+        queryFn: getPods,
         staleTime: 30000,
         refetchInterval: 60000,
-        initialData: cached?.data,
-        initialDataUpdatedAt: cached?.updatedAt,
     })
 }
 
@@ -65,7 +46,6 @@ export function useCreatePod() {
     return useMutation({
         mutationFn: (payload: CreatePodPayload) => createPod(payload),
         onSuccess: () => {
-            clearSidebarCache('pods', getActiveAccountId())
             qc.invalidateQueries({ queryKey: ['pods'] })
         },
     })
@@ -77,7 +57,6 @@ export function useUpdatePod() {
         mutationFn: ({ podId, payload }: { podId: string; payload: UpdatePodPayload }) =>
             updatePod(podId, payload),
         onSuccess: () => {
-            clearSidebarCache('pods', getActiveAccountId())
             qc.invalidateQueries({ queryKey: ['pods'] })
         },
     })
@@ -88,7 +67,6 @@ export function useDeletePod() {
     return useMutation({
         mutationFn: deletePod,
         onSuccess: () => {
-            clearSidebarCache('pods', getActiveAccountId())
             qc.invalidateQueries({ queryKey: ['pods'] })
         },
     })
@@ -100,9 +78,6 @@ export function useAssignBoardToPod() {
         mutationFn: ({ boardId, podId }: { boardId: string; podId: string }) =>
             assignBoardToPod(boardId, podId),
         onSuccess: () => {
-            const accountId = getActiveAccountId()
-            clearSidebarCache('boards', accountId)
-            clearSidebarCache('pods', accountId)
             qc.invalidateQueries({ queryKey: ['podBoards'] })
             qc.invalidateQueries({ queryKey: ['boards'] })
         },
@@ -114,9 +89,6 @@ export function useRemoveFromPod() {
     return useMutation({
         mutationFn: (boardId: string) => removeFromPod(boardId),
         onSuccess: () => {
-            const accountId = getActiveAccountId()
-            clearSidebarCache('boards', accountId)
-            clearSidebarCache('pods', accountId)
             qc.invalidateQueries({ queryKey: ['podBoards'] })
             qc.invalidateQueries({ queryKey: ['boards'] })
         },
