@@ -132,7 +132,7 @@ export class MentionExpandService {
     skipRanges: Array<[number, number]>,
   ): { start: number; end: number; match: string; kind: 'mention' | 'task-ref' } | null {
     // Whichever comes first: '@<name>' or 'T-<digits>'.
-    const mentionRe = /(^|[^A-Za-z0-9_])@([A-Za-z][A-Za-z0-9_:.\-]{0,80})/g;
+    const mentionRe = /(^|[^A-Za-z0-9_])@([A-Za-z][A-Za-z0-9_:.-]{0,80})/g;
     const taskRe = /(^|[^A-Za-z0-9_])(T-\d{1,8})\b/g;
 
     mentionRe.lastIndex = from;
