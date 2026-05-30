@@ -122,7 +122,40 @@ cp frontend/.env.example frontend/.env
 docker compose --profile supabase up -d
 ```
 
-See [docs/development.md](./docs/development.md) for the full development setup guide.
+**Self-Hosting on a server (remote host, over HTTP)**
+
+Running on a real server (not `localhost`) needs a few extra steps the quickstart doesn't cover:
+
+1. **Rebuild the frontend on the server.** The published `taskclaw/frontend` image bakes `NEXT_PUBLIC_*` values at build time pointing at `localhost`, so you must rebuild it with your real public URLs:
+
+   ```bash
+   docker build -t taskclaw/frontend:latest \
+     --build-arg NEXT_PUBLIC_SUPABASE_URL=http://<your-server-ip>:7431 \
+     --build-arg NEXT_PUBLIC_API_URL=http://<your-server-ip>:3003 \
+     --build-arg NEXT_PUBLIC_APP_URL=http://<your-server-ip>:3002 \
+     --build-arg NEXT_PUBLIC_SITE_URL=http://<your-server-ip>:3002 \
+     --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key> \
+     ./frontend
+   ```
+
+2. **Set `backend/.env` essentials.** Use strong secrets and point CORS at your host:
+
+   ```bash
+   JWT_SECRET=<strong-random-secret>
+   ENCRYPTION_KEY=<strong-random-secret>
+   POSTGRES_PASSWORD=<strong-random-password>
+   CORS_ORIGIN=http://<your-server-ip>:3002
+   # When self-hosting Supabase (supabase profile):
+   DATABASE_URL=postgres://postgres:<strong-random-password>@db:5432/postgres
+   GOTRUE_URL=http://auth:9999
+   STORAGE_URL=http://kong:8000/storage/v1
+   ```
+
+3. **Over plain HTTP, set `COOKIE_SECURE=false`** in the frontend env. Otherwise the auth session cookie is marked `Secure`, browsers silently drop it, and login never reaches the dashboard. (For production, serve HTTPS instead and leave this at its default.)
+
+4. **First login may need activation.** New signups start as `pending` — set the user's `status='active'` in the DB (or approve via admin) before they can sign in. Live board updates also require the `realtime` service from the `supabase` profile.
+
+See [docs/self-hosting.md](./docs/self-hosting.md) for the full self-hosting guide, and [docs/development.md](./docs/development.md) for the full development setup guide.
 
 ## Upgrading
 

@@ -3,9 +3,24 @@ ALTER TABLE public.skills
   ADD COLUMN IF NOT EXISTS file_attachments JSONB DEFAULT '[]';
 
 -- Create Supabase Storage bucket for skill attachments
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('skill-attachments', 'skill-attachments', false)
-ON CONFLICT (id) DO NOTHING;
+-- fix: older self-hosted storage schemas have no "public" column on
+-- storage.buckets, which made the insert fail on a fresh DB. Only reference the
+-- "public" column when it exists; otherwise insert id+name only.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'storage' AND table_name = 'buckets' AND column_name = 'public'
+  ) THEN
+    INSERT INTO storage.buckets (id, name, public)
+    VALUES ('skill-attachments', 'skill-attachments', false)
+    ON CONFLICT (id) DO NOTHING;
+  ELSE
+    INSERT INTO storage.buckets (id, name)
+    VALUES ('skill-attachments', 'skill-attachments')
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
 
 -- Storage policies for skill-attachments bucket
 CREATE POLICY "Users can upload skill attachments"
