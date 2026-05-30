@@ -27,8 +27,12 @@ CREATE TABLE IF NOT EXISTS token_usage (
   created_at          timestamptz NOT NULL DEFAULT now()
 );
 
+-- fix: date_trunc('day', timestamptz) is STABLE (depends on session TZ), not
+-- IMMUTABLE, so it can't be used in an index expression on a fresh DB. Index the
+-- raw created_at column instead; range scans on account_id+created_at serve the
+-- same per-day dashboard queries.
 CREATE INDEX IF NOT EXISTS idx_token_usage_account_day
-  ON token_usage(account_id, date_trunc('day', created_at));
+  ON token_usage(account_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_token_usage_agent
   ON token_usage(agent_id, created_at DESC)

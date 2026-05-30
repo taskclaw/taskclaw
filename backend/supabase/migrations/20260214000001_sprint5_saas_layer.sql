@@ -8,7 +8,24 @@ ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS onboarding_completed boolea
 ALTER TABLE public.plans ADD COLUMN IF NOT EXISTS stripe_price_id text;
 
 -- 3. Create the storage bucket for knowledge attachments
-INSERT INTO storage.buckets (id, name, public) VALUES ('knowledge-attachments', 'knowledge-attachments', false) ON CONFLICT (id) DO NOTHING;
+-- fix: older self-hosted storage schemas have no "public" column on
+-- storage.buckets, which made the insert fail on a fresh DB. Only reference the
+-- "public" column when it exists; otherwise insert id+name only.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'storage' AND table_name = 'buckets' AND column_name = 'public'
+  ) THEN
+    INSERT INTO storage.buckets (id, name, public)
+    VALUES ('knowledge-attachments', 'knowledge-attachments', false)
+    ON CONFLICT (id) DO NOTHING;
+  ELSE
+    INSERT INTO storage.buckets (id, name)
+    VALUES ('knowledge-attachments', 'knowledge-attachments')
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+END $$;
 
 -- 4. Storage policies for knowledge attachments
 -- Allow authenticated users to upload to their own account folder

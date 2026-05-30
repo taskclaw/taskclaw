@@ -26,7 +26,11 @@ services:
     strip_path: true
 
 - name: realtime-v1
-  url: http://realtime:4000
+  # Realtime mounts its socket at /socket; the upstream URL must include it so
+  # Kong forwards /realtime/v1/websocket -> realtime:4000/socket/websocket.
+  # Host must resolve to the seeded tenant (realtime-dev) — see the realtime
+  # service's network alias in docker-compose.yml.
+  url: http://realtime-dev:4000/socket
   routes:
   - name: realtime-v1
     paths:

@@ -26,12 +26,19 @@ export function isTokenExpired(token: string): boolean {
 
 export async function setAuthToken(token: string) {
     const cookieStore = await cookies()
-    // Set cookie with appropriate options (httpOnly, secure, etc.)
-    // Note: In a real app, you might want strict secure flags.
-    // For now, we set it to be accessible.
+    // Set cookie with appropriate options (httpOnly, secure, etc.).
+    // `secure` defaults to on in production (HTTPS), but a Secure cookie is
+    // silently dropped by browsers over plain HTTP — which breaks login for
+    // self-hosters serving over http://<ip>. COOKIE_SECURE overrides the
+    // default: set COOKIE_SECURE=false to self-host over HTTP, or =true to
+    // force Secure behind a TLS-terminating proxy.
+    const cookieSecure =
+        process.env.COOKIE_SECURE !== undefined
+            ? process.env.COOKIE_SECURE === 'true'
+            : process.env.NODE_ENV === 'production'
     cookieStore.set('auth_token', token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: cookieSecure,
         path: '/',
         maxAge: 60 * 60 * 24 * 7, // 1 week
     })

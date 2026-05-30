@@ -33,11 +33,26 @@ CREATE INDEX IF NOT EXISTS idx_agent_skills_agent_id ON agent_skills(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_skills_skill_id ON agent_skills(skill_id);
 
 -- Migration: copy category_skills -> agent_skills using migrated_from_category_id
-INSERT INTO agent_skills (agent_id, skill_id, is_active)
-SELECT a.id, cs.skill_id, cs.is_active
-FROM category_skills cs
-JOIN agents a ON a.migrated_from_category_id = cs.category_id
-WHERE NOT EXISTS (
-  SELECT 1 FROM agent_skills ags
-  WHERE ags.agent_id = a.id AND ags.skill_id = cs.skill_id
-);
+-- fix: legacy DATA backfill from the old `category_skills` table, which does not
+-- exist on a fresh install (so cs.is_active / the table itself errored). Guard on
+-- the source column existing and run via EXECUTE so the planner never references
+-- `category_skills` when it's absent. Re-running on an already-migrated install is
+-- a NOT EXISTS no-op.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'category_skills' AND column_name = 'is_active'
+  ) THEN
+    EXECUTE $mig$
+      INSERT INTO agent_skills (agent_id, skill_id, is_active)
+      SELECT a.id, cs.skill_id, cs.is_active
+      FROM category_skills cs
+      JOIN agents a ON a.migrated_from_category_id = cs.category_id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM agent_skills ags
+        WHERE ags.agent_id = a.id AND ags.skill_id = cs.skill_id
+      );
+    $mig$;
+  END IF;
+END $$;

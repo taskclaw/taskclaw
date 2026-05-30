@@ -1,45 +1,56 @@
 -- F10: Migrate pilot_configs into agents (type='pilot'), add pilot_agent_id to pods
 -- Check if pilot_configs table exists before migrating
+-- fix: the table-existence guard wasn't enough — on a fresh DB the static INSERT
+-- below is parsed when the DO block runs, and `pc.name` (and the other legacy
+-- pilot_configs columns) don't exist, so it errored. Tighten the guard to require
+-- the `name` column too, and run the backfill via EXECUTE so the planner never
+-- references pilot_configs columns unless they're actually present. Re-running on
+-- an already-migrated install is a NOT EXISTS / ON CONFLICT no-op.
 DO $$ BEGIN
-  IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'pilot_configs') THEN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'pilot_configs' AND column_name = 'name'
+  ) THEN
     -- For each pilot_config row, create an agent with type='pilot'
-    INSERT INTO agents (
-      account_id,
-      name,
-      slug,
-      persona,
-      backbone_connection_id,
-      agent_type,
-      status,
-      is_active,
-      config,
-      created_at,
-      updated_at
-    )
-    SELECT
-      pc.account_id,
-      COALESCE(pc.name, 'Cockpit AI'),
-      lower(regexp_replace(COALESCE(pc.name, 'cockpit-ai'), '[^a-zA-Z0-9]+', '-', 'g')),
-      pc.system_prompt,
-      pc.backbone_connection_id,
-      'pilot',
-      'idle',
-      true,
-      jsonb_build_object(
-        'max_tasks_per_cycle', pc.max_tasks_per_cycle,
-        'approval_required', pc.approval_required,
-        'migrated_from_pilot_config_id', pc.id
-      ),
-      pc.created_at,
-      pc.updated_at
-    FROM pilot_configs pc
-    WHERE NOT EXISTS (
-      SELECT 1 FROM agents a
-      WHERE a.account_id = pc.account_id
-        AND a.agent_type = 'pilot'
-        AND a.config->>'migrated_from_pilot_config_id' = pc.id::text
-    )
-    ON CONFLICT (account_id, slug) DO NOTHING;
+    EXECUTE $mig$
+      INSERT INTO agents (
+        account_id,
+        name,
+        slug,
+        persona,
+        backbone_connection_id,
+        agent_type,
+        status,
+        is_active,
+        config,
+        created_at,
+        updated_at
+      )
+      SELECT
+        pc.account_id,
+        COALESCE(pc.name, 'Cockpit AI'),
+        lower(regexp_replace(COALESCE(pc.name, 'cockpit-ai'), '[^a-zA-Z0-9]+', '-', 'g')),
+        pc.system_prompt,
+        pc.backbone_connection_id,
+        'pilot',
+        'idle',
+        true,
+        jsonb_build_object(
+          'max_tasks_per_cycle', pc.max_tasks_per_cycle,
+          'approval_required', pc.approval_required,
+          'migrated_from_pilot_config_id', pc.id
+        ),
+        pc.created_at,
+        pc.updated_at
+      FROM pilot_configs pc
+      WHERE NOT EXISTS (
+        SELECT 1 FROM agents a
+        WHERE a.account_id = pc.account_id
+          AND a.agent_type = 'pilot'
+          AND a.config->>'migrated_from_pilot_config_id' = pc.id::text
+      )
+      ON CONFLICT (account_id, slug) DO NOTHING;
+    $mig$;
   END IF;
 END $$;
 

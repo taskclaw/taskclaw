@@ -138,3 +138,43 @@ Print a release summary:
 - **Always confirm version with the user** — don't auto-tag without explicit approval
 - The `release.yml` workflow also creates a GitHub Release automatically — no need to create one manually
 - Both `docker-publish.yml` and `release.yml` trigger on tags, so both will run — this is expected (docker-publish does multi-arch, release creates the GitHub Release)
+
+---
+
+## Self-Hosting on a VPS (docker-compose)
+
+Releasing (above) publishes images; this is how the full stack actually runs on a server. TaskClaw ships as docker-compose with self-hosted Supabase (`--profile supabase`). The hard-won, non-obvious parts:
+
+### Build images on the box
+The published `taskclaw/frontend` image **bakes `NEXT_PUBLIC_*` at build time** (pointing at localhost) — Next.js inlines them, so a runtime env override does nothing. For any host other than localhost, **rebuild the frontend** with the real public URLs:
+
+```bash
+docker build -t taskclaw/frontend:latest \
+  --build-arg NEXT_PUBLIC_SUPABASE_URL=http://<VPS_IP>:7431 \
+  --build-arg NEXT_PUBLIC_API_URL=http://<VPS_IP>:3003 \
+  --build-arg NEXT_PUBLIC_APP_URL=http://<VPS_IP>:3002 \
+  --build-arg NEXT_PUBLIC_SITE_URL=http://<VPS_IP>:3002 \
+  --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key> ./frontend
+docker build -t taskclaw/backend:latest ./backend
+```
+
+### Env files
+Three files: root `.env`, `backend/.env`, `frontend/.env`. **`backend/.env` must include** `DATABASE_URL`, `GOTRUE_URL=http://auth:9999`, and `STORAGE_URL=http://kong:8000/storage/v1` — the backend entrypoint needs them to run migrations + initialize storage buckets on boot.
+
+### `docker-compose.override.yml` for a remote/public deploy
+- `auth.environment`: `GOTRUE_SITE_URL` + `API_EXTERNAL_URL` → the public host (base hardcodes localhost). `studio.environment.SUPABASE_PUBLIC_URL` → public host.
+- If exposing **Redis** publicly: `requirepass` + an **authenticated healthcheck** (`redis-cli -a $PW ping`; the default `redis-cli ping` returns NOAUTH → unhealthy → backend never starts) + a password-bearing `REDIS_URL` for the backend.
+- When using prebuilt images, drop the dev-only dist bind-mount: `backend.volumes: !override []` (it shadows the image's compiled `/app/dist` with an empty host dir → crash).
+
+### Up + smoke test
+`docker compose --profile supabase up -d` brings up backend, frontend, Redis, and the full Supabase stack. Verify: `curl :3003/health`, `:7431/auth/v1/health`, `:3002`. (Gotcha: `docker compose exec -T … </dev/null` — without `</dev/null` it steals stdin inside a `bash -s` heredoc and truncates the script.)
+
+### Two first-login gotchas over plain HTTP
+1. **Account approval** — new signups get `public.users.status='pending'`; the auth guard then returns *"pending approval or suspended."* Activate: `UPDATE users SET status='active' WHERE email='…';` then restart the backend (status is cached in-memory for 5 min).
+2. **Secure cookie over HTTP** — the `auth_token` cookie is `Secure` in production, so browsers drop it over plain HTTP and `/dashboard` bounces to `/login`. Set `COOKIE_SECURE=false` in the frontend env (or serve HTTPS).
+
+### Realtime (live updates)
+The `supabase` profile includes a `realtime` service. If live updates don't connect, ensure Kong routes `/realtime/v1 → http://realtime-dev:4000/socket` (the upstream URL needs the `/socket` path, and the realtime service must be reachable as `realtime-dev` so the Host-derived tenant matches the self-host seed).
+
+### Known non-blocking issues
+A few legacy data-migrations are guarded no-ops on a fresh DB; `supabase/studio`'s healthcheck is flaky (reports unhealthy but works). Neither blocks the app.
