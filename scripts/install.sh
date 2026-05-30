@@ -21,7 +21,8 @@
 # ============================================================
 set -euo pipefail
 
-REPO_URL="https://raw.githubusercontent.com/taskclaw/taskclaw/main"
+REPO_REF="${TASKCLAW_REPO_REF:-main}"
+REPO_URL="https://raw.githubusercontent.com/taskclaw/taskclaw/${REPO_REF}"
 INSTALL_DIR="${TASKCLAW_DIR:-$HOME/taskclaw}"
 
 # ── Colors ──────────────────────────────────────────────────
@@ -138,11 +139,10 @@ run_server_mode() {
   download_files
   cd "$INSTALL_DIR"
 
-  info "Pulling Docker images (this may take a few minutes)..."
-  docker compose pull
-
-  info "Starting TaskClaw..."
-  docker compose up -d
+  info "Starting TaskClaw (pulling any missing images, this may take a few minutes)..."
+  # --pull missing: fetch images that aren't present, but DON'T clobber a
+  # locally-built/preloaded image (e.g. a from-source build of the frontend).
+  docker compose up -d --pull missing
 
   # ── 5. Open the firewall for the single exposed port ────────
   open_firewall "$TASKCLAW_PORT"
@@ -389,11 +389,10 @@ run_localhost_mode() {
   # ── Pull and start ─────────────────────────────────────────
   cd "$INSTALL_DIR"
 
-  info "Pulling Docker images (this may take a few minutes)..."
-  docker compose pull
-
-  info "Starting TaskClaw..."
-  docker compose up -d
+  info "Starting TaskClaw (pulling any missing images, this may take a few minutes)..."
+  # --pull missing: fetch images that aren't present, but DON'T clobber a
+  # locally-built/preloaded image (e.g. a from-source build of the frontend).
+  docker compose up -d --pull missing
 
   # ── Wait for startup ───────────────────────────────────────
   wait_for_health "http://localhost:${TASKCLAW_PORT}" || true

@@ -480,6 +480,8 @@ async function remote() {
   const domain = args.domain || null;
   const port = String(args.port || PORT);
   const sshPort = args["ssh-port"] || args.sshPort || null;
+  // --ref <branch|tag>: install from a non-default repo ref (default: main).
+  const ref = args.ref || process.env.TASKCLAW_REPO_REF || null;
   // --password may be a boolean flag (prompt) or password=<pw> (value).
   let password =
     typeof args.password === "string" ? args.password : null;
@@ -620,7 +622,7 @@ async function remote() {
   const sudo = user === "root" ? "" : "sudo -E ";
   const remoteCmd =
     `chmod +x ${remoteScript} && ` +
-    `${sudo}env TASKCLAW_SITE_URL=${shq(siteUrl)} TASKCLAW_PORT=${shq(port)} bash ${remoteScript}`;
+    `${sudo}env TASKCLAW_SITE_URL=${shq(siteUrl)} TASKCLAW_PORT=${shq(port)}${ref ? ` TASKCLAW_REPO_REF=${shq(ref)}` : ""} bash ${remoteScript}`;
   const install = await sshExec("ssh", sshOpts, [
     ...sshBase,
     "-t",
