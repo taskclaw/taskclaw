@@ -658,14 +658,25 @@ async function remote() {
   }
 
   // ── 5. Final summary ──────────────────────────────────────
+  // Report the REAL admin login the installer wrote (the seed may use an email
+  // other than the historical default), reading it back from the creds file.
+  let adminEmail = "super@admin.com";
+  let adminPassword = "password123";
+  if (existsSync(localCreds)) {
+    try {
+      const creds = JSON.parse(readFileSync(localCreds, "utf8"));
+      if (creds?.admin?.email) adminEmail = creds.admin.email;
+      if (creds?.admin?.password) adminPassword = creds.admin.password;
+    } catch { /* keep defaults */ }
+  }
   console.log();
   console.log(`${c.green}  ══════════════════════════════════════════${c.reset}`);
   console.log(`${c.green}  ${c.bold}TaskClaw deployed!${c.reset}`);
   console.log(`${c.green}  ══════════════════════════════════════════${c.reset}`);
   console.log();
   console.log(`  URL:        ${c.cyan}${siteUrl}${c.reset}`);
-  console.log(`  Email:      ${c.cyan}super@admin.com${c.reset}`);
-  console.log(`  Password:   ${c.cyan}password123${c.reset}`);
+  console.log(`  Email:      ${c.cyan}${adminEmail}${c.reset}`);
+  console.log(`  Password:   ${c.cyan}${adminPassword}${c.reset}`);
   if (existsSync(localCreds)) {
     console.log(`  Secrets:    ${c.cyan}${localCreds}${c.reset}`);
   }
