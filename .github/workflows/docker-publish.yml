@@ -100,14 +100,10 @@ jobs:
           tags: |
             taskclaw/frontend:${{ steps.meta.outputs.version }}
             taskclaw/frontend:latest
+          # No host-specific NEXT_PUBLIC_* build args: the published image is
+          # host-portable and resolves URLs + its per-install public config at
+          # runtime (window.location.origin + window.__TASKCLAW__).
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
-            NEXT_PUBLIC_SUPABASE_URL=http://localhost:3000
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjIwMDAwMDAwMDB9.lpzEvYnIQnnOnv-ntK7MffStIIRjMW7C-AZZ2aRZddY
-            NEXT_PUBLIC_API_URL=http://localhost:3000/api
-            NEXT_PUBLIC_APP_URL=http://localhost:3000
-            NEXT_PUBLIC_SITE_URL=http://localhost:3000
-            NEXT_PUBLIC_BRAND_NAME=TaskClaw
-            NEXT_PUBLIC_EDITION=community
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import type { ThemeSetName } from "@/theme/theme.types";
+import { serverApiBase } from "@/lib/api-base";
 
 /**
  * Global theme settings fetched from backend
@@ -13,16 +14,11 @@ const DEFAULT_SETTINGS: GlobalThemeSettings = {
   theme_set: "corporate",
 };
 
-/**
- * Default API URL for development
- * In production, set NEXT_PUBLIC_API_URL or API_URL environment variable
- */
-const DEFAULT_API_URL = "http://localhost:3003";
-
 async function fetchThemeSettings(): Promise<GlobalThemeSettings> {
   try {
-    // Use environment variable or fallback to localhost for development
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || DEFAULT_API_URL;
+    // Host-portable: resolve the backend base at runtime (INTERNAL_API_URL),
+    // never inline a host-specific URL at build time.
+    const apiUrl = serverApiBase();
 
     const res = await fetch(`${apiUrl}/system-settings/theme`, {
       next: { tags: ["global-theme"] },

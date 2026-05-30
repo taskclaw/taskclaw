@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import GradientText from './GradientText';
+import { clientApiBase } from '@/lib/api-base';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003';
+const API_URL = clientApiBase();
 
 const CTA = () => {
   const ctaSectionRef = useRef<HTMLDivElement>(null);

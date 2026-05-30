@@ -1,6 +1,7 @@
+import { serverApiBase } from '@/lib/api-base'
 import { cookies } from 'next/headers'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
+const API_URL = serverApiBase()
 
 export async function getAuthToken() {
     const cookieStore = await cookies()

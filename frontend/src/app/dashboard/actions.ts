@@ -1,11 +1,12 @@
 'use server'
 
+import { serverApiBase } from '@/lib/api-base'
 import { cache } from 'react'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { getAuthToken, isTokenExpired } from '@/lib/auth'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
+const API_URL = serverApiBase()
 
 // cache() deduplicates calls within a single render pass (per-request memoization).
 // Multiple server components calling getAuthHeaders() in the same SSR render

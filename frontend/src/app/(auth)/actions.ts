@@ -1,11 +1,12 @@
 'use server'
 
+import { serverApiBase } from '@/lib/api-base'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { login as authLogin, signup as authSignup, logout as authLogout, forgotPassword as authForgotPassword, updatePassword as authUpdatePassword, setAuthToken, getAuthToken } from '@/lib/auth'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
+const API_URL = serverApiBase()
 
 export async function login(prevState: { error: string } | null, formData: FormData) {
     const email = formData.get('email') as string

@@ -26,6 +26,16 @@
 
 name: taskclaw
 
+# ── Host portability ───────────────────────────────────────
+# This stack is single-origin and host-portable: set ONE variable,
+# SITE_URL, to run on localhost, any IP, or a domain. Everything
+# (CORS, auth site/external URL) derives from it.
+#   Default:  http://localhost:3000
+#   Example:  SITE_URL=http://203.0.113.10:3000 docker compose -f docker-compose.quickstart.yml up -d
+#   Example:  SITE_URL=https://taskclaw.example.com docker compose -f docker-compose.quickstart.yml up -d
+# For plain-HTTP IP installs, the remote installer also sets
+# COOKIE_SECURE=false. On localhost / HTTPS, leave it at the default (true).
+
 # ── Hardcoded defaults ─────────────────────────────────────
 # Override any value with a .env file or shell environment.
 x-jwt-secret: &jwt-secret "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
@@ -61,10 +71,10 @@ services:
     environment:
       GOTRUE_API_HOST: "0.0.0.0"
       GOTRUE_API_PORT: "9999"
-      API_EXTERNAL_URL: http://localhost:3000/auth/v1
+      API_EXTERNAL_URL: ${SITE_URL:-http://localhost:3000}/auth/v1
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@db:5432/postgres
-      GOTRUE_SITE_URL: http://localhost:3000
+      GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
       GOTRUE_URI_ALLOW_LIST: "*"
       GOTRUE_JWT_SECRET: *jwt-secret
       GOTRUE_JWT_EXP: "3600"
@@ -178,7 +188,7 @@ services:
       SUPABASE_SERVICE_ROLE_KEY: *service-role-key
       JWT_SECRET: *jwt-secret
       ENCRYPTION_KEY: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
-      CORS_ORIGIN: http://localhost:3000
+      CORS_ORIGIN: ${SITE_URL:-http://localhost:3000}
       REDIS_URL: redis://redis:6379
       # Migration + init vars (used by entrypoint.sh)
       DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
@@ -203,6 +213,43 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # ── Supabase Realtime ─────────────────────────────────────
+  # Powers live updates (postgres_changes) for the execution /
+  # blocked-task views. Kong routes /realtime/v1 -> realtime-dev:4000/socket.
+
+  realtime:
+    image: supabase/realtime:v2.30.23
+    networks:
+      default:
+        # Realtime resolves its tenant from the request Host header. The
+        # self-host seed creates a tenant named "realtime-dev", so Kong must
+        # reach this service under that name — hence the alias.
+        aliases:
+          - realtime-dev
+    environment:
+      PORT: "4000"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: supabase_admin
+      DB_PASSWORD: *postgres-password
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO realtime"
+      DB_ENC_KEY: supabaserealtime
+      API_JWT_SECRET: *jwt-secret
+      SECRET_KEY_BASE: "UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq"
+      ERL_AFLAGS: "-proto_dist inet_tcp"
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+    command: >
+      sh -c "/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ── Frontend (Next.js) ────────────────────────────────────
 
   frontend:
@@ -210,22 +257,15 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_SUPABASE_URL: http://localhost:3000
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: *anon-key
-        NEXT_PUBLIC_API_URL: http://localhost:3000/api
-        NEXT_PUBLIC_APP_URL: http://localhost:3000
-        NEXT_PUBLIC_SITE_URL: http://localhost:3000
-        NEXT_PUBLIC_BRAND_NAME: TaskClaw
-        NEXT_PUBLIC_EDITION: community
     environment:
-      NEXT_PUBLIC_SUPABASE_URL: http://localhost:3000
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: *anon-key
-      NEXT_PUBLIC_API_URL: http://localhost:3000/api
-      NEXT_PUBLIC_APP_URL: http://localhost:3000
-      NEXT_PUBLIC_SITE_URL: http://localhost:3000
-      NEXT_PUBLIC_BRAND_NAME: TaskClaw
-      NEXT_PUBLIC_EDITION: community
+      # Runtime contract — the frontend reads these server-side at request
+      # time and injects the public ones into the browser. No baked
+      # NEXT_PUBLIC_* build args, so the image is host-portable.
+      SUPABASE_ANON_KEY: *anon-key
+      EDITION: community
+      INTERNAL_API_URL: http://backend:3003
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      BRAND_NAME: TaskClaw
     depends_on:
       backend:
         condition: service_healthy

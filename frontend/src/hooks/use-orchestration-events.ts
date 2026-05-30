@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { clientApiBase } from '@/lib/api-base'
 
 /** Extract Supabase access_token from the sb-*-auth-token cookie (JS-accessible). */
 function extractSupabaseToken(): string | null {
@@ -76,7 +77,7 @@ export function useOrchestrationEvents({
   const poll = useCallback(async () => {
     if (!accountId) return
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
+      const API_URL = clientApiBase()
       // Prefer explicit authToken, fall back to extracting from cookie
       const token = authToken ?? extractSupabaseToken()
       const headers: Record<string, string> = {}

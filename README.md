@@ -33,7 +33,7 @@ TaskClaw is a self-hostable task management platform that combines a visual Kanb
 
 ## Quick Start
 
-Try TaskClaw instantly with [npx](https://docs.npmjs.com/cli/v10/commands/npx) (requires [Node.js](https://nodejs.org) + [Docker](https://docs.docker.com/get-docker/)):
+Try TaskClaw instantly with [npx](https://docs.npmjs.com/cli/v10/commands/npx) (requires [Node.js](https://nodejs.org) + [Docker](https://docs.docker.com/get-docker/)). This runs a **local** instance on your own machine at **[http://localhost:3000](http://localhost:3000)** — nothing is deployed to a remote server:
 
 ```bash
 npx taskclaw
@@ -50,8 +50,8 @@ Open **[http://localhost:3000](http://localhost:3000)** and log in:
 
 | | |
 |---|---|
-| **Email** | `super@taskclaw.co` |
-| **Password** | `admin$12345$6` |
+| **Email** | `super@admin.com` |
+| **Password** | `password123` |
 
 That's it! Everything starts automatically: database, auth, API, and frontend — all behind a single port.
 
@@ -61,6 +61,25 @@ npx taskclaw logs       # View logs
 npx taskclaw upgrade    # Pull latest & restart
 npx taskclaw reset      # Stop + delete all data
 ```
+
+### Deploy to a server (VPS)
+
+The quickstart above runs on **your local machine**. To run TaskClaw on a remote
+server that others can reach, point one command at any fresh Ubuntu/Debian host:
+
+```bash
+npx taskclaw remote --host <your-server-ip>
+```
+
+This single command provisions Docker on the server, generates unique secrets,
+brings up the full stack, and saves a credentials file you can keep. For
+automatic HTTPS, add a domain:
+
+```bash
+npx taskclaw remote --host <your-server-ip> --domain <example.com>
+```
+
+See [docs/self-hosting.md](./docs/self-hosting.md) for the full server guide.
 
 ### Alternative: Docker Compose (manual)
 

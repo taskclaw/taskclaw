@@ -2,6 +2,7 @@
 
 import { revalidateTag } from "next/cache";
 import { getAuthToken } from "@/lib/auth";
+import { serverApiBase } from "@/lib/api-base";
 
 interface UpdateThemeData {
   theme_set: string;
@@ -22,10 +23,7 @@ export async function updateGlobalTheme(
       return { error: "Unauthorized - no token" };
     }
 
-    const apiUrl =
-      process.env.NEXT_PUBLIC_API_URL ||
-      process.env.API_URL ||
-      "http://localhost:3003";
+    const apiUrl = serverApiBase();
     const res = await fetch(`${apiUrl}/system-settings`, {
       method: "PATCH",
       headers: {

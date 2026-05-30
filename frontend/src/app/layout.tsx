@@ -148,9 +148,27 @@ export default async function RootLayout({
     }
   })();`;
 
+  // Per-install PUBLIC config, read at RUNTIME (not baked) and injected as
+  // window.__TASKCLAW__ so one published image is host-portable and carries
+  // this box's unique Supabase anon key. See frontend/src/lib/public-config.ts.
+  const publicConfig = {
+    anonKey:
+      process.env.SUPABASE_ANON_KEY ??
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+      "",
+    edition:
+      process.env.EDITION ?? process.env.NEXT_PUBLIC_EDITION ?? "community",
+    brandName:
+      process.env.BRAND_NAME ?? process.env.NEXT_PUBLIC_BRAND_NAME ?? "TaskClaw",
+  };
+  const publicConfigScript = `window.__TASKCLAW__=${JSON.stringify(
+    publicConfig,
+  )};`;
+
   return (
     <html lang="en" data-app-theme={themeSet} suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: publicConfigScript }} />
         <GlobalThemeInjector themeSet={themeSet} />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>

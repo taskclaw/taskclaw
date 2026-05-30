@@ -1,7 +1,8 @@
+import { serverApiBase } from '@/lib/api-base'
 import { NextResponse } from 'next/server'
 import { setAuthToken } from '@/lib/auth'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
+const API_URL = serverApiBase()
 
 export async function GET(request: Request) {
     const { searchParams, origin } = new URL(request.url)

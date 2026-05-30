@@ -10,14 +10,12 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Accept NEXT_PUBLIC_* vars as build args (baked into the JS bundle)
-ARG NEXT_PUBLIC_SUPABASE_URL
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ARG NEXT_PUBLIC_API_URL
-ARG NEXT_PUBLIC_APP_URL
-ARG NEXT_PUBLIC_SITE_URL
-ARG NEXT_PUBLIC_BRAND_NAME=TaskClaw
-ARG NEXT_PUBLIC_EDITION=community
+# NO host-specific NEXT_PUBLIC_* build args. The frontend resolves URLs at
+# runtime from window.location.origin and reads its per-install public config
+# (Supabase anon key, edition, brand) at runtime via window.__TASKCLAW__
+# (injected by the SSR runner — see frontend/src/app/layout.tsx). Baking any
+# of these here would pin the published image to a single host, so the build
+# intentionally carries none of them.
 
 RUN npm run build
 
