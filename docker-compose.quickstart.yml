@@ -73,7 +73,7 @@ services:
       GOTRUE_API_PORT: "9999"
       API_EXTERNAL_URL: ${SITE_URL:-http://localhost:3000}/auth/v1
       GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@db:5432/postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
       GOTRUE_SITE_URL: ${SITE_URL:-http://localhost:3000}
       GOTRUE_URI_ALLOW_LIST: "*"
       GOTRUE_JWT_SECRET: *jwt-secret
@@ -103,7 +103,7 @@ services:
   rest:
     image: postgrest/postgrest:v12.2.0
     environment:
-      PGRST_DB_URI: postgres://authenticator:postgres@db:5432/postgres
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
       PGRST_DB_SCHEMAS: public,storage,graphql_public
       PGRST_DB_ANON_ROLE: anon
       PGRST_JWT_SECRET: *jwt-secret
@@ -122,7 +122,7 @@ services:
       SERVICE_KEY: *service-role-key
       POSTGREST_URL: http://rest:3000
       PGRST_JWT_SECRET: *jwt-secret
-      DATABASE_URL: postgres://supabase_storage_admin:postgres@db:5432/postgres
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
       FILE_SIZE_LIMIT: "52428800"
       STORAGE_BACKEND: file
       FILE_STORAGE_BACKEND_PATH: /var/lib/storage
@@ -191,7 +191,7 @@ services:
       CORS_ORIGIN: ${SITE_URL:-http://localhost:3000}
       REDIS_URL: redis://redis:6379
       # Migration + init vars (used by entrypoint.sh)
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
       GOTRUE_URL: http://auth:9999
       STORAGE_URL: http://kong:8000/storage/v1
       QUICKSTART: "true"
