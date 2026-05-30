@@ -99,6 +99,12 @@ download_files() {
     fetch "$file" "$INSTALL_DIR/$file"
   done
 
+  # The Supabase containers (Kong, etc.) run as NON-root users and bind-mount
+  # these config files read-only. A hardened host (root umask 077) would leave
+  # them mode 600, so the container can't read them -> "kong.yml: Permission
+  # denied". Force world-read + dir-traverse so any container UID can read them.
+  chmod -R a+rX "$INSTALL_DIR/docker"
+
   ok "Files downloaded."
 }
 
@@ -123,6 +129,67 @@ wait_for_health() {
   return 1
 }
 
+# ── DB bootstrap (idempotent) ───────────────────────────────
+# The supabase/postgres image's init-scripts (roles.sql/jwt.sql) don't reliably
+# apply across image versions / bind-mount handling, and the base image
+# pre-creates the auth.* objects owned by supabase_admin. So run an explicit
+# bootstrap against a freshly-up db BEFORE auth/rest/storage/realtime migrate:
+#   1) set the internal Supabase roles' passwords == POSTGRES_PASSWORD (so
+#      rest/auth/storage/realtime can authenticate),
+#   2) give supabase_auth_admin OWNERSHIP of the auth schema + its objects, so
+#      GoTrue's CREATE OR REPLACE FUNCTION auth.uid()/role() succeeds instead of
+#      failing with "must be owner of function uid" (SQLSTATE 42501), and
+#   3) ensure the realtime schema exists, so realtime's migrate doesn't abort
+#      with "no schema has been selected to create in" (SQLSTATE 3F000).
+bootstrap_db() {
+  info "Bootstrapping database (roles, ownership, schemas)..."
+  local pgpw
+  pgpw="$(grep '^POSTGRES_PASSWORD=' "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2- || true)"
+  [ -n "$pgpw" ] || pgpw="postgres"
+
+  # Bring up ONLY the db first, then wait until it accepts connections.
+  docker compose up -d --pull missing db
+  local attempts=0
+  until docker compose exec -T db pg_isready -U postgres -h localhost >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    [ $attempts -ge 60 ] && { warn "db did not become ready in time; continuing."; break; }
+    sleep 2
+  done
+  # Let the base image's own init (which creates auth.* + the supabase roles)
+  # settle after the port opens.
+  sleep 3
+
+  docker compose exec -T db \
+    psql -U postgres -d postgres -v ON_ERROR_STOP=0 -v pw="$pgpw" >/dev/null 2>&1 <<'SQL' || \
+    warn "db bootstrap reported issues (continuing; it may already be applied)."
+ALTER USER postgres               WITH PASSWORD :'pw';
+ALTER USER authenticator          WITH PASSWORD :'pw';
+ALTER USER supabase_auth_admin    WITH PASSWORD :'pw';
+ALTER USER supabase_storage_admin WITH PASSWORD :'pw';
+ALTER USER supabase_admin         WITH PASSWORD :'pw';
+CREATE SCHEMA IF NOT EXISTS realtime  AUTHORIZATION supabase_admin;
+CREATE SCHEMA IF NOT EXISTS _realtime AUTHORIZATION supabase_admin;
+DO $$
+DECLARE r record;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='auth') THEN
+    EXECUTE 'ALTER SCHEMA auth OWNER TO supabase_auth_admin';
+    FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='auth' LOOP
+      EXECUTE format('ALTER TABLE auth.%I OWNER TO supabase_auth_admin', r.tablename);
+    END LOOP;
+    FOR r IN SELECT sequencename FROM pg_sequences WHERE schemaname='auth' LOOP
+      EXECUTE format('ALTER SEQUENCE auth.%I OWNER TO supabase_auth_admin', r.sequencename);
+    END LOOP;
+    FOR r IN SELECT format('%I(%s)', p.proname, pg_get_function_identity_arguments(p.oid)) AS sig
+             FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='auth' LOOP
+      EXECUTE format('ALTER FUNCTION auth.%s OWNER TO supabase_auth_admin', r.sig);
+    END LOOP;
+  END IF;
+END $$;
+SQL
+  ok "Database bootstrapped."
+}
+
 # ============================================================
 # SERVER MODE
 # ============================================================
@@ -138,6 +205,10 @@ run_server_mode() {
   # ── 4. Download config, pull, start ─────────────────────────
   download_files
   cd "$INSTALL_DIR"
+
+  # Bootstrap the DB (roles, auth-schema ownership, realtime schema) on a
+  # db-only bring-up BEFORE the dependent services migrate.
+  bootstrap_db
 
   info "Starting TaskClaw (pulling any missing images, this may take a few minutes)..."
   # --pull missing: fetch images that aren't present, but DON'T clobber a
@@ -277,17 +348,48 @@ open_firewall() {
   fi
 }
 
-# ── Activate the seeded super admin ─────────────────────────
-# Guarded: ignores all errors if the table/column isn't present yet.
+# ── Activate the seeded super admin (make login actually work) ──
+# The backend seed inserts the super-admin auth user by hand, which leaves two
+# quirks that block password login until repaired here — so do it deterministically
+# once the stack is healthy:
+#   • the row's `aud` is 'authenticated', but this GoTrue version looks users up
+#     with an EMPTY audience on a password grant, so the email never matches —
+#     set aud='' so it does;
+#   • (re)set a known bcrypt password + confirm the email, so the credentials we
+#     report are guaranteed to work regardless of the seed's stored hash.
+# Also flips the app-level approval gate (public.users.status) to 'active', and
+# captures the REAL admin email (the seed may rename it) for the banner + creds.
+# Override the password by putting SUPER_ADMIN_PASSWORD=... in the .env.
+SUPER_ADMIN_EMAIL=""
+SUPER_ADMIN_PASSWORD=""
 activate_super_admin() {
   info "Ensuring the seeded super admin can log in..."
-  if docker compose exec -T db psql -U postgres -d postgres </dev/null \
-       -c "UPDATE public.users SET status='active' WHERE email='super@admin.com';" \
-       >/dev/null 2>&1; then
-    ok "Super admin activated."
+  # NOTE: trailing `|| true` is load-bearing — the script runs under
+  # `set -euo pipefail`, so a grep that finds nothing (SUPER_ADMIN_PASSWORD is
+  # optional and usually absent) would otherwise abort the whole install here.
+  SUPER_ADMIN_PASSWORD="$(grep -E '^SUPER_ADMIN_PASSWORD=' "$INSTALL_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  [ -n "$SUPER_ADMIN_PASSWORD" ] || SUPER_ADMIN_PASSWORD="password123"
+
+  SUPER_ADMIN_EMAIL="$(docker compose exec -T db psql -U postgres -d postgres -tAc \
+    "SELECT email FROM auth.users ORDER BY created_at ASC LIMIT 1" </dev/null 2>/dev/null | tr -d '[:space:]' || true)"
+
+  # NB: the SQL is fed on STDIN (heredoc), not via `psql -c`, because psql only
+  # interpolates :'pw' variables for stdin/file input — never for -c strings.
+  if docker compose exec -T db psql -U postgres -d postgres \
+       -v ON_ERROR_STOP=1 -v pw="$SUPER_ADMIN_PASSWORD" >/dev/null 2>&1 <<'SQL'
+UPDATE auth.users
+   SET aud = '',
+       encrypted_password = crypt(:'pw', gen_salt('bf')),
+       email_confirmed_at = COALESCE(email_confirmed_at, now()),
+       confirmation_token = '', recovery_token = ''
+ WHERE id = (SELECT id FROM auth.users ORDER BY created_at ASC LIMIT 1);
+UPDATE public.users SET status = 'active' WHERE status IS DISTINCT FROM 'active';
+SQL
+  then
+    ok "Super admin ready: ${SUPER_ADMIN_EMAIL:-super@admin.com} / ${SUPER_ADMIN_PASSWORD}"
   else
-    warn "Could not activate super admin automatically (table may not exist yet)."
-    warn "It usually activates on first login; ignore unless login fails."
+    warn "Could not finalize the super admin automatically (table may not exist yet)."
+    warn "If login fails, see: cd $INSTALL_DIR && docker compose logs auth"
   fi
 }
 
@@ -311,8 +413,8 @@ write_credentials() {
 {
   "url": "${SITE_URL}",
   "admin": {
-    "email": "super@admin.com",
-    "password": "password123"
+    "email": "${SUPER_ADMIN_EMAIL:-super@admin.com}",
+    "password": "${SUPER_ADMIN_PASSWORD:-password123}"
   },
   "secrets": {
     "jwt_secret": "${JWT_SECRET}",
@@ -341,8 +443,8 @@ print_server_banner() {
   fi
   echo ""
   echo -e "  URL:        ${CYAN}${SITE_URL}${NC}"
-  echo -e "  Email:      ${CYAN}super@admin.com${NC}"
-  echo -e "  Password:   ${CYAN}password123${NC}"
+  echo -e "  Email:      ${CYAN}${SUPER_ADMIN_EMAIL:-super@admin.com}${NC}"
+  echo -e "  Password:   ${CYAN}${SUPER_ADMIN_PASSWORD:-password123}${NC}"
   echo -e "  Secrets:    ${CYAN}$INSTALL_DIR/taskclaw-credentials.json${NC}"
   echo ""
   case "$SITE_URL" in
@@ -389,6 +491,10 @@ run_localhost_mode() {
   # ── Pull and start ─────────────────────────────────────────
   cd "$INSTALL_DIR"
 
+  # Bootstrap the DB (roles, auth-schema ownership, realtime schema) on a
+  # db-only bring-up BEFORE the dependent services migrate.
+  bootstrap_db
+
   info "Starting TaskClaw (pulling any missing images, this may take a few minutes)..."
   # --pull missing: fetch images that aren't present, but DON'T clobber a
   # locally-built/preloaded image (e.g. a from-source build of the frontend).
@@ -397,6 +503,10 @@ run_localhost_mode() {
   # ── Wait for startup ───────────────────────────────────────
   wait_for_health "http://localhost:${TASKCLAW_PORT}" || true
 
+  # Repair the seeded super admin so login works (aud='' + known password); also
+  # captures the real admin email. Harmless if the stack isn't fully up yet.
+  [ "$HEALTHY" -eq 1 ] && activate_super_admin || true
+
   echo ""
   if [ "$HEALTHY" -eq 1 ]; then
     echo -e "${GREEN}  ══════════════════════════════════════════${NC}"
@@ -404,8 +514,8 @@ run_localhost_mode() {
     echo -e "${GREEN}  ══════════════════════════════════════════${NC}"
     echo ""
     echo -e "  URL:      ${CYAN}http://localhost:${TASKCLAW_PORT}${NC}"
-    echo -e "  Email:    ${CYAN}super@admin.com${NC}"
-    echo -e "  Password: ${CYAN}password123${NC}"
+    echo -e "  Email:    ${CYAN}${SUPER_ADMIN_EMAIL:-super@admin.com}${NC}"
+    echo -e "  Password: ${CYAN}${SUPER_ADMIN_PASSWORD:-password123}${NC}"
     echo ""
     echo -e "${GREEN}  ══════════════════════════════════════════${NC}"
   else
@@ -414,7 +524,7 @@ run_localhost_mode() {
     warn "View logs with:    cd $INSTALL_DIR && docker compose logs -f"
     echo ""
     echo "  Once ready, open: http://localhost:${TASKCLAW_PORT}"
-    echo "  Login: super@admin.com / password123"
+    echo "  Login: ${SUPER_ADMIN_EMAIL:-super@admin.com} / ${SUPER_ADMIN_PASSWORD:-password123}"
   fi
 
   echo ""
