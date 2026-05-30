@@ -38,10 +38,10 @@ name: taskclaw
 
 # ── Hardcoded defaults ─────────────────────────────────────
 # Override any value with a .env file or shell environment.
-x-jwt-secret: &jwt-secret "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
-x-anon-key: &anon-key "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjIwMDAwMDAwMDB9.lpzEvYnIQnnOnv-ntK7MffStIIRjMW7C-AZZ2aRZddY"
-x-service-role-key: &service-role-key "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.1cLFukXDsaomGgSXNJaB6XTIERzH3f-fCbxPCFwh_68"
-x-postgres-password: &postgres-password "postgres"
+x-jwt-secret: &jwt-secret "${JWT_SECRET:-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2}"
+x-anon-key: &anon-key "${ANON_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjIwMDAwMDAwMDB9.lpzEvYnIQnnOnv-ntK7MffStIIRjMW7C-AZZ2aRZddY}"
+x-service-role-key: &service-role-key "${SERVICE_ROLE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.1cLFukXDsaomGgSXNJaB6XTIERzH3f-fCbxPCFwh_68}"
+x-postgres-password: &postgres-password "${POSTGRES_PASSWORD:-postgres}"
 
 services:
   # ── Database ───────────────────────────────────────────────
@@ -187,7 +187,7 @@ services:
       SUPABASE_ANON_KEY: *anon-key
       SUPABASE_SERVICE_ROLE_KEY: *service-role-key
       JWT_SECRET: *jwt-secret
-      ENCRYPTION_KEY: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY:-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6}"
       CORS_ORIGIN: ${SITE_URL:-http://localhost:3000}
       REDIS_URL: redis://redis:6379
       # Migration + init vars (used by entrypoint.sh)
@@ -236,7 +236,7 @@ services:
       DB_AFTER_CONNECT_QUERY: "SET search_path TO realtime"
       DB_ENC_KEY: supabaserealtime
       API_JWT_SECRET: *jwt-secret
-      SECRET_KEY_BASE: "UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq"
+      SECRET_KEY_BASE: "${REALTIME_SECRET_KEY_BASE:-UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq}"
       ERL_AFLAGS: "-proto_dist inet_tcp"
       DNS_NODES: "''"
       RLIMIT_NOFILE: "10000"

@@ -8,6 +8,12 @@ import { getThemeSetFromEnv } from "@/config/theme-env";
 import { getGlobalThemeSettings } from "@/lib/theme/getGlobalThemeSettings";
 import { THEME_SETS, getThemeSet } from "@/theme/themeConfig";
 
+// Render the root layout at request time so the per-install public config
+// (window.__TASKCLAW__: anon key / edition / brand) is read from the RUNTIME
+// environment on every response. Without this, statically-prerendered routes
+// would bake the build-time (empty) config and break host portability.
+export const dynamic = "force-dynamic";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
