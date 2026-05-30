@@ -12,11 +12,19 @@
 //   npx taskclaw logs       Tail logs
 //   npx taskclaw upgrade    Pull latest images and restart
 //   npx taskclaw remote     Install TaskClaw on a remote VPS over SSH
+//   npx taskclaw destroy    Completely remove TaskClaw (DESTRUCTIVE)
 //
 // Remote install (one command, from your laptop):
 //   npx taskclaw remote --host <ip> [--user root] [--key <path>]
 //                       [--password] [--domain <example.com>] [--port 3000]
 //   Aliases also accepted:  ip=<ip> login=<user> password=<pw> domain=<d>
+//
+// Complete uninstall (DESTRUCTIVE — deletes ALL data, double-confirmed):
+//   npx taskclaw destroy                      Wipe the local install
+//   npx taskclaw destroy --host <ip> [...]    Wipe a remote VPS over SSH
+//                       [--purge-images]       Also remove the Docker images
+//   Same SSH options/aliases as `remote` (--user/--key/--password/--ssh-port,
+//   ip=/login=/password=).
 // ============================================================
 
 import { execSync, spawn, spawnSync } from "node:child_process";
@@ -27,11 +35,13 @@ import {
   readFileSync,
   chmodSync,
   unlinkSync,
+  rmSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { get as httpsGet } from "node:https";
+import { createInterface } from "node:readline";
 
 // ── Config ────────────────────────────────────────────────────
 
@@ -325,6 +335,35 @@ function promptHidden(question) {
       }
     };
     stdin.on("data", onData);
+  });
+}
+
+// Visible (echoed) TTY confirmation. Reads one line from stdin and returns
+// true ONLY if it equals `requiredSentence` after trimming (case-sensitive).
+// Refuses (returns false) when stdin is not a TTY — we never auto-confirm a
+// destructive action from piped / non-interactive input.
+function confirmSentence(promptText, requiredSentence) {
+  return new Promise((resolve) => {
+    if (!process.stdin.isTTY) {
+      err("Refusing to proceed: stdin is not an interactive terminal.");
+      err("Destructive actions require typed confirmation at a TTY.");
+      return resolve(false);
+    }
+    process.stdout.write(promptText);
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+    rl.on("SIGINT", () => {
+      rl.close();
+      process.stdout.write("\n");
+      process.exit(130);
+    });
+    rl.question("", (answer) => {
+      rl.close();
+      resolve(answer.trim() === requiredSentence);
+    });
   });
 }
 
@@ -658,6 +697,25 @@ function findLocalInstallScript() {
   return null;
 }
 
+// Locate scripts/uninstall.sh relative to this CLI file. Returns null when
+// running from a published npm tarball (then we curl it from the repo).
+function findLocalUninstallScript() {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url)); // packages/cli/bin
+    const candidates = [
+      join(here, "..", "..", "..", "scripts", "uninstall.sh"), // repo root
+      join(here, "..", "scripts", "uninstall.sh"),
+      join(process.cwd(), "scripts", "uninstall.sh"),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) return p;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 // Minimal POSIX single-quote shell-escaping for values we put in the remote cmd.
 function shq(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
@@ -696,11 +754,358 @@ Notes:
 `);
 }
 
+// ============================================================
+// destroy — completely remove TaskClaw (local or remote)
+// ============================================================
+
+// The two EXACT sentences the user must type, in order, before anything is
+// deleted. The second embeds the target so the user must consciously name it.
+const DESTROY_SENTENCE_1 = "delete taskclaw and all its data";
+const destroySentence2 = (target) => `yes permanently destroy ${target}`;
+
+// Resolve SSH auth the same way `remote` does (key / ssh-agent / password),
+// returning the { sshOpts, target, sshBase, sshPort } bundle used to drive
+// sshExec. Reuses the existing ssh primitives — no new transport logic.
+async function resolveSshAuth(args, host, user) {
+  if (!which("ssh") || !which("scp")) {
+    err("This command needs the system 'ssh' and 'scp' on your PATH.");
+    err("Install OpenSSH client and retry.");
+    process.exit(1);
+  }
+  const key = args.key || args.i || process.env.TASKCLAW_SSH_KEY || null;
+  const sshPort = args["ssh-port"] || args.sshPort || null;
+  let password = typeof args.password === "string" ? args.password : null;
+  const wantPassword = args.password === true || password !== null;
+
+  const haveSshpass = which("sshpass");
+  const haveSetsid = which("setsid");
+  const haveAgent = !!process.env.SSH_AUTH_SOCK;
+  let useKey = !!key || (haveAgent && !wantPassword);
+
+  if (wantPassword) {
+    useKey = false;
+    if (password !== null) {
+      warn("Passing password= on the CLI is insecure: it can leak via shell");
+      warn("history and the process list. Prefer an SSH key (--key) instead.");
+    } else {
+      password = await promptHidden(`SSH password for ${user}@${host}: `);
+      if (!password) {
+        err("No password entered (and no TTY). Use --key or run interactively.");
+        process.exit(1);
+      }
+    }
+  } else if (!useKey) {
+    warn("No SSH key (--key) or ssh-agent detected.");
+    password = await promptHidden(`SSH password for ${user}@${host}: `);
+    if (!password) {
+      err("No key and no password available. Provide --key <path> or a password.");
+      process.exit(1);
+    }
+    useKey = false;
+  }
+
+  const sshOpts = {
+    key,
+    password,
+    useKey,
+    haveSshpass,
+    haveSetsid,
+    sshPort,
+    port: !!sshPort,
+  };
+  return {
+    sshOpts,
+    sshPort,
+    target: `${user}@${host}`,
+    sshBase: baseSshOpts(sshOpts),
+  };
+}
+
+// scp uses -P (uppercase) for the port; ssh uses -p. Translate a copy of the
+// ssh base opts for scp invocations.
+function scpBaseFrom(sshBase, sshPort) {
+  const a = [...sshBase];
+  if (sshPort) {
+    const pIdx = a.indexOf("-p");
+    if (pIdx !== -1) a.splice(pIdx, 2);
+    a.push("-P", String(sshPort));
+  }
+  return a;
+}
+
+async function destroy() {
+  const args = parseArgs(process.argv.slice(3));
+
+  if (args.help || args.h) {
+    printDestroyHelp();
+    return;
+  }
+
+  const host = args.host || args.ip || null;
+  const purgeImages = args["purge-images"] === true || args.purgeImages === true;
+  const isRemote = !!host;
+
+  // The human-readable target + the exact token required in sentence #2.
+  const targetToken = isRemote ? host : "localhost";
+  const user = isRemote ? args.user || args.login || "root" : null;
+  const targetLabel = isRemote ? `${user}@${host}` : INSTALL_DIR;
+
+  // ── Double-confirmation gate (always, before ANY destruction) ──
+  warn(`${c.bold}This will COMPLETELY and IRREVERSIBLY remove TaskClaw.${c.reset}`);
+  console.log();
+  console.log(`  Target:  ${c.cyan}${targetLabel}${c.reset}`);
+  console.log(
+    `  Deletes: ${c.red}all containers, all named volumes (ALL DATA), and the install directory${c.reset}`
+  );
+  if (isRemote) {
+    console.log(
+      `           ${c.dim}on the remote host ${host} (default dir ~/taskclaw, or its TASKCLAW_DIR)${c.reset}`
+    );
+  }
+  if (purgeImages) {
+    console.log(
+      `           ${c.red}+ the taskclaw/frontend and taskclaw/backend Docker images${c.reset}`
+    );
+  }
+  console.log();
+
+  const first = await confirmSentence(
+    `To proceed, type exactly: ${c.bold}${DESTROY_SENTENCE_1}${c.reset}\n> `,
+    DESTROY_SENTENCE_1
+  );
+  if (!first) {
+    err("Aborted — nothing was changed.");
+    process.exit(1);
+  }
+
+  const required2 = destroySentence2(targetToken);
+  console.log();
+  warn("Last chance. This CANNOT be undone.");
+  const second = await confirmSentence(
+    `Type exactly: ${c.bold}${required2}${c.reset}\n> `,
+    required2
+  );
+  if (!second) {
+    err("Aborted — nothing was changed.");
+    process.exit(1);
+  }
+
+  console.log();
+  if (isRemote) {
+    await destroyRemote({ args, host, user, purgeImages });
+  } else {
+    destroyLocal({ purgeImages });
+  }
+}
+
+// Local wipe: run the same teardown the server-side uninstaller does, inline,
+// so a missing uninstall.sh (npm tarball) still works.
+function destroyLocal({ purgeImages }) {
+  checkDocker();
+  log(`Destroying local TaskClaw in: ${INSTALL_DIR}`);
+
+  const dockerCompose = (cmd) => {
+    try {
+      execSync(`docker compose ${cmd}`, { cwd: INSTALL_DIR, stdio: "pipe" });
+    } catch {
+      /* idempotent — ignore */
+    }
+  };
+  const docker = (cmd) => {
+    try {
+      return execSync(`docker ${cmd}`, { stdio: "pipe" }).toString().trim();
+    } catch {
+      return "";
+    }
+  };
+
+  // 1. Clean teardown via compose (containers + named volumes = all data).
+  if (existsSync(join(INSTALL_DIR, "docker-compose.yml"))) {
+    log("Stopping containers and deleting volumes (docker compose down -v)...");
+    dockerCompose("down -v --remove-orphans");
+  } else {
+    warn("No docker-compose.yml found — skipping compose down.");
+  }
+
+  // 2. Defensive sweep in case compose state is gone.
+  log("Sweeping for leftover TaskClaw containers / volumes / network...");
+  const leftoverContainers = docker(`ps -aq --filter name=^taskclaw-`);
+  if (leftoverContainers) {
+    docker(`rm -f ${leftoverContainers.split("\n").join(" ")}`);
+  }
+  const leftoverVolumes = docker(`volume ls -q --filter name=^taskclaw_`);
+  if (leftoverVolumes) {
+    docker(`volume rm -f ${leftoverVolumes.split("\n").join(" ")}`);
+  }
+  if (docker(`network ls -q --filter name=^taskclaw_default$`)) {
+    docker(`network rm taskclaw_default`);
+  }
+
+  // 3. Delete the install directory.
+  if (existsSync(INSTALL_DIR)) {
+    log(`Removing install directory: ${INSTALL_DIR}`);
+    try {
+      rmSync(INSTALL_DIR, { recursive: true, force: true });
+    } catch (e) {
+      warn(`Could not fully remove ${INSTALL_DIR}: ${e.message}`);
+    }
+  }
+
+  // 4. Optionally purge images.
+  if (purgeImages) {
+    log("Removing TaskClaw images (ignored if in use or absent)...");
+    for (const img of ["taskclaw/frontend", "taskclaw/backend"]) {
+      const ids = docker(`images -q ${img}`);
+      if (ids) {
+        docker(`rmi -f ${[...new Set(ids.split("\n"))].join(" ")}`);
+      }
+    }
+  }
+
+  printDestroyedBanner(purgeImages);
+}
+
+// Remote wipe: scp uninstall.sh to the box (or curl it from the repo) and run
+// it over ssh, reusing the exact ssh/scp/password helpers the `remote` command
+// established.
+async function destroyRemote({ args, host, user, purgeImages }) {
+  const { sshOpts, sshPort, target, sshBase } = await resolveSshAuth(
+    args,
+    host,
+    user
+  );
+
+  log(`Remote destroy target: ${c.cyan}${target}${c.reset}`);
+
+  // ── 1. SSH preflight ──────────────────────────────────────
+  log("Checking SSH connectivity...");
+  const pre = await sshExec(
+    "ssh",
+    sshOpts,
+    [...sshBase, target, "echo taskclaw-ssh-ok"],
+    { stream: false }
+  );
+  if (pre.code !== 0 || !pre.out.includes("taskclaw-ssh-ok")) {
+    err(`SSH preflight failed (exit ${pre.code}).`);
+    if (!sshOpts.useKey && !sshOpts.haveSshpass) {
+      err("Password auth over the system ssh is finicky without 'sshpass'.");
+      err(`Strongly recommended: set up an SSH key and use --key.  ssh-copy-id ${target}`);
+    }
+    process.exit(1);
+  }
+  ok("SSH connection OK.");
+
+  // ── 2. Get uninstall.sh onto the box ──────────────────────
+  const localUninstall = findLocalUninstallScript();
+  const remoteScript = "/tmp/taskclaw-uninstall.sh";
+
+  if (localUninstall) {
+    log("Uploading uninstaller (scp)...");
+    const up = await sshExec("scp", sshOpts, [
+      ...scpBaseFrom(sshBase, sshPort),
+      localUninstall,
+      `${target}:${remoteScript}`,
+    ]);
+    if (up.code !== 0) {
+      err("Failed to upload uninstall.sh.");
+      process.exit(1);
+    }
+  } else {
+    log("Fetching uninstaller onto the server (curl)...");
+    const dl = await sshExec("ssh", sshOpts, [
+      ...sshBase,
+      target,
+      `curl -fsSL ${REPO_RAW}/scripts/uninstall.sh -o ${remoteScript}`,
+    ]);
+    if (dl.code !== 0) {
+      err("Failed to download uninstall.sh on the server.");
+      process.exit(1);
+    }
+  }
+
+  // ── 3. Run the uninstaller (stream output) ────────────────
+  log("Running the uninstaller on the server...");
+  const sudo = user === "root" ? "" : "sudo -E ";
+  const purgeEnv = purgeImages ? "TASKCLAW_PURGE_IMAGES=1 " : "";
+  const remoteCmd =
+    `chmod +x ${remoteScript} && ` +
+    `${sudo}env ${purgeEnv}bash ${remoteScript}`;
+  const run = await sshExec("ssh", sshOpts, [
+    ...sshBase,
+    "-t",
+    target,
+    remoteCmd,
+  ]);
+  if (run.code !== 0) {
+    err(`Uninstaller exited with code ${run.code}.`);
+    process.exit(1);
+  }
+
+  // Best-effort: drop the uploaded script from /tmp.
+  await sshExec("ssh", sshOpts, [...sshBase, target, `rm -f ${remoteScript}`], {
+    stream: false,
+  });
+
+  printDestroyedBanner(purgeImages, target);
+}
+
+function printDestroyedBanner(purgeImages, target) {
+  console.log();
+  console.log(`${c.green}  ══════════════════════════════════════════${c.reset}`);
+  console.log(`${c.green}  ${c.bold}TaskClaw has been completely removed.${c.reset}`);
+  console.log(`${c.green}  ══════════════════════════════════════════${c.reset}`);
+  console.log();
+  if (target) {
+    console.log(`  Target:  ${c.cyan}${target}${c.reset}`);
+  }
+  if (purgeImages) {
+    console.log(`  Images:  ${c.cyan}taskclaw/frontend + taskclaw/backend purged${c.reset}`);
+  } else {
+    console.log(`  Images:  ${c.cyan}left on disk (re-run with --purge-images to remove)${c.reset}`);
+  }
+  console.log(`  Docker:  ${c.cyan}left installed (uninstall it yourself if desired)${c.reset}`);
+  console.log();
+}
+
+function printDestroyHelp() {
+  console.log(`
+${c.bold}taskclaw destroy${c.reset} — completely and irreversibly remove TaskClaw
+
+${c.red}${c.bold}DESTRUCTIVE${c.reset}: deletes all containers, all named volumes (ALL DATA),
+and the install directory. Requires TWO typed confirmations at a TTY.
+
+Usage:
+  npx taskclaw destroy [--purge-images]               ${c.dim}# local install${c.reset}
+  npx taskclaw destroy --host <ip> [ssh options] [--purge-images]
+
+Options:
+  --host <ip>          Destroy a remote VPS instead of the local install
+                       ${c.dim}(alias: ip=<ip>)${c.reset}
+  --user <name>        SSH user for --host (default: root) ${c.dim}(alias: login=<name>)${c.reset}
+  --key <path>         SSH private key to authenticate with
+  --password [pw]      Use password auth. Bare flag => hidden prompt.
+                       ${c.dim}(alias: password=<pw> — insecure, prefer --key)${c.reset}
+  --ssh-port <n>       SSH port if not 22
+  --purge-images       Also remove the taskclaw/frontend + taskclaw/backend images
+
+Examples:
+  npx taskclaw destroy
+  npx taskclaw destroy --purge-images
+  npx taskclaw destroy --host 203.0.113.10 --key ~/.ssh/id_ed25519
+  npx taskclaw destroy ip=203.0.113.10 login=ubuntu --password --purge-images
+
+Notes:
+  - You must type two exact sentences to confirm. A mismatch aborts with no
+    changes. Non-interactive (piped) stdin is refused outright.
+  - Docker itself is left installed; only TaskClaw is removed.
+`);
+}
+
 // ── Main ──────────────────────────────────────────────────────
 
 const command = process.argv[2] || "start";
 
-const commands = { start, stop, reset, status, logs, upgrade, remote };
+const commands = { start, stop, reset, status, logs, upgrade, remote, destroy };
 
 if (commands[command]) {
   commands[command]().catch((e) => {
@@ -721,12 +1126,19 @@ Commands:
   logs      Tail container logs
   upgrade   Pull latest images & restart
   remote    Install TaskClaw on a remote VPS over SSH
+  destroy   Completely remove TaskClaw (DESTRUCTIVE, double-confirmed)
 
 Remote install:
   npx taskclaw remote --host <ip> [--user root] [--key <path>]
                       [--password] [--domain <example.com>] [--port 3000]
   Aliases: ip=<ip> login=<user> password=<pw> domain=<d>
   See: npx taskclaw remote --help
+
+Complete uninstall (DESTRUCTIVE — deletes ALL data, double-confirmed):
+  npx taskclaw destroy                      Wipe the local install
+  npx taskclaw destroy --host <ip> [...]    Wipe a remote VPS over SSH
+                      [--purge-images]      Also remove the Docker images
+  See: npx taskclaw destroy --help
 
 Options:
   TASKCLAW_DIR=./my-dir npx taskclaw   Custom install directory
