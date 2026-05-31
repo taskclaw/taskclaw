@@ -123,56 +123,42 @@ See [MCP Server Documentation](./docs/mcp-server.md) for full setup and tool ref
 
 ### Advanced Setup
 
-**Bring your own Supabase** (for production or cloud Supabase):
-
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-# Edit .env files with your Supabase URL and keys
-docker compose up -d
-```
-
-**Full local stack** (includes Supabase Studio for DB inspection):
+**Customize the stack via env files:**
 
 ```bash
 cp .env.example .env
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
-docker compose --profile supabase up -d
+# Edit .env files (DATABASE_URL, JWT_SECRET, ENCRYPTION_KEY, S3/MinIO, etc.)
+docker compose up -d
 ```
+
+This brings up the full plain-PostgreSQL stack: Postgres (pgvector), MinIO (S3-compatible storage), Redis, the NestJS backend, and the Next.js frontend. The backend applies Drizzle migrations + seeds on boot and creates MinIO buckets automatically.
 
 **Self-Hosting on a server (remote host, over HTTP)**
 
 Running on a real server (not `localhost`) needs a few extra steps the quickstart doesn't cover:
 
-1. **Rebuild the frontend on the server.** The published `taskclaw/frontend` image bakes `NEXT_PUBLIC_*` values at build time pointing at `localhost`, so you must rebuild it with your real public URLs:
+1. **Set `backend/.env` essentials.** Use strong secrets and point CORS at your host:
 
    ```bash
-   docker build -t taskclaw/frontend:latest \
-     --build-arg NEXT_PUBLIC_SUPABASE_URL=http://<your-server-ip>:7431 \
-     --build-arg NEXT_PUBLIC_API_URL=http://<your-server-ip>:3003 \
-     --build-arg NEXT_PUBLIC_APP_URL=http://<your-server-ip>:3002 \
-     --build-arg NEXT_PUBLIC_SITE_URL=http://<your-server-ip>:3002 \
-     --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key> \
-     ./frontend
-   ```
-
-2. **Set `backend/.env` essentials.** Use strong secrets and point CORS at your host:
-
-   ```bash
-   JWT_SECRET=<strong-random-secret>
-   ENCRYPTION_KEY=<strong-random-secret>
-   POSTGRES_PASSWORD=<strong-random-password>
+   DATABASE_URL=postgresql://postgres:<strong-random-password>@db:5432/postgres
+   JWT_SECRET=<strong-random-secret>          # openssl rand -hex 32
+   ENCRYPTION_KEY=<strong-random-hex-string>  # openssl rand -hex 32
+   AUTH_LOCAL=true
    CORS_ORIGIN=http://<your-server-ip>:3002
-   # When self-hosting Supabase (supabase profile):
-   DATABASE_URL=postgres://postgres:<strong-random-password>@db:5432/postgres
-   GOTRUE_URL=http://auth:9999
-   STORAGE_URL=http://kong:8000/storage/v1
+   SITE_URL=http://<your-server-ip>:3002
+   # MinIO / S3-compatible storage — point S3_PUBLIC_URL at a browser-reachable URL:
+   S3_PUBLIC_URL=http://<your-server-ip>:9000
    ```
 
-3. **Over plain HTTP, set `COOKIE_SECURE=false`** in the frontend env. Otherwise the auth session cookie is marked `Secure`, browsers silently drop it, and login never reaches the dashboard. (For production, serve HTTPS instead and leave this at its default.)
+   Also set `POSTGRES_PASSWORD` (Postgres) and `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` (MinIO) in the root `.env`.
 
-4. **First login may need activation.** New signups start as `pending` — set the user's `status='active'` in the DB (or approve via admin) before they can sign in. Live board updates also require the `realtime` service from the `supabase` profile.
+2. **Over plain HTTP, set `COOKIE_SECURE=false`** in the frontend env. Otherwise the auth session cookie is marked `Secure`, browsers silently drop it, and login never reaches the dashboard. (For production, serve HTTPS instead and leave this at its default.)
+
+   The frontend serves a single-origin `/api/[...path]` proxy that forwards to the backend over the Docker network (`INTERNAL_API_URL=http://backend:3003`) and injects the Bearer token from the httpOnly `auth_token` cookie — so the published frontend image works on any host without rebuilding `NEXT_PUBLIC_*` URLs.
+
+3. **First login may need activation.** New signups start as `pending` — set the user's `status='active'` in the DB (or approve via admin) before they can sign in. Live board updates flow over Postgres `LISTEN/NOTIFY` → NestJS SSE (`/events/stream`) and work out of the box.
 
 See [docs/self-hosting.md](./docs/self-hosting.md) for the full self-hosting guide, and [docs/development.md](./docs/development.md) for the full development setup guide.
 
@@ -230,7 +216,10 @@ managed version with additional features:
 
 - **Frontend**: Next.js 15, React 18, Tailwind CSS, shadcn/ui, Zustand, TanStack Query
 - **Backend**: NestJS 11, TypeScript
-- **Database**: Supabase (PostgreSQL + Auth + Storage)
+- **Database**: PostgreSQL (pgvector) via Drizzle ORM
+- **Auth**: Local NestJS JWT auth (bcrypt + refresh tokens)
+- **Storage**: MinIO (S3-compatible)
+- **Realtime**: Postgres LISTEN/NOTIFY → NestJS SSE
 - **AI**: OpenRouter API (bring your own key)
 - **Queue**: BullMQ + Redis
 - **Drag & Drop**: @dnd-kit
@@ -248,7 +237,7 @@ TaskClaw ships with **Claude Code skills** that let you create boards, agents, s
 | **Skill Writer** | `/skill-writer` | Write AI skill instructions — persona, process, output format |
 | **Agent Designer** | `/agent-designer` | Design agent categories with optimal skill groupings |
 | **Knowledge Curator** | `/knowledge-curator` | Structure knowledge base documents for agents |
-| **Dev Setup** | `/dev-setup` | Set up a local development environment (Docker, Supabase, env config) |
+| **Dev Setup** | `/dev-setup` | Set up a local development environment (Docker, Postgres, env config) |
 
 ### How It Works
 

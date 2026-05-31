@@ -6,8 +6,7 @@ This guide covers how to set up a local development environment for TaskClaw.
 
 - **Node.js 20+** (LTS recommended)
 - **npm** (bundled with Node.js — the repo uses npm as its package manager)
-- **A Supabase instance** -- either a free [Supabase Cloud](https://supabase.com) project or a local instance via Docker
-- **Docker and Docker Compose v2+** (optional, only needed if running Supabase locally or Redis)
+- **Docker and Docker Compose v2+** — runs the backing services (PostgreSQL/pgvector, MinIO, Redis) and, optionally, the full stack
 
 ## Clone and Install
 
@@ -25,6 +24,9 @@ cd ../frontend && npm install
 ## Set Up Environment Variables
 
 ```bash
+# Root (Docker Compose)
+cp .env.example .env
+
 # Backend
 cp backend/.env.example backend/.env
 
@@ -32,50 +34,34 @@ cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 ```
 
-Edit each file and fill in your Supabase credentials. See [configuration.md](./configuration.md) for a full reference of every variable.
+The defaults work out of the box for local development. Generate real secrets for `JWT_SECRET` and `ENCRYPTION_KEY` (`openssl rand -hex 32`) before exposing the instance. See [configuration.md](./configuration.md) for a full reference of every variable.
 
-### Using Supabase Cloud (Recommended for Development)
+## Start the Backing Services
 
-1. Create a free project at [supabase.com](https://supabase.com)
-2. Copy the project URL, anon key, and service role key from the Supabase dashboard (Settings > API)
-3. Paste them into `backend/.env` and `frontend/.env`
-
-### Using Local Supabase via Docker
-
-If you prefer to run Supabase locally:
+TaskClaw's backing services — PostgreSQL (pgvector), MinIO (S3-compatible storage), and Redis (BullMQ queues) — run in Docker:
 
 ```bash
-# Copy the root .env for Docker Compose
-cp .env.example .env
-# Fill in POSTGRES_PASSWORD, JWT_SECRET, ANON_KEY, SERVICE_ROLE_KEY
-
-# Start Supabase services only
-docker compose --profile supabase up -d
+docker compose up -d
 ```
 
-Then update your env files:
-- `backend/.env`: set `SUPABASE_URL=http://localhost:7431`
-- `frontend/.env`: set `NEXT_PUBLIC_SUPABASE_URL=http://localhost:7431`
-
-Supabase Studio will be available at [http://localhost:7430](http://localhost:7430).
-
-### Redis
-
-The backend uses Redis for BullMQ job queues (sync processing). For local development:
+This is the recommended workflow: it brings up the full stack (Postgres, MinIO, Redis, backend, frontend). The backend entrypoint applies the Drizzle migrations (`backend/drizzle/*.sql`) and seeds (`backend/drizzle/seed/*.sql`) **idempotently on boot**, and `StorageService` creates the required MinIO buckets on startup. Wait ~30s for services to become healthy:
 
 ```bash
-# Option A: Use Docker
-docker run -d --name taskclaw-redis -p 6379:6379 redis:7-alpine
-
-# Option B: Use the docker compose Redis service
-docker compose up redis -d
+docker inspect --format='{{.State.Health.Status}}' taskclaw-db-1       # healthy
+docker inspect --format='{{.State.Health.Status}}' taskclaw-minio-1    # healthy
+docker inspect --format='{{.State.Health.Status}}' taskclaw-backend-1  # healthy
 ```
 
-Set `REDIS_URL=redis://localhost:6379` in `backend/.env`.
+| Service | URL | Notes |
+|---|---|---|
+| PostgreSQL | `localhost:5432` | `postgres` / `POSTGRES_PASSWORD` (default `postgres`) |
+| MinIO API | [http://localhost:9000](http://localhost:9000) | S3-compatible object storage |
+| MinIO Console | [http://localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin` by default |
+| Redis | `localhost:6379` | BullMQ job queues |
 
 ## Start Development Servers
 
-Open two terminal windows (or use a terminal multiplexer):
+For active development you typically run the backend and frontend from source against the Dockerized Postgres/MinIO/Redis. Open two terminal windows (or use a terminal multiplexer):
 
 ```bash
 # Terminal 1: Backend (NestJS, port 3003)
@@ -86,6 +72,10 @@ npm run start:dev
 cd frontend
 npm run dev
 ```
+
+When running the backend from source, point `DATABASE_URL`, `S3_ENDPOINT`, and `REDIS_URL` in `backend/.env` at `localhost` (e.g. `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres`, `S3_ENDPOINT=http://localhost:9000`, `REDIS_URL=redis://localhost:6379`) instead of the Docker service hostnames.
+
+The default dev login is **`super@admin.com`** / **`password123`**.
 
 Once running:
 - **Frontend**: [http://localhost:3002](http://localhost:3002)
@@ -109,20 +99,22 @@ taskclaw/
 │   │   ├── agent-sync/         # OpenClaw agent sync (skills+knowledge, every 5 min)
 │   │   ├── ai-assistant/       # AI assistant orchestration (LangGraph ReAct)
 │   │   ├── ai-provider/        # AI provider abstraction
-│   │   ├── auth/               # Authentication (Supabase JWT guards)
+│   │   ├── auth/               # Local NestJS JWT auth (bcrypt + refresh tokens)
 │   │   ├── backbone/           # Multi-AI-provider routing (cascade resolver)
 │   │   ├── boards/             # Multi-board workflow engine (templates/instances/steps)
 │   │   ├── categories/         # Task categories / labels
 │   │   ├── common/             # Shared utilities, middleware, guards
 │   │   ├── conversations/      # AI chat conversations
+│   │   ├── db/                 # Drizzle ORM client, schema, and DB token
 │   │   ├── ee/                 # Cloud-edition modules (Stripe, Langfuse, etc.)
+│   │   ├── events/             # Postgres LISTEN/NOTIFY → SSE realtime (/events/stream)
 │   │   ├── knowledge/          # Knowledge base (file uploads, context for AI)
 │   │   ├── mcp/                # MCP server tools and handlers
 │   │   ├── projects/           # Project management
 │   │   ├── search/             # Full-text search
 │   │   ├── skills/             # AI skills / capabilities
 │   │   ├── sources/            # External source CRUD (connects adapters to accounts)
-│   │   ├── supabase/           # Supabase client module
+│   │   ├── storage/            # MinIO / S3-compatible object storage
 │   │   ├── sync/               # Background sync engine (BullMQ)
 │   │   ├── system-settings/    # System-wide configuration
 │   │   ├── tasks/              # Task CRUD and business logic
@@ -168,7 +160,8 @@ taskclaw/
 │   │   └── types/              # TypeScript type definitions
 │   ├── .env.example            # Environment variable template
 │   └── package.json
-├── docker/                     # Docker support files (Kong config, DB init scripts)
+├── backend/drizzle/            # Drizzle SQL migrations + seeds (applied on boot)
+├── docker/                     # Docker support files (DB init scripts, volumes)
 ├── docs/                       # Documentation (you are here)
 ├── docker-compose.yml          # Docker Compose configuration
 └── package.json                # Root package.json (workspace scripts)
@@ -265,14 +258,25 @@ cd ../frontend && npm install
 
 ### Working with the Database
 
-If using local Supabase, connect directly to Postgres:
+Connect directly to Postgres:
 
 ```bash
-# Via Docker
+# Via the Docker `db` service
 docker compose exec db psql -U postgres
-
-# Or use Supabase Studio at http://localhost:7430
 ```
+
+The schema is defined with Drizzle in `backend/src/db/schema.ts`. After changing it, generate a new migration:
+
+```bash
+cd backend
+npm run db:generate
+```
+
+Migrations live in `backend/drizzle/*.sql` (`0000` baseline … `0003` realtime) and seeds in `backend/drizzle/seed/`. The backend entrypoint applies both idempotently on every boot, so a fresh `docker compose up` produces a fully migrated and seeded database. See [`backend/docs/drizzle-conversion-guide.md`](../backend/docs/drizzle-conversion-guide.md) for the query patterns.
+
+### Inspecting Object Storage
+
+Uploaded files (knowledge documents, skill attachments) are stored in MinIO. Browse them via the MinIO console at [http://localhost:9001](http://localhost:9001) (default credentials `minioadmin` / `minioadmin`).
 
 ## Tips
 
