@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { backboneConnections } from '../db/schema';
 import { BackboneAdapterRegistry } from './adapters/backbone-adapter.registry';
 import { BackboneConnectionsService } from './backbone-connections.service';
 
@@ -15,7 +17,7 @@ export class BackboneHealthService {
   private readonly logger = new Logger(BackboneHealthService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly registry: BackboneAdapterRegistry,
     private readonly connections: BackboneConnectionsService,
   ) {}
@@ -25,14 +27,13 @@ export class BackboneHealthService {
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async checkAll() {
-    const client = this.supabaseAdmin.getClient();
-
-    const { data: rows, error } = await client
-      .from('backbone_connections')
-      .select('*')
-      .eq('is_active', true);
-
-    if (error) {
+    let rows: (typeof backboneConnections.$inferSelect)[];
+    try {
+      rows = await this.db
+        .select()
+        .from(backboneConnections)
+        .where(eq(backboneConnections.isActive, true));
+    } catch (error) {
       this.logger.error(`Failed to load connections for health check: ${error.message}`);
       return;
     }
@@ -42,7 +43,16 @@ export class BackboneHealthService {
     this.logger.debug(`Running health checks for ${rows.length} backbone connections`);
 
     const results = await Promise.allSettled(
-      rows.map((row) => this.checkOne(row)),
+      rows.map((row) =>
+        // checkOne reads snake_case fields (the controller passes a raw
+        // PostgREST row); re-key the Drizzle row so its shape is unchanged.
+        this.checkOne({
+          ...row,
+          backbone_type: row.backboneType,
+          config: row.config,
+          id: row.id,
+        }),
+      ),
     );
 
     const healthy = results.filter(

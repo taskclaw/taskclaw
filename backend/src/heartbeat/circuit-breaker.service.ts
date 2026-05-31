@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { circuitBreakerStates } from '../db/schema';
 
 /**
  * DB-backed circuit breaker service.
@@ -16,24 +18,35 @@ import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 export class CircuitBreakerService {
   private readonly logger = new Logger(CircuitBreakerService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   /**
    * Returns true if the circuit is open (or half-open acting as open).
    * Automatically transitions from 'open' to 'half-open' after 10 minutes.
    */
   async isOpen(configId: string, threshold: number): Promise<boolean> {
-    const client = this.supabaseAdmin.getClient();
+    let data:
+      | {
+          state: string;
+          opened_at: string | null;
+          failure_count: number;
+        }
+      | undefined;
 
-    const { data, error } = await client
-      .from('circuit_breaker_states')
-      .select('state, opened_at, failure_count')
-      .eq('config_id', configId)
-      .maybeSingle();
-
-    if (error) {
+    try {
+      const [row] = await this.db
+        .select({
+          state: circuitBreakerStates.state,
+          opened_at: circuitBreakerStates.openedAt,
+          failure_count: circuitBreakerStates.failureCount,
+        })
+        .from(circuitBreakerStates)
+        .where(eq(circuitBreakerStates.configId, configId))
+        .limit(1);
+      data = row;
+    } catch (error) {
       this.logger.error(
-        `CircuitBreaker isOpen query failed for ${configId}: ${error.message}`,
+        `CircuitBreaker isOpen query failed for ${configId}: ${(error as Error).message}`,
       );
       // Fail closed — allow execution on DB error
       return false;
@@ -55,10 +68,10 @@ export class CircuitBreakerService {
         const tenMinutesMs = 10 * 60 * 1000;
         if (Date.now() - openedAt >= tenMinutesMs) {
           // Transition to half-open
-          await client
-            .from('circuit_breaker_states')
-            .update({ state: 'half-open' })
-            .eq('config_id', configId);
+          await this.db
+            .update(circuitBreakerStates)
+            .set({ state: 'half-open' })
+            .where(eq(circuitBreakerStates.configId, configId));
           this.logger.log(
             `CircuitBreaker ${configId}: open → half-open (10min elapsed)`,
           );
@@ -81,14 +94,16 @@ export class CircuitBreakerService {
    * Record a failure. Returns true if the circuit just opened.
    */
   async recordFailure(configId: string, threshold: number): Promise<boolean> {
-    const client = this.supabaseAdmin.getClient();
-
     // Upsert: get current state then update
-    const { data: existing } = await client
-      .from('circuit_breaker_states')
-      .select('failure_count, state, last_failure_at')
-      .eq('config_id', configId)
-      .maybeSingle();
+    const [existing] = await this.db
+      .select({
+        failure_count: circuitBreakerStates.failureCount,
+        state: circuitBreakerStates.state,
+        last_failure_at: circuitBreakerStates.lastFailureAt,
+      })
+      .from(circuitBreakerStates)
+      .where(eq(circuitBreakerStates.configId, configId))
+      .limit(1);
 
     const now = new Date().toISOString();
     const currentCount = existing?.failure_count ?? 0;
@@ -97,21 +112,32 @@ export class CircuitBreakerService {
     // Count failures within last 5 minutes
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     const lastFailure = existing?.last_failure_at;
-    const recentFailureWindow =
-      lastFailure && lastFailure > fiveMinutesAgo;
+    const recentFailureWindow = lastFailure && lastFailure > fiveMinutesAgo;
 
     // If half-open and this is a probe failure → re-open
     if (currentState === 'half-open') {
-      const { error } = await client.from('circuit_breaker_states').upsert({
-        config_id: configId,
-        failure_count: currentCount + 1,
-        last_failure_at: now,
-        opened_at: now, // Reset cooldown
-        state: 'open',
-      });
-      if (error) {
+      try {
+        await this.db
+          .insert(circuitBreakerStates)
+          .values({
+            configId,
+            failureCount: currentCount + 1,
+            lastFailureAt: now,
+            openedAt: now, // Reset cooldown
+            state: 'open',
+          })
+          .onConflictDoUpdate({
+            target: [circuitBreakerStates.configId],
+            set: {
+              failureCount: currentCount + 1,
+              lastFailureAt: now,
+              openedAt: now, // Reset cooldown
+              state: 'open',
+            },
+          });
+      } catch (error) {
         this.logger.error(
-          `CircuitBreaker recordFailure upsert failed for ${configId}: ${error.message}`,
+          `CircuitBreaker recordFailure upsert failed for ${configId}: ${(error as Error).message}`,
         );
       }
       this.logger.warn(
@@ -124,26 +150,31 @@ export class CircuitBreakerService {
     const newCount = recentFailureWindow ? currentCount + 1 : 1;
     const shouldOpen = newCount >= threshold;
 
-    const updateData: Record<string, any> = {
-      config_id: configId,
-      failure_count: newCount,
-      last_failure_at: now,
+    const updateData: typeof circuitBreakerStates.$inferInsert = {
+      configId,
+      failureCount: newCount,
+      lastFailureAt: now,
+      state: 'closed',
     };
 
     if (shouldOpen) {
       updateData.state = 'open';
-      updateData.opened_at = now;
+      updateData.openedAt = now;
     } else {
       updateData.state = 'closed';
     }
 
-    const { error } = await client
-      .from('circuit_breaker_states')
-      .upsert(updateData);
-
-    if (error) {
+    try {
+      await this.db
+        .insert(circuitBreakerStates)
+        .values(updateData)
+        .onConflictDoUpdate({
+          target: [circuitBreakerStates.configId],
+          set: updateData,
+        });
+    } catch (error) {
       this.logger.error(
-        `CircuitBreaker recordFailure upsert failed for ${configId}: ${error.message}`,
+        `CircuitBreaker recordFailure upsert failed for ${configId}: ${(error as Error).message}`,
       );
     }
 
@@ -160,19 +191,25 @@ export class CircuitBreakerService {
    * Record a success. Resets the circuit to closed.
    */
   async recordSuccess(configId: string): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
-    const { error } = await client.from('circuit_breaker_states').upsert({
-      config_id: configId,
-      failure_count: 0,
-      last_failure_at: null,
-      opened_at: null,
+    const values: typeof circuitBreakerStates.$inferInsert = {
+      configId,
+      failureCount: 0,
+      lastFailureAt: null,
+      openedAt: null,
       state: 'closed',
-    });
+    };
 
-    if (error) {
+    try {
+      await this.db
+        .insert(circuitBreakerStates)
+        .values(values)
+        .onConflictDoUpdate({
+          target: [circuitBreakerStates.configId],
+          set: values,
+        });
+    } catch (error) {
       this.logger.error(
-        `CircuitBreaker recordSuccess upsert failed for ${configId}: ${error.message}`,
+        `CircuitBreaker recordSuccess upsert failed for ${configId}: ${(error as Error).message}`,
       );
     }
   }

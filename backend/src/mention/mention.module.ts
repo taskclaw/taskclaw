@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { MentionExpandService } from './expand.service';
 import { MentionDispatchService } from './dispatch.service';
 
@@ -9,7 +8,7 @@ import { MentionDispatchService } from './dispatch.service';
  * which is why it ships as a separate provider.
  */
 @Module({
-  imports: [SupabaseModule],
+  imports: [],
   providers: [MentionExpandService, MentionDispatchService],
   exports: [MentionExpandService, MentionDispatchService],
 })

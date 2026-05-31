@@ -1,9 +1,12 @@
 import {
   Injectable,
+  Inject,
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { agents, agentSkills, knowledgeDocs } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
@@ -80,56 +83,102 @@ export function decryptEnvObject(env: Record<string, unknown> | null | undefined
 @Injectable()
 export class AgentsService {
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
   ) {}
+
+  /**
+   * Drizzle returns camelCase columns; PostgREST returned snake_case. Re-key
+   * each agent row back to the snake_case shape the API response (and internal
+   * callers like `clone`) depend on, so the contract is unchanged.
+   */
+  private present(row: any) {
+    return {
+      id: row.id,
+      account_id: row.accountId,
+      name: row.name,
+      slug: row.slug,
+      avatar_url: row.avatarUrl,
+      description: row.description,
+      persona: row.persona,
+      color: row.color,
+      backbone_connection_id: row.backboneConnectionId,
+      model_override: row.modelOverride,
+      max_concurrent_tasks: row.maxConcurrentTasks,
+      status: row.status,
+      is_active: row.isActive,
+      agent_type: row.agentType,
+      total_tasks_completed: row.totalTasksCompleted,
+      total_tasks_failed: row.totalTasksFailed,
+      total_tokens_used: row.totalTokensUsed,
+      last_active_at: row.lastActiveAt,
+      config: row.config,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
+      migrated_from_category_id: row.migratedFromCategoryId,
+      custom_env: row.customEnv,
+      custom_args: row.customArgs,
+    };
+  }
+
+  /**
+   * Re-key a Drizzle knowledge_docs row (camelCase) back to the snake_case
+   * shape PostgREST returned, which the frontend depends on.
+   */
+  private presentKnowledgeDoc(row: any) {
+    return {
+      id: row.id,
+      account_id: row.accountId,
+      category_id: row.categoryId,
+      title: row.title,
+      content: row.content,
+      is_master: row.isMaster,
+      file_attachments: row.fileAttachments,
+      created_by: row.createdBy,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
+      agent_id: row.agentId,
+    };
+  }
 
   async findAll(
     userId: string,
     accountId: string,
     filters?: { status?: string; agent_type?: string },
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    let query = client
-      .from('agents')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
+    const conditions = [eq(agents.accountId, accountId)];
     if (filters?.status) {
-      query = query.eq('status', filters.status);
+      conditions.push(eq(agents.status, filters.status));
     }
     if (filters?.agent_type) {
-      query = query.eq('agent_type', filters.agent_type);
+      conditions.push(eq(agents.agentType, filters.agent_type));
     }
 
-    const { data, error } = await query;
+    const data = await this.db
+      .select()
+      .from(agents)
+      .where(and(...conditions))
+      .orderBy(desc(agents.createdAt));
 
-    if (error) {
-      throw new Error(`Failed to fetch agents: ${error.message}`);
-    }
-
-    return (data ?? []).map((row) => this.maskRowEnv(row));
+    return data.map((row) => this.maskRowEnv(this.present(row)));
   }
 
   async findOne(userId: string, accountId: string, agentId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('agents')
-      .select('*')
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .single();
+    const [data] = await this.db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+      .limit(1);
 
-    if (error || !data) {
+    if (!data) {
       throw new NotFoundException(`Agent with ID ${agentId} not found`);
     }
 
-    return this.maskRowEnv(data);
+    return this.maskRowEnv(this.present(data));
   }
 
   /**
@@ -141,16 +190,14 @@ export class AgentsService {
     accountId: string,
     agentId: string,
   ): Promise<{ env: Record<string, string>; args: string[] }> {
-    const client = this.supabaseAdmin.getClient();
-    const { data } = await client
-      .from('agents')
-      .select('custom_env, custom_args')
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .maybeSingle();
+    const [data] = await this.db
+      .select({ customEnv: agents.customEnv, customArgs: agents.customArgs })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+      .limit(1);
     return {
-      env: decryptEnvObject((data?.custom_env as Record<string, unknown>) ?? {}),
-      args: Array.isArray(data?.custom_args) ? (data!.custom_args as string[]) : [],
+      env: decryptEnvObject((data?.customEnv as Record<string, unknown>) ?? {}),
+      args: Array.isArray(data?.customArgs) ? (data!.customArgs as string[]) : [],
     };
   }
 
@@ -166,44 +213,42 @@ export class AgentsService {
     accountId: string,
     dto: CreateAgentDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     const slug = dto.slug ?? generateSlug(dto.name);
 
-    const { data, error } = await client
-      .from('agents')
-      .insert({
-        account_id: accountId,
-        name: dto.name,
-        slug,
-        avatar_url: dto.avatar_url ?? null,
-        description: dto.description ?? null,
-        persona: dto.persona ?? null,
-        color: dto.color ?? '#6366f1',
-        backbone_connection_id: dto.backbone_connection_id ?? null,
-        model_override: dto.model_override ?? null,
-        max_concurrent_tasks: dto.max_concurrent_tasks ?? 3,
-        agent_type: dto.agent_type ?? 'worker',
-        config: dto.config ?? {},
-        custom_env: encryptEnvObject(dto.custom_env ?? {}),
-        custom_args: Array.isArray(dto.custom_args) ? dto.custom_args : [],
-        status: 'idle',
-        is_active: true,
-      })
-      .select()
-      .single();
+    try {
+      const rows = await this.db
+        .insert(agents)
+        .values({
+          accountId,
+          name: dto.name,
+          slug,
+          avatarUrl: dto.avatar_url ?? null,
+          description: dto.description ?? null,
+          persona: dto.persona ?? null,
+          color: dto.color ?? '#6366f1',
+          backboneConnectionId: dto.backbone_connection_id ?? null,
+          modelOverride: dto.model_override ?? null,
+          maxConcurrentTasks: dto.max_concurrent_tasks ?? 3,
+          agentType: dto.agent_type ?? 'worker',
+          config: dto.config ?? {},
+          customEnv: encryptEnvObject(dto.custom_env ?? {}),
+          customArgs: Array.isArray(dto.custom_args) ? dto.custom_args : [],
+          status: 'idle',
+          isActive: true,
+        })
+        .returning();
 
-    if (error) {
-      if (error.code === '23505') {
+      return this.maskRowEnv(this.present(rows[0]));
+    } catch (error: any) {
+      if (error?.code === '23505') {
         throw new ConflictException(
           `An agent with slug "${slug}" already exists in this account`,
         );
       }
-      throw new Error(`Failed to create agent: ${error.message}`);
+      throw new Error(`Failed to create agent: ${error?.message}`);
     }
-
-    return this.maskRowEnv(data);
   }
 
   async update(
@@ -212,24 +257,43 @@ export class AgentsService {
     agentId: string,
     dto: UpdateAgentDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Verify agent exists and belongs to account
     await this.findOne(userId, accountId, agentId);
 
-    const updatePayload: Record<string, unknown> = { ...dto, updated_at: new Date().toISOString() };
+    // Map the snake_case DTO to camelCase columns (only defined fields).
+    const updatePayload: Partial<typeof agents.$inferInsert> = {
+      updatedAt: new Date().toISOString(),
+    };
+    if (dto.name !== undefined) updatePayload.name = dto.name;
+    if (dto.slug !== undefined) updatePayload.slug = dto.slug;
+    if (dto.avatar_url !== undefined) updatePayload.avatarUrl = dto.avatar_url;
+    if (dto.description !== undefined) updatePayload.description = dto.description;
+    if (dto.persona !== undefined) updatePayload.persona = dto.persona;
+    if (dto.color !== undefined) updatePayload.color = dto.color;
+    if (dto.backbone_connection_id !== undefined)
+      updatePayload.backboneConnectionId = dto.backbone_connection_id;
+    if (dto.model_override !== undefined)
+      updatePayload.modelOverride = dto.model_override;
+    if (dto.max_concurrent_tasks !== undefined)
+      updatePayload.maxConcurrentTasks = dto.max_concurrent_tasks;
+    if (dto.agent_type !== undefined) updatePayload.agentType = dto.agent_type;
+    if (dto.config !== undefined) updatePayload.config = dto.config;
+    if (dto.status !== undefined) updatePayload.status = dto.status;
+    if (dto.is_active !== undefined) updatePayload.isActive = dto.is_active;
+
     if (dto.custom_env !== undefined) {
       // Merge: empty string means "delete this key"; missing keys keep their
       // existing encrypted value so the user doesn't have to re-supply
       // already-set secrets just to add a new one.
-      const existing = await client
-        .from('agents')
-        .select('custom_env')
-        .eq('id', agentId)
-        .single();
+      const [existing] = await this.db
+        .select({ customEnv: agents.customEnv })
+        .from(agents)
+        .where(eq(agents.id, agentId))
+        .limit(1);
       const merged: Record<string, unknown> = {
-        ...((existing.data?.custom_env as Record<string, unknown>) ?? {}),
+        ...((existing?.customEnv as Record<string, unknown>) ?? {}),
       };
       for (const [k, v] of Object.entries(dto.custom_env ?? {})) {
         if (v === '' || v === null || v === undefined) {
@@ -238,83 +302,73 @@ export class AgentsService {
           merged[k] = v;
         }
       }
-      updatePayload.custom_env = encryptEnvObject(merged);
+      updatePayload.customEnv = encryptEnvObject(merged);
     }
     if (dto.custom_args !== undefined) {
-      updatePayload.custom_args = Array.isArray(dto.custom_args) ? dto.custom_args : [];
+      updatePayload.customArgs = Array.isArray(dto.custom_args) ? dto.custom_args : [];
     }
 
-    const { data, error } = await client
-      .from('agents')
-      .update(updatePayload)
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to update agent: ${error.message}`);
+    let rows;
+    try {
+      rows = await this.db
+        .update(agents)
+        .set(updatePayload)
+        .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+        .returning();
+    } catch (error: any) {
+      throw new Error(`Failed to update agent: ${error?.message}`);
     }
 
-    return this.maskRowEnv(data);
+    return this.maskRowEnv(this.present(rows[0]));
   }
 
   async remove(userId: string, accountId: string, agentId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Soft-deactivate
-    const { data, error } = await client
-      .from('agents')
-      .update({ is_active: false, status: 'offline', updated_at: new Date().toISOString() })
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
+    const rows = await this.db
+      .update(agents)
+      .set({ isActive: false, status: 'offline', updatedAt: new Date().toISOString() })
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+      .returning();
 
-    if (error) {
+    if (!rows[0]) {
       throw new NotFoundException(`Agent with ID ${agentId} not found`);
     }
 
-    return data;
+    return this.present(rows[0]);
   }
 
   async pause(userId: string, accountId: string, agentId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('agents')
-      .update({ status: 'paused', updated_at: new Date().toISOString() })
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
+    const rows = await this.db
+      .update(agents)
+      .set({ status: 'paused', updatedAt: new Date().toISOString() })
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+      .returning();
 
-    if (error) {
+    if (!rows[0]) {
       throw new NotFoundException(`Agent with ID ${agentId} not found`);
     }
 
-    return data;
+    return this.present(rows[0]);
   }
 
   async resume(userId: string, accountId: string, agentId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('agents')
-      .update({ status: 'idle', updated_at: new Date().toISOString() })
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
+    const rows = await this.db
+      .update(agents)
+      .set({ status: 'idle', updatedAt: new Date().toISOString() })
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+      .returning();
 
-    if (error) {
+    if (!rows[0]) {
       throw new NotFoundException(`Agent with ID ${agentId} not found`);
     }
 
-    return data;
+    return this.present(rows[0]);
   }
 
   async clone(
@@ -323,164 +377,167 @@ export class AgentsService {
     agentId: string,
     newName?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     const original = await this.findOne(userId, accountId, agentId);
 
     const cloneName = newName ?? `${original.name} (Copy)`;
     const cloneSlug = generateSlug(cloneName);
 
-    const { data, error } = await client
-      .from('agents')
-      .insert({
-        account_id: accountId,
-        name: cloneName,
-        slug: cloneSlug,
-        avatar_url: original.avatar_url,
-        description: original.description,
-        persona: original.persona,
-        color: original.color,
-        backbone_connection_id: original.backbone_connection_id,
-        model_override: original.model_override,
-        max_concurrent_tasks: original.max_concurrent_tasks,
-        agent_type: original.agent_type,
-        config: original.config,
-        status: 'idle',
-        is_active: true,
-      })
-      .select()
-      .single();
+    try {
+      const rows = await this.db
+        .insert(agents)
+        .values({
+          accountId,
+          name: cloneName,
+          slug: cloneSlug,
+          avatarUrl: original.avatar_url,
+          description: original.description,
+          persona: original.persona,
+          color: original.color,
+          backboneConnectionId: original.backbone_connection_id,
+          modelOverride: original.model_override,
+          maxConcurrentTasks: original.max_concurrent_tasks,
+          agentType: original.agent_type,
+          config: original.config,
+          status: 'idle',
+          isActive: true,
+        })
+        .returning();
 
-    if (error) {
-      if (error.code === '23505') {
+      return this.present(rows[0]);
+    } catch (error: any) {
+      if (error?.code === '23505') {
         throw new ConflictException(
           `An agent with slug "${cloneSlug}" already exists in this account`,
         );
       }
-      throw new Error(`Failed to clone agent: ${error.message}`);
+      throw new Error(`Failed to clone agent: ${error?.message}`);
     }
-
-    return data;
   }
 
   /** Called by AgentActivityService and DAGExecutorService to update stats. */
   async recordCompletion(agentId: string, opts: { tokensUsed?: number } = {}) {
-    const client = this.supabaseAdmin.getClient();
-
-    const { error } = await client.rpc('increment_agent_stats', {
-      p_agent_id: agentId,
-      p_completed_delta: 1,
-      p_failed_delta: 0,
-      p_tokens_delta: opts.tokensUsed ?? 0,
-    });
-
-    if (error) {
+    try {
+      await this.db
+        .update(agents)
+        .set({
+          totalTasksCompleted: sql`${agents.totalTasksCompleted} + 1`,
+          totalTokensUsed: sql`${agents.totalTokensUsed} + ${opts.tokensUsed ?? 0}`,
+        })
+        .where(eq(agents.id, agentId));
+    } catch (error: any) {
       // Non-fatal: log but don't throw
-      console.error(`[AgentsService] recordCompletion failed: ${error.message}`);
+      console.error(`[AgentsService] recordCompletion failed: ${error?.message}`);
     }
   }
 
   async recordFailure(agentId: string) {
-    const client = this.supabaseAdmin.getClient();
-
-    const { error } = await client.rpc('increment_agent_stats', {
-      p_agent_id: agentId,
-      p_completed_delta: 0,
-      p_failed_delta: 1,
-      p_tokens_delta: 0,
-    });
-
-    if (error) {
-      console.error(`[AgentsService] recordFailure failed: ${error.message}`);
+    try {
+      await this.db
+        .update(agents)
+        .set({
+          totalTasksFailed: sql`${agents.totalTasksFailed} + 1`,
+        })
+        .where(eq(agents.id, agentId));
+    } catch (error: any) {
+      console.error(`[AgentsService] recordFailure failed: ${error?.message}`);
     }
   }
 
   // ── Skills management ────────────────────────────────────────────────────────
 
   async getAgentSkills(userId: string, accountId: string, agentId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('agent_skills')
-      .select('*, skill:skills(*)')
-      .eq('agent_id', agentId);
+    const data = await this.db.query.agentSkills.findMany({
+      where: eq(agentSkills.agentId, agentId),
+      with: { skill: true },
+    });
 
-    if (error) throw new Error(`Failed to fetch agent skills: ${error.message}`);
     return (data || []).map((row: any) => row.skill).filter(Boolean);
   }
 
   async addSkillToAgent(userId: string, accountId: string, agentId: string, skillId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data: agent, error: agentError } = await client
-      .from('agents')
-      .select('id')
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .single();
+    const [agent] = await this.db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+      .limit(1);
 
-    if (agentError || !agent) throw new NotFoundException(`Agent ${agentId} not found`);
+    if (!agent) throw new NotFoundException(`Agent ${agentId} not found`);
 
-    const { data, error } = await client
-      .from('agent_skills')
-      .insert({ agent_id: agentId, skill_id: skillId, is_active: true })
-      .select('*, skill:skills(*)')
-      .single();
-
-    if (error) {
-      if (error.code === '23505') throw new ConflictException('Skill already linked to this agent');
-      throw new Error(`Failed to add skill: ${error.message}`);
+    let inserted;
+    try {
+      inserted = await this.db
+        .insert(agentSkills)
+        .values({ agentId, skillId, isActive: true })
+        .returning();
+    } catch (error: any) {
+      if (error?.code === '23505') throw new ConflictException('Skill already linked to this agent');
+      throw new Error(`Failed to add skill: ${error?.message}`);
     }
 
-    return (data as any).skill;
+    // Re-read the inserted link with its joined skill so we return the same
+    // shape PostgREST gave via `.select('*, skill:skills(*)')`.
+    const link = await this.db.query.agentSkills.findFirst({
+      where: and(
+        eq(agentSkills.agentId, inserted[0].agentId),
+        eq(agentSkills.skillId, inserted[0].skillId),
+      ),
+      with: { skill: true },
+    });
+
+    return (link as any).skill;
   }
 
   async removeSkillFromAgent(userId: string, accountId: string, agentId: string, skillId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { error } = await client
-      .from('agent_skills')
-      .delete()
-      .eq('agent_id', agentId)
-      .eq('skill_id', skillId);
-
-    if (error) throw new Error(`Failed to remove skill: ${error.message}`);
+    try {
+      await this.db
+        .delete(agentSkills)
+        .where(and(eq(agentSkills.agentId, agentId), eq(agentSkills.skillId, skillId)));
+    } catch (error: any) {
+      throw new Error(`Failed to remove skill: ${error?.message}`);
+    }
     return { message: 'Skill removed from agent' };
   }
 
   // ── Knowledge docs management ────────────────────────────────────────────────
 
   async getAgentKnowledge(userId: string, accountId: string, agentId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Get migrated_from_category_id so we can also return category-linked docs (F14 soak period)
-    const { data: agent } = await client
-      .from('agents')
-      .select('id, migrated_from_category_id')
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .single();
+    const [agent] = await this.db
+      .select({
+        id: agents.id,
+        migratedFromCategoryId: agents.migratedFromCategoryId,
+      })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+      .limit(1);
 
     // Build OR filter: agent_id match OR category_id match (legacy)
-    let query = client
-      .from('knowledge_docs')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
+    const filter = agent?.migratedFromCategoryId
+      ? or(
+          eq(knowledgeDocs.agentId, agentId),
+          eq(knowledgeDocs.categoryId, agent.migratedFromCategoryId),
+        )
+      : eq(knowledgeDocs.agentId, agentId);
 
-    if (agent?.migrated_from_category_id) {
-      query = query.or(`agent_id.eq.${agentId},category_id.eq.${agent.migrated_from_category_id}`);
-    } else {
-      query = query.eq('agent_id', agentId);
+    try {
+      const data = await this.db
+        .select()
+        .from(knowledgeDocs)
+        .where(and(eq(knowledgeDocs.accountId, accountId), filter))
+        .orderBy(desc(knowledgeDocs.createdAt));
+      return data.map((row) => this.presentKnowledgeDoc(row));
+    } catch (error: any) {
+      throw new Error(`Failed to fetch agent knowledge: ${error?.message}`);
     }
-
-    const { data, error } = await query;
-    if (error) throw new Error(`Failed to fetch agent knowledge: ${error.message}`);
-    return data;
   }
 }

@@ -1,51 +1,34 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  ForbiddenException,
-} from '@nestjs/common';
-import { SupabaseService } from '../../supabase/supabase.service';
+import { Injectable, Inject } from '@nestjs/common';
+import { eq } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import { subscriptions } from '../../db/schema';
 import { AccessControlHelper } from '../../common/helpers/access-control.helper';
 
 @Injectable()
 export class SubscriptionsService {
   constructor(
-    private readonly supabaseService: SupabaseService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControlHelper: AccessControlHelper,
   ) {}
 
   async getSubscription(
     accountId: string,
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // Verify user belongs to account
     await this.accessControlHelper.verifyAccountAccess(
-      supabase,
+      null,
       accountId,
       userId,
     );
 
-    const { data, error } = await supabase
-      .from('subscriptions')
-      .select(
-        `
-                *,
-                plan:plans(*)
-            `,
-      )
-      .eq('account_id', accountId)
-      .single();
+    const row = await this.db.query.subscriptions.findFirst({
+      where: eq(subscriptions.accountId, accountId),
+      with: { plan: true },
+    });
 
-    if (error) {
-      if (error.code === 'PGRST116') {
-        // No rows returned
-        return null;
-      }
-      throw new InternalServerErrorException(error.message);
-    }
-
-    return data;
+    // No rows returned (PostgREST PGRST116) — preserve the null contract.
+    return row ?? null;
   }
 }

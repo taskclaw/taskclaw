@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { supabaseBrowser } from '@/lib/supabase-browser'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { getBlockedTasks } from '@/app/dashboard/pods/actions'
 
 export interface BlockedTask {
     id: string
@@ -23,72 +23,44 @@ export interface BlockedTask {
 }
 
 /**
- * Subscribes to blocked tasks via Supabase Realtime.
+ * Blocked-tasks alerts (Epic 4 — pg NOTIFY + SSE, replaces Supabase Realtime).
  *
- * On mount, fetches all tasks with status='blocked' for the account.
- * Listens for Realtime UPDATE events on the tasks table to:
- *   - Add newly-blocked tasks
- *   - Remove tasks that have been unblocked
- *
- * The cockpit and OrchCard use this to display blocker alerts without polling.
+ * Loads blocked tasks via the server action, then opens an EventSource to the BFF
+ * SSE proxy (/api/events). On any `tasks` event for the account, it debounce-refetches
+ * the blocked list (a task may have just become blocked or unblocked).
  */
 export function useBlockedTasks(accountId: string | null) {
     const [blockedTasks, setBlockedTasks] = useState<BlockedTask[]>([])
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-    const fetchInitial = useCallback(async () => {
-        if (!accountId) return
+    const reload = useCallback(async () => {
         try {
-            const { data } = await supabaseBrowser
-                .from('tasks')
-                .select('id, title, status, board_instance_id, metadata, account_id, created_at, updated_at')
-                .eq('account_id', accountId)
-                .eq('status', 'blocked')
-                .order('updated_at', { ascending: false })
-
-            if (data) setBlockedTasks(data as BlockedTask[])
+            const result = await getBlockedTasks()
+            if (result.error || !result.data) return
+            setBlockedTasks(result.data as BlockedTask[])
         } catch { /* silent */ }
-    }, [accountId])
+    }, [])
 
     useEffect(() => {
         if (!accountId) return
+        reload()
 
-        fetchInitial()
-
-        const channel = supabaseBrowser
-            .channel(`blocked-tasks-${accountId}`)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'UPDATE',
-                    schema: 'public',
-                    table: 'tasks',
-                    filter: `account_id=eq.${accountId}`,
-                },
-                (payload) => {
-                    const updated = payload.new as BlockedTask
-                    setBlockedTasks(prev => {
-                        if (updated.status === 'blocked') {
-                            // Upsert: replace existing or add new
-                            const idx = prev.findIndex(t => t.id === updated.id)
-                            if (idx >= 0) {
-                                const next = [...prev]
-                                next[idx] = updated
-                                return next
-                            }
-                            return [updated, ...prev]
-                        } else {
-                            // Unblocked — remove from list
-                            return prev.filter(t => t.id !== updated.id)
-                        }
-                    })
+        const es = new EventSource('/api/events')
+        es.onmessage = (e) => {
+            try {
+                const evt = JSON.parse(e.data)
+                if (evt?.table === 'tasks') {
+                    if (debounceRef.current) clearTimeout(debounceRef.current)
+                    debounceRef.current = setTimeout(reload, 250)
                 }
-            )
-            .subscribe()
+            } catch { /* ignore heartbeats / malformed */ }
+        }
 
         return () => {
-            supabaseBrowser.removeChannel(channel)
+            if (debounceRef.current) clearTimeout(debounceRef.current)
+            es.close()
         }
-    }, [accountId, fetchInitial])
+    }, [accountId, reload])
 
     return { blockedTasks }
 }

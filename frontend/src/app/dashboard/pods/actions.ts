@@ -846,3 +846,27 @@ export async function getOrchestrationDetail(orchestrationId: string): Promise<{
         return { error: e.message }
     }
 }
+
+// ─── Realtime helpers (Epic 4: replaces Supabase Realtime) ──────────
+
+/** Fetch blocked tasks for the active account (initial load for the SSE-driven hook). */
+export async function getBlockedTasks(): Promise<{ data?: any[]; error?: string }> {
+    const headers = await getAuthHeaders()
+    if (!headers) return { error: 'Not authenticated' }
+    const accountId = await getActiveAccountId()
+    if (!accountId) return { error: 'No active account' }
+    try {
+        const res = await fetch(
+            `${API_URL}/accounts/${accountId}/tasks?status=blocked`,
+            { headers }
+        )
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            return { error: err.message || 'Failed to fetch blocked tasks' }
+        }
+        const data = await res.json()
+        return { data }
+    } catch (e: any) {
+        return { error: e.message }
+    }
+}

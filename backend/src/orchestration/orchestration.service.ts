@@ -7,7 +7,14 @@ import {
   Inject,
   Optional,
 } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  orchestratedTasks,
+  orchestratedTaskDeps,
+  tasks,
+  pods,
+} from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { CreateOrchestrationDto } from './orchestration.dto';
 import { DagTaskDispatcher } from './dag-task-dispatcher.service';
@@ -47,12 +54,18 @@ export interface OrchestrationDetail {
   }>;
 }
 
+/**
+ * Drizzle's relational query returns the joined `pods` row under the relation
+ * name `pod`; PostgREST returned it under the table name `pods`. The pod fields
+ * are flattened onto the orchestration row here (`pod_name` / `pod_slug`), so we
+ * read off the `pod` relation key and drop it from the response.
+ */
 @Injectable()
 export class OrchestrationService {
   private readonly logger = new Logger(OrchestrationService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
     @Optional() @Inject(forwardRef(() => DagTaskDispatcher))
     private readonly dagDispatcher: DagTaskDispatcher | null,
@@ -68,22 +81,22 @@ export class OrchestrationService {
     accountId: string,
     dto: CreateOrchestrationDto,
   ): Promise<OrchestrationResult> {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Determine effective autonomy_level
     let effectiveAutonomy = dto.autonomy_level ?? 1;
 
     // If not provided, try to get from the first pod's autonomy_level
     if (!dto.autonomy_level && dto.tasks.length > 0) {
-      const { data: podData } = await client
-        .from('pods')
-        .select('autonomy_level')
-        .eq('id', dto.tasks[0].pod_id)
-        .eq('account_id', accountId)
-        .single();
-      if (podData?.autonomy_level) {
-        effectiveAutonomy = podData.autonomy_level;
+      const podRows = await this.db.query.pods.findFirst({
+        columns: { autonomyLevel: true },
+        where: and(
+          eq(pods.id, dto.tasks[0].pod_id),
+          eq(pods.accountId, accountId),
+        ),
+      });
+      if (podRows?.autonomyLevel) {
+        effectiveAutonomy = podRows.autonomyLevel;
       }
     }
 
@@ -97,25 +110,23 @@ export class OrchestrationService {
     // Store the primary pod_id (first task's pod) so the parent row can show a pod name
     const primaryPodId = dto.tasks.length > 0 ? dto.tasks[0].pod_id : null;
 
-    const { data: parentTask, error: parentError } = await client
-      .from('orchestrated_tasks')
-      .insert({
-        account_id: accountId,
-        pod_id: primaryPodId,
-        parent_orchestrated_task_id: null,
+    const parentRows = await this.db
+      .insert(orchestratedTasks)
+      .values({
+        accountId,
+        podId: primaryPodId,
+        parentOrchestratedTaskId: null,
         goal: dto.goal,
-        input_context: null,
+        inputContext: null,
         status: parentStatus,
-        autonomy_level: effectiveAutonomy,
+        autonomyLevel: effectiveAutonomy,
         metadata: { task_count: dto.tasks.length },
       })
-      .select()
-      .single();
+      .returning();
+    const parentTask = this.toOrchestratedTask(parentRows[0]);
 
-    if (parentError || !parentTask) {
-      throw new Error(
-        `Failed to create orchestration: ${parentError?.message}`,
-      );
+    if (!parentTask) {
+      throw new Error('Failed to create orchestration: undefined');
     }
 
     this.logger.log(
@@ -125,34 +136,35 @@ export class OrchestrationService {
     // All child tasks start as 'pending_approval' — they are promoted to 'pending'
     // (and dispatched) only when the user approves the orchestration via approveOrchestration().
     const taskInserts = dto.tasks.map((t, _idx) => ({
-      account_id: accountId,
-      pod_id: t.pod_id,
-      parent_orchestrated_task_id: parentTask.id,
+      accountId,
+      podId: t.pod_id,
+      parentOrchestratedTaskId: parentTask.id,
       goal: t.goal,
-      input_context: t.input_context ?? null,
+      inputContext: t.input_context ?? null,
       status: 'pending_approval', // will be updated after inserting
-      autonomy_level: effectiveAutonomy,
+      autonomyLevel: effectiveAutonomy,
       metadata: {},
     }));
 
-    const { data: childTasks, error: childError } = await client
-      .from('orchestrated_tasks')
-      .insert(taskInserts)
-      .select();
-
-    if (childError || !childTasks) {
+    let childTasks: OrchestratedTask[];
+    try {
+      const childRows = await this.db
+        .insert(orchestratedTasks)
+        .values(taskInserts)
+        .returning();
+      childTasks = childRows.map((r) => this.toOrchestratedTask(r)!);
+    } catch (childError: any) {
       // Rollback parent
-      await client
-        .from('orchestrated_tasks')
-        .delete()
-        .eq('id', parentTask.id);
+      await this.db
+        .delete(orchestratedTasks)
+        .where(eq(orchestratedTasks.id, parentTask.id));
       throw new Error(`Failed to create child tasks: ${childError?.message}`);
     }
 
     // Build dependency edges
     const depInserts: Array<{
-      upstream_task_id: string;
-      downstream_task_id: string;
+      upstreamTaskId: string;
+      downstreamTaskId: string;
     }> = [];
 
     dto.tasks.forEach((taskDto, idx) => {
@@ -160,8 +172,8 @@ export class OrchestrationService {
         for (const upstreamIdx of taskDto.depends_on_indices) {
           if (upstreamIdx >= 0 && upstreamIdx < childTasks.length) {
             depInserts.push({
-              upstream_task_id: childTasks[upstreamIdx].id,
-              downstream_task_id: childTasks[idx].id,
+              upstreamTaskId: childTasks[upstreamIdx].id,
+              downstreamTaskId: childTasks[idx].id,
             });
           }
         }
@@ -169,11 +181,9 @@ export class OrchestrationService {
     });
 
     if (depInserts.length > 0) {
-      const { error: depError } = await client
-        .from('orchestrated_task_deps')
-        .insert(depInserts);
-
-      if (depError) {
+      try {
+        await this.db.insert(orchestratedTaskDeps).values(depInserts);
+      } catch (depError: any) {
         this.logger.error(`Failed to create task deps: ${depError.message}`);
         // Not rolling back — tasks created, deps are best-effort here but log the error
         throw new Error(`Failed to create task dependencies: ${depError.message}`);
@@ -185,8 +195,8 @@ export class OrchestrationService {
     );
 
     return {
-      orchestration: parentTask as OrchestratedTask,
-      tasks: childTasks as OrchestratedTask[],
+      orchestration: parentTask,
+      tasks: childTasks,
     };
   }
 
@@ -197,49 +207,51 @@ export class OrchestrationService {
     userId: string,
     accountId: string,
   ): Promise<OrchestratedTask[]> {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('orchestrated_tasks')
-      .select('*, pods(id, name, slug)')
-      .eq('account_id', accountId)
-      .is('parent_orchestrated_task_id', null)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new Error(`Failed to list orchestrations: ${error.message}`);
-    }
+    const data = await this.db.query.orchestratedTasks.findMany({
+      where: and(
+        eq(orchestratedTasks.accountId, accountId),
+        isNull(orchestratedTasks.parentOrchestratedTaskId),
+      ),
+      orderBy: desc(orchestratedTasks.createdAt),
+      with: { pod: { columns: { id: true, name: true, slug: true } } },
+    });
 
     // For parent rows without a pod_id (legacy data), look up pod from first child task
-    const parentRows = (data ?? []) as any[];
+    const parentRows = data as any[];
     const nullPodParentIds = parentRows
-      .filter((r) => !r.pod_id)
+      .filter((r) => !r.podId)
       .map((r) => r.id);
 
     let childPodMap: Record<string, { name: string | null; slug: string | null }> = {};
     if (nullPodParentIds.length > 0) {
-      const { data: childData } = await client
-        .from('orchestrated_tasks')
-        .select('parent_orchestrated_task_id, pods(id, name, slug)')
-        .in('parent_orchestrated_task_id', nullPodParentIds)
-        .not('pod_id', 'is', null)
-        .order('created_at', { ascending: true });
+      const childData = await this.db.query.orchestratedTasks.findMany({
+        columns: { parentOrchestratedTaskId: true },
+        where: and(
+          inArray(orchestratedTasks.parentOrchestratedTaskId, nullPodParentIds),
+          isNotNull(orchestratedTasks.podId),
+        ),
+        orderBy: asc(orchestratedTasks.createdAt),
+        with: { pod: { columns: { id: true, name: true, slug: true } } },
+      });
 
-      for (const child of (childData ?? []) as any[]) {
-        const parentId = child.parent_orchestrated_task_id;
-        if (!childPodMap[parentId] && child.pods) {
-          childPodMap[parentId] = { name: child.pods.name ?? null, slug: child.pods.slug ?? null };
+      for (const child of childData as any[]) {
+        const parentId = child.parentOrchestratedTaskId;
+        if (!childPodMap[parentId] && child.pod) {
+          childPodMap[parentId] = { name: child.pod.name ?? null, slug: child.pod.slug ?? null };
         }
       }
     }
 
-    return parentRows.map((row) => ({
-      ...row,
-      pod_name: row.pods?.name ?? childPodMap[row.id]?.name ?? null,
-      pod_slug: row.pods?.slug ?? childPodMap[row.id]?.slug ?? null,
-      pods: undefined,
-    })) as OrchestratedTask[];
+    return parentRows.map((row) => {
+      const { pod, ...rest } = row;
+      return {
+        ...this.toOrchestratedTask(rest),
+        pod_name: pod?.name ?? childPodMap[row.id]?.name ?? null,
+        pod_slug: pod?.slug ?? childPodMap[row.id]?.slug ?? null,
+      };
+    }) as OrchestratedTask[];
   }
 
   /**
@@ -250,36 +262,31 @@ export class OrchestrationService {
     accountId: string,
     orchestrationId: string,
   ): Promise<OrchestrationDetail> {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Fetch parent
-    const { data: orchestration, error: orchError } = await client
-      .from('orchestrated_tasks')
-      .select('*')
-      .eq('id', orchestrationId)
-      .eq('account_id', accountId)
-      .is('parent_orchestrated_task_id', null)
-      .single();
+    const orchestration = await this.db.query.orchestratedTasks.findFirst({
+      where: and(
+        eq(orchestratedTasks.id, orchestrationId),
+        eq(orchestratedTasks.accountId, accountId),
+        isNull(orchestratedTasks.parentOrchestratedTaskId),
+      ),
+    });
 
-    if (orchError || !orchestration) {
+    if (!orchestration) {
       throw new NotFoundException(
         `Orchestration ${orchestrationId} not found`,
       );
     }
 
     // Fetch child tasks
-    const { data: tasks, error: tasksError } = await client
-      .from('orchestrated_tasks')
-      .select('*')
-      .eq('parent_orchestrated_task_id', orchestrationId)
-      .order('created_at', { ascending: true });
+    const taskRows = await this.db
+      .select()
+      .from(orchestratedTasks)
+      .where(eq(orchestratedTasks.parentOrchestratedTaskId, orchestrationId))
+      .orderBy(asc(orchestratedTasks.createdAt));
 
-    if (tasksError) {
-      throw new Error(`Failed to fetch tasks: ${tasksError.message}`);
-    }
-
-    const childTasks = (tasks ?? []) as OrchestratedTask[];
+    const childTasks = taskRows.map((r) => this.toOrchestratedTask(r)!);
 
     // Fetch deps for child tasks
     const taskIds = childTasks.map((t) => t.id);
@@ -287,15 +294,17 @@ export class OrchestrationService {
       [];
 
     if (taskIds.length > 0) {
-      const { data: depsData, error: depsError } = await client
-        .from('orchestrated_task_deps')
-        .select('upstream_task_id, downstream_task_id')
-        .in('upstream_task_id', taskIds);
-
-      if (depsError) {
-        this.logger.warn(`Failed to fetch deps: ${depsError.message}`);
-      } else {
+      try {
+        const depsData = await this.db
+          .select({
+            upstream_task_id: orchestratedTaskDeps.upstreamTaskId,
+            downstream_task_id: orchestratedTaskDeps.downstreamTaskId,
+          })
+          .from(orchestratedTaskDeps)
+          .where(inArray(orchestratedTaskDeps.upstreamTaskId, taskIds));
         deps = depsData ?? [];
+      } catch (depsError: any) {
+        this.logger.warn(`Failed to fetch deps: ${depsError.message}`);
       }
     }
 
@@ -304,22 +313,34 @@ export class OrchestrationService {
     const allOrchIds = [orchestrationId, ...taskIds];
     const boardTasksResults = await Promise.all(
       allOrchIds.map((oid) =>
-        client
-          .from('tasks')
-          .select('id, title, status, priority, board_instance_id, created_at, metadata')
-          .eq('account_id', accountId)
-          .contains('metadata', { orchestration_id: oid })
-      )
+        this.db
+          .select({
+            id: tasks.id,
+            title: tasks.title,
+            status: tasks.status,
+            priority: tasks.priority,
+            board_instance_id: tasks.boardInstanceId,
+            created_at: tasks.createdAt,
+            metadata: tasks.metadata,
+          })
+          .from(tasks)
+          .where(
+            and(
+              eq(tasks.accountId, accountId),
+              sql`${tasks.metadata} @> ${JSON.stringify({ orchestration_id: oid })}::jsonb`,
+            ),
+          ),
+      ),
     );
     const boardTasks = boardTasksResults
-      .flatMap((r) => r.data ?? [])
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      .flatMap((r) => r ?? [])
+      .sort((a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime());
 
     return {
-      orchestration: orchestration as OrchestratedTask,
+      orchestration: this.toOrchestratedTask(orchestration)!,
       tasks: childTasks,
       deps,
-      boardTasks,
+      boardTasks: boardTasks as OrchestrationDetail['boardTasks'],
     };
   }
 
@@ -331,26 +352,24 @@ export class OrchestrationService {
     taskId: string,
     result: { summary: string; structured_output?: unknown },
   ): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
     // Fetch account_id before updating (needed for DAG continuation)
-    const { data: taskRow } = await client
-      .from('orchestrated_tasks')
-      .select('account_id')
-      .eq('id', taskId)
-      .single();
+    const [taskRow] = await this.db
+      .select({ account_id: orchestratedTasks.accountId })
+      .from(orchestratedTasks)
+      .where(eq(orchestratedTasks.id, taskId))
+      .limit(1);
 
-    const { error } = await client
-      .from('orchestrated_tasks')
-      .update({
-        status: 'completed',
-        result_summary: result.summary,
-        structured_output: result.structured_output ?? null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', taskId);
-
-    if (error) {
+    try {
+      await this.db
+        .update(orchestratedTasks)
+        .set({
+          status: 'completed',
+          resultSummary: result.summary,
+          structuredOutput: result.structured_output ?? null,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(orchestratedTasks.id, taskId));
+    } catch (error: any) {
       throw new Error(`Failed to complete task: ${error.message}`);
     }
 
@@ -372,18 +391,16 @@ export class OrchestrationService {
    * Mark a task as failed with reason.
    */
   async failTask(taskId: string, reason: string): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
-    const { error } = await client
-      .from('orchestrated_tasks')
-      .update({
-        status: 'failed',
-        result_summary: reason,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', taskId);
-
-    if (error) {
+    try {
+      await this.db
+        .update(orchestratedTasks)
+        .set({
+          status: 'failed',
+          resultSummary: reason,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(orchestratedTasks.id, taskId));
+    } catch (error: any) {
       throw new Error(`Failed to fail task: ${error.message}`);
     }
 
@@ -400,40 +417,40 @@ export class OrchestrationService {
     accountId: string,
     orchestrationId: string,
   ): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Verify orchestration exists and belongs to account
-    const { data: orchestration, error: orchError } = await client
-      .from('orchestrated_tasks')
-      .select('id, status, account_id')
-      .eq('id', orchestrationId)
-      .eq('account_id', accountId)
-      .is('parent_orchestrated_task_id', null)
-      .single();
+    const orchestration = await this.db.query.orchestratedTasks.findFirst({
+      columns: { id: true, status: true, accountId: true },
+      where: and(
+        eq(orchestratedTasks.id, orchestrationId),
+        eq(orchestratedTasks.accountId, accountId),
+        isNull(orchestratedTasks.parentOrchestratedTaskId),
+      ),
+    });
 
-    if (orchError || !orchestration) {
+    if (!orchestration) {
       throw new NotFoundException(
         `Orchestration ${orchestrationId} not found`,
       );
     }
 
-    if (orchestration.account_id !== accountId) {
+    if (orchestration.accountId !== accountId) {
       throw new ForbiddenException('Access denied to this orchestration');
     }
 
     // Get all child tasks
-    const { data: childTasks, error: childError } = await client
-      .from('orchestrated_tasks')
-      .select('id')
-      .eq('parent_orchestrated_task_id', orchestrationId);
+    const childTasks = await this.db
+      .select({ id: orchestratedTasks.id })
+      .from(orchestratedTasks)
+      .where(eq(orchestratedTasks.parentOrchestratedTaskId, orchestrationId));
 
-    if (childError || !childTasks || childTasks.length === 0) {
+    if (!childTasks || childTasks.length === 0) {
       // No children — update parent status to 'running' and dispatch it directly
-      await client
-        .from('orchestrated_tasks')
-        .update({ status: 'running', updated_at: new Date().toISOString() })
-        .eq('id', orchestrationId);
+      await this.db
+        .update(orchestratedTasks)
+        .set({ status: 'running', updatedAt: new Date().toISOString() })
+        .where(eq(orchestratedTasks.id, orchestrationId));
       if (this.dagDispatcher) {
         this.dagDispatcher.enqueueTask(orchestrationId, 1).catch((err) => {
           this.logger.error(
@@ -447,10 +464,10 @@ export class OrchestrationService {
     const childTaskIds = childTasks.map((t) => t.id);
 
     // Find which child tasks have upstream dependencies
-    const { data: depsData } = await client
-      .from('orchestrated_task_deps')
-      .select('downstream_task_id')
-      .in('downstream_task_id', childTaskIds);
+    const depsData = await this.db
+      .select({ downstream_task_id: orchestratedTaskDeps.downstreamTaskId })
+      .from(orchestratedTaskDeps)
+      .where(inArray(orchestratedTaskDeps.downstreamTaskId, childTaskIds));
 
     const hasUpstream = new Set(
       (depsData ?? []).map((d) => d.downstream_task_id),
@@ -461,12 +478,12 @@ export class OrchestrationService {
 
     // Transition root tasks to 'pending'
     if (rootTaskIds.length > 0) {
-      const { error: updateError } = await client
-        .from('orchestrated_tasks')
-        .update({ status: 'pending', updated_at: new Date().toISOString() })
-        .in('id', rootTaskIds);
-
-      if (updateError) {
+      try {
+        await this.db
+          .update(orchestratedTasks)
+          .set({ status: 'pending', updatedAt: new Date().toISOString() })
+          .where(inArray(orchestratedTasks.id, rootTaskIds));
+      } catch (updateError: any) {
         throw new Error(
           `Failed to approve root tasks: ${updateError.message}`,
         );
@@ -474,10 +491,10 @@ export class OrchestrationService {
     }
 
     // Update parent orchestration status to 'running' (children are now executing)
-    await client
-      .from('orchestrated_tasks')
-      .update({ status: 'running', updated_at: new Date().toISOString() })
-      .eq('id', orchestrationId);
+    await this.db
+      .update(orchestratedTasks)
+      .set({ status: 'running', updatedAt: new Date().toISOString() })
+      .where(eq(orchestratedTasks.id, orchestrationId));
 
     this.logger.log(
       `Orchestration approved: ${orchestrationId} → running, ${rootTaskIds.length} root tasks set to pending`,
@@ -504,46 +521,71 @@ export class OrchestrationService {
     accountId: string,
     orchestrationId: string,
   ): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Verify orchestration exists and belongs to account
-    const { data: orchestration, error: orchError } = await client
-      .from('orchestrated_tasks')
-      .select('id, account_id')
-      .eq('id', orchestrationId)
-      .eq('account_id', accountId)
-      .is('parent_orchestrated_task_id', null)
-      .single();
+    const orchestration = await this.db.query.orchestratedTasks.findFirst({
+      columns: { id: true, accountId: true },
+      where: and(
+        eq(orchestratedTasks.id, orchestrationId),
+        eq(orchestratedTasks.accountId, accountId),
+        isNull(orchestratedTasks.parentOrchestratedTaskId),
+      ),
+    });
 
-    if (orchError || !orchestration) {
+    if (!orchestration) {
       throw new NotFoundException(
         `Orchestration ${orchestrationId} not found`,
       );
     }
 
-    if (orchestration.account_id !== accountId) {
+    if (orchestration.accountId !== accountId) {
       throw new ForbiddenException('Access denied to this orchestration');
     }
 
     // Cancel all child tasks
-    await client
-      .from('orchestrated_tasks')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('parent_orchestrated_task_id', orchestrationId);
+    await this.db
+      .update(orchestratedTasks)
+      .set({ status: 'cancelled', updatedAt: new Date().toISOString() })
+      .where(eq(orchestratedTasks.parentOrchestratedTaskId, orchestrationId));
 
     // Cancel parent orchestration
-    const { error: parentError } = await client
-      .from('orchestrated_tasks')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('id', orchestrationId);
-
-    if (parentError) {
+    try {
+      await this.db
+        .update(orchestratedTasks)
+        .set({ status: 'cancelled', updatedAt: new Date().toISOString() })
+        .where(eq(orchestratedTasks.id, orchestrationId));
+    } catch (parentError: any) {
       throw new Error(
         `Failed to cancel orchestration: ${parentError.message}`,
       );
     }
 
     this.logger.log(`Orchestration rejected/cancelled: ${orchestrationId}`);
+  }
+
+  /**
+   * Map a camelCase Drizzle row to the snake_case OrchestratedTask response shape
+   * that callers (and the frontend) depend on. Preserves the PostgREST contract.
+   */
+  private toOrchestratedTask(
+    row: typeof orchestratedTasks.$inferSelect | undefined,
+  ): OrchestratedTask | undefined {
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      account_id: row.accountId,
+      pod_id: row.podId,
+      parent_orchestrated_task_id: row.parentOrchestratedTaskId,
+      goal: row.goal,
+      input_context: row.inputContext as Record<string, unknown> | null,
+      status: row.status,
+      autonomy_level: row.autonomyLevel,
+      result_summary: row.resultSummary,
+      structured_output: row.structuredOutput,
+      metadata: row.metadata as Record<string, unknown> | null,
+      created_at: row.createdAt as string,
+      updated_at: row.updatedAt as string,
+    };
   }
 }

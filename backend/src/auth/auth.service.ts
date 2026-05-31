@@ -2,180 +2,223 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  Inject,
 } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
-import { LoginDto, SignupDto, UpdatePasswordDto } from './dto/auth.dto';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcryptjs';
+import { randomBytes, createHash } from 'crypto';
+import { eq, sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { users, passwordResetTokens } from '../db/schema';
+import { JwtAuthService } from './jwt-auth.service';
+import { MailerService } from '../common/mailer/mailer.service';
+import { CacheService } from '../common/cache.service';
+import { LoginDto, SignupDto } from './dto/auth.dto';
 
+// Pre-computed bcrypt hash so the unknown-email branch of login spends roughly the
+// same time as a real compare (mitigates user enumeration via timing).
+const DUMMY_BCRYPT_HASH =
+  '$2a$12$C6UzMDM.H6dfI/f/IKcEeO3p3oP6m0s0qX9oQ2qY3wP9m7m1bB8mC';
+const RESET_TTL_MS = 60 * 60 * 1000; // 1h
+const BCRYPT_COST = 12;
+
+/**
+ * Local Postgres auth (Epic 1). GoTrue/Supabase has been removed; this is the only
+ * auth path. Access tokens are HS256 JWTs (same JWT_SECRET); refresh tokens rotate
+ * via JwtAuthService. Existing GoTrue bcrypt ($2a$) hashes verify unchanged.
+ */
 @Injectable()
 export class AuthService {
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly jwt: JwtService,
+    private readonly tokens: JwtAuthService,
+    private readonly mailer: MailerService,
+    private readonly cache: CacheService,
+    @Inject(DB) private readonly db: Db,
+  ) {}
 
-  async login(loginDto: LoginDto) {
-    // Use getAuthClient with empty token initially to get a client for auth operations
-    // Actually, for signInWithPassword, we can use the Anon key client directly.
-    // But getAuthClient requires a token.
-    // Let's use getClient() which returns the anon client if no token is passed?
-    // Wait, getClient() returns Service Role if token is passed, or Anon if not.
-    // BUT we want to be explicit.
+  private sha256(raw: string): string {
+    return createHash('sha256').update(raw).digest('hex');
+  }
 
-    // Let's look at SupabaseService again.
-    // getClient(accessToken?) -> if token: Service Role (BAD for auth), if no token: Anon (GOOD for auth)
+  async login(
+    loginDto: LoginDto,
+    meta: { userAgent?: string; ip?: string } = {},
+  ) {
+    const email = loginDto.email.toLowerCase();
+    const [user] = await this.db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        passwordHash: users.passwordHash,
+        status: users.status,
+      })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${email}`)
+      .limit(1);
 
-    // So for login, we can use getClient() (no token).
-    const supabase = this.supabaseService.getClient();
+    // Always run a compare (dummy on unknown email) to keep timing uniform.
+    const ok = await bcrypt.compare(
+      loginDto.password,
+      user?.passwordHash ?? DUMMY_BCRYPT_HASH,
+    );
+    if (!user || !ok) throw new UnauthorizedException('Invalid credentials');
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: loginDto.email,
-      password: loginDto.password,
-    });
-
-    if (error) {
-      console.error('[AuthService.login] Supabase auth error:', {
-        message: error.message,
-        status: error.status,
-        name: error.name,
-        email: loginDto.email,
-      });
-      throw new UnauthorizedException(error.message);
+    if (String(user.status).toLowerCase() !== 'active') {
+      throw new UnauthorizedException(
+        'Your account is pending approval or suspended.',
+      );
     }
 
-    // Block login for users pending approval / suspended (stored in public.users.status)
-    // We intentionally check this server-side so even if the frontend changes, pending users can't log in.
-    if (data?.user?.id) {
-      const admin = this.supabaseService.getAdminClient();
-      const { data: profile, error: profileError } = await admin
-        .from('users')
-        .select('status')
-        .eq('id', data.user.id)
-        .single();
+    await this.db
+      .update(users)
+      .set({ lastSignInAt: new Date().toISOString() })
+      .where(eq(users.id, user.id));
 
-      if (profileError) {
-        // Backwards-compat if migration wasn't applied yet: allow login rather than hard-failing.
-        // Once `users.status` exists, this will enforce the gate.
-        const msg = (profileError as any)?.message?.toLowerCase?.() || '';
-        if (!msg.includes('status')) {
-          throw new UnauthorizedException('Unable to verify account status');
-        }
-      } else {
-        const status = String(profile?.status || 'active').toLowerCase();
-        if (status !== 'active') {
-          throw new UnauthorizedException(
-            'Your account is pending approval or suspended.',
-          );
-        }
-      }
-    }
-
-    return data.session;
+    return this.tokens.issueSession(
+      { id: user.id, email: user.email, name: user.name },
+      meta,
+    );
   }
 
   async signup(signupDto: SignupDto) {
-    const supabase = this.supabaseService.getClient();
-
-    const { data, error } = await supabase.auth.signUp({
-      email: signupDto.email,
-      password: signupDto.password,
-      options: {
-        data: {
-          full_name: signupDto.name,
-        },
-      },
-    });
-
-    if (error) {
-      throw new BadRequestException(error.message);
-    }
-
-    // Mark newly created users as pending until an admin approves them.
-    // This is stored in public.users (profile table) and enforced on login + API guard.
-    if (data?.user?.id) {
-      const admin = this.supabaseService.getAdminClient();
-      const { error: upsertError } = await admin.from('users').upsert(
-        {
-          id: data.user.id,
-          email: signupDto.email,
-          name: signupDto.name,
-          status: 'pending',
-        },
-        { onConflict: 'id' },
-      );
-
-      if (upsertError) {
-        // Don't block signup if profile upsert fails, but log for debugging.
-        console.error(
-          '[AuthService.signup] Failed to set user pending status:',
-          upsertError,
-        );
+    const email = signupDto.email.toLowerCase();
+    const passwordHash = await bcrypt.hash(signupDto.password, BCRYPT_COST);
+    try {
+      // The on_public_user_created trigger provisions account + account_users.
+      await this.db
+        .insert(users)
+        .values({ email, name: signupDto.name, passwordHash, status: 'pending' });
+    } catch (e: any) {
+      if (e?.code === '23505') {
+        throw new BadRequestException('Email already registered');
       }
+      throw new BadRequestException(e?.message ?? 'Signup failed');
     }
-
-    return data.session;
+    // No session — account is pending approval.
+    return { success: true, status: 'pending' };
   }
 
-  async logout(accessToken: string) {
-    // To sign out, we need the user's session.
-    // Use getAuthClient(accessToken) which uses Anon + JWT
-    const supabase = this.supabaseService.getAuthClient(accessToken);
-    const { error } = await supabase.auth.signOut();
+  async refresh(refreshToken: string) {
+    const { userId, refresh } = await this.tokens.rotateRefresh(refreshToken);
+    const [user] = await this.db
+      .select({ id: users.id, email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user) throw new UnauthorizedException('User not found');
+    const access_token = await this.tokens.signAccess(user);
+    return {
+      access_token,
+      refresh_token: refresh,
+      expires_in: 3600,
+      token_type: 'bearer' as const,
+      user,
+    };
+  }
 
-    if (error) {
-      // We don't really care if logout fails, but good to log
-      console.error('Logout error:', error);
-    }
-
+  async logout(accessToken: string, refreshToken?: string) {
+    if (refreshToken) await this.tokens.revoke(refreshToken);
+    const sub = this.subFromToken(accessToken);
+    if (sub) this.cache.delete(`user:${sub}:status`);
     return { success: true };
   }
 
   async getMe(accessToken: string) {
-    const supabase = this.supabaseService.getAuthClient(accessToken);
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-
-    if (error || !user) {
-      throw new UnauthorizedException('Invalid session');
-    }
-
+    const sub = this.subFromToken(accessToken);
+    if (!sub) throw new UnauthorizedException('Invalid session');
+    const [user] = await this.db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        status: users.status,
+      })
+      .from(users)
+      .where(eq(users.id, sub))
+      .limit(1);
+    if (!user) throw new UnauthorizedException('Invalid session');
     return user;
   }
 
-  async resetPasswordForEmail(email: string, redirectTo: string) {
-    const supabase = this.supabaseService.getClient();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo,
-    });
+  async resetPasswordForEmail(email: string, _redirectTo: string) {
+    const [user] = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${email.toLowerCase()}`)
+      .limit(1);
 
-    if (error) {
-      throw new BadRequestException(error.message);
+    if (user) {
+      const raw = randomBytes(32).toString('hex');
+      await this.db.insert(passwordResetTokens).values({
+        userId: user.id,
+        tokenHash: this.sha256(raw),
+        expiresAt: new Date(Date.now() + RESET_TTL_MS).toISOString(),
+      });
+      const base = this.config.get<string>('SITE_URL') ?? '';
+      await this.mailer.sendPasswordReset(
+        email,
+        `${base}/update-password?token=${raw}`,
+      );
     }
-
+    // Always succeed — no account enumeration.
     return { success: true };
   }
 
-  async updateUser(accessToken: string, attributes: any) {
-    const supabase = this.supabaseService.getAuthClient(accessToken);
-    const { data, error } = await supabase.auth.updateUser(attributes);
-
-    if (error) {
-      throw new BadRequestException(error.message);
+  async resetPassword(rawToken: string, newPassword: string) {
+    const [row] = await this.db
+      .select()
+      .from(passwordResetTokens)
+      .where(eq(passwordResetTokens.tokenHash, this.sha256(rawToken)))
+      .limit(1);
+    if (!row || row.usedAt || new Date(row.expiresAt) < new Date()) {
+      throw new BadRequestException('Invalid or expired token');
     }
-
-    return data.user;
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
+    await this.db
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date().toISOString() })
+      .where(eq(users.id, row.userId));
+    await this.db
+      .update(passwordResetTokens)
+      .set({ usedAt: new Date().toISOString() })
+      .where(eq(passwordResetTokens.id, row.id));
+    await this.tokens.revokeAllForUser(row.userId);
+    this.cache.delete(`user:${row.userId}:status`);
+    return { success: true };
   }
 
-  async exchangeCodeForSession(code: string) {
-    const supabase = this.supabaseService.getClient(); // Anon client is fine for code exchange? Or getAuthClient?
-    // Actually, exchangeCodeForSession is usually done with the anon key.
-    // But wait, getClient() returns Service Role if token is passed, or Anon if not.
-    // We don't have a token yet. So getClient() (no args) returns Anon client.
-
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-
-    if (error) {
-      throw new UnauthorizedException(error.message);
+  async updateUser(accessToken: string, attributes: { password?: string }) {
+    const sub = this.subFromToken(accessToken);
+    if (!sub) throw new UnauthorizedException('Invalid session');
+    if (attributes.password) {
+      const passwordHash = await bcrypt.hash(attributes.password, BCRYPT_COST);
+      await this.db
+        .update(users)
+        .set({ passwordHash, updatedAt: new Date().toISOString() })
+        .where(eq(users.id, sub));
+      await this.tokens.revokeAllForUser(sub);
     }
+    const [user] = await this.db
+      .select({ id: users.id, email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.id, sub))
+      .limit(1);
+    return user;
+  }
 
-    return data.session;
+  /** Verify a local access token (HS256, shared secret) and return its subject. */
+  private subFromToken(token: string): string | null {
+    try {
+      const payload = this.jwt.verify<{ sub?: string }>(token, {
+        secret: this.config.get<string>('JWT_SECRET'),
+      });
+      return payload?.sub ?? null;
+    } catch {
+      return null;
+    }
   }
 }

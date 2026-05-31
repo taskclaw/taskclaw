@@ -1,9 +1,8 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-} from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { ilike, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
+import { DB, type Db } from '../db';
+import { users, accounts, projects } from '../db/schema';
 import { EmbeddingService } from '../ai-assistant/services/embedding.service';
 
 interface SearchResult {
@@ -15,18 +14,35 @@ interface SearchResult {
   similarity?: number;
 }
 
+/**
+ * Zod schemas for the vector-search SQL function results. The vector RPCs stay
+ * as raw SQL function calls (`select * from search_*_vector(...)`); their rows
+ * are untyped, so parse-don't-cast (§12.3) at the boundary.
+ */
+const vectorUserRowSchema = z.object({
+  id: z.string(),
+  // `users.email` is NOT NULL; the function selects it directly.
+  email: z.string(),
+  name: z.string().nullable(),
+  similarity: z.number().nullable(),
+});
+
+const vectorProjectRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  similarity: z.number().nullable(),
+});
+
 @Injectable()
 export class SearchService {
   private readonly logger = new Logger(SearchService.name);
 
   constructor(
-    private readonly supabaseService: SupabaseService,
+    @Inject(DB) private readonly db: Db,
     private readonly embeddingService: EmbeddingService,
   ) {}
 
   async searchGlobal(query: string) {
-    const supabase = this.supabaseService.getAdminClient();
-
     // Try hybrid search (vector + fallback) if embeddings are configured
     if (this.embeddingService.isConfigured()) {
       return this.hybridSearch(query);
@@ -40,66 +56,68 @@ export class SearchService {
    * Hybrid search: Attempts vector search first, falls back to ILIKE if needed
    */
   private async hybridSearch(query: string) {
-    const supabase = this.supabaseService.getAdminClient();
-
     try {
       // Generate embedding for the search query
       const queryEmbedding =
         await this.embeddingService.generateEmbedding(query);
+      const embedding = JSON.stringify(queryEmbedding);
 
-      // Perform vector searches in parallel
+      // Perform vector searches in parallel.
+      // Vector-search functions STAY as SQL function calls (Drizzle gotchas guide).
       const [vectorUsersRes, vectorProjectsRes] = await Promise.all([
-        supabase.rpc('search_users_vector', {
-          query_embedding: JSON.stringify(queryEmbedding),
-          match_limit: 5,
-          similarity_threshold: 0.3,
-        }),
-        supabase.rpc('search_projects_vector', {
-          query_embedding: JSON.stringify(queryEmbedding),
-          match_limit: 5,
-          similarity_threshold: 0.3,
-        }),
+        this.db.execute(
+          sql`select * from search_users_vector(${embedding}::vector, ${5}, ${0.3})`,
+        ),
+        this.db.execute(
+          sql`select * from search_projects_vector(${embedding}::vector, ${5}, ${0.3})`,
+        ),
       ]);
 
       // Also do traditional search for accounts (no description field to embed)
       const searchTerm = `%${query}%`;
-      const accountsRes = await supabase
-        .from('accounts')
-        .select('id, name')
-        .ilike('name', searchTerm)
+      const accountsData = await this.db
+        .select({ id: accounts.id, name: accounts.name })
+        .from(accounts)
+        .where(ilike(accounts.name, searchTerm))
         .limit(5);
 
-      // Process vector results
-      const vectorUsers = (vectorUsersRes.data || []).map((u: any) => ({
-        id: u.id,
-        title: u.name || u.email,
-        subtitle: u.email,
-        type: 'user',
-        url: `/admin/users?search=${u.email}`,
-        similarity: u.similarity,
-      }));
+      // Process vector results (Zod-parse the raw SQL rows)
+      const vectorUsers = z
+        .array(vectorUserRowSchema)
+        .parse(vectorUsersRes.rows ?? [])
+        .map((u) => ({
+          id: u.id,
+          title: u.name || u.email,
+          subtitle: u.email,
+          type: 'user',
+          url: `/admin/users?search=${u.email}`,
+          similarity: u.similarity ?? undefined,
+        }));
 
-      const vectorProjects = (vectorProjectsRes.data || []).map((p: any) => ({
-        id: p.id,
-        title: p.name,
-        subtitle: 'Project',
-        type: 'project',
-        url: `/dashboard/projects/${p.id}`,
-        similarity: p.similarity,
-      }));
+      const vectorProjects = z
+        .array(vectorProjectRowSchema)
+        .parse(vectorProjectsRes.rows ?? [])
+        .map((p) => ({
+          id: p.id,
+          title: p.name,
+          subtitle: 'Project',
+          type: 'project',
+          url: `/dashboard/projects/${p.id}`,
+          similarity: p.similarity ?? undefined,
+        }));
 
       // If vector search returned few results, supplement with ILIKE search
-      let users = vectorUsers;
-      let projects = vectorProjects;
+      let users_: SearchResult[] = vectorUsers;
+      let projects_: SearchResult[] = vectorProjects;
 
       if (vectorUsers.length < 3) {
-        const ilikeUsersRes = await supabase
-          .from('users')
-          .select('id, email, name')
-          .or(`email.ilike.${searchTerm},name.ilike.${searchTerm}`)
+        const ilikeUsersData = await this.db
+          .select({ id: users.id, email: users.email, name: users.name })
+          .from(users)
+          .where(or(ilike(users.email, searchTerm), ilike(users.name, searchTerm)))
           .limit(5);
 
-        const ilikeUsers = (ilikeUsersRes.data || []).map((u: any) => ({
+        const ilikeUsers = ilikeUsersData.map((u) => ({
           id: u.id,
           title: u.name || u.email,
           subtitle: u.email,
@@ -108,17 +126,26 @@ export class SearchService {
         }));
 
         // Merge and deduplicate
-        users = this.mergeResults(vectorUsers, ilikeUsers);
+        users_ = this.mergeResults(vectorUsers, ilikeUsers);
       }
 
       if (vectorProjects.length < 3) {
-        const ilikeProjectsRes = await supabase
-          .from('projects')
-          .select('id, name, account_id')
-          .or(`name.ilike.${searchTerm},description.ilike.${searchTerm}`)
+        const ilikeProjectsData = await this.db
+          .select({
+            id: projects.id,
+            name: projects.name,
+            accountId: projects.accountId,
+          })
+          .from(projects)
+          .where(
+            or(
+              ilike(projects.name, searchTerm),
+              ilike(projects.description, searchTerm),
+            ),
+          )
           .limit(5);
 
-        const ilikeProjects = (ilikeProjectsRes.data || []).map((p: any) => ({
+        const ilikeProjects = ilikeProjectsData.map((p) => ({
           id: p.id,
           title: p.name,
           subtitle: 'Project',
@@ -126,22 +153,19 @@ export class SearchService {
           url: `/dashboard/projects/${p.id}`,
         }));
 
-        projects = this.mergeResults(vectorProjects, ilikeProjects);
+        projects_ = this.mergeResults(vectorProjects, ilikeProjects);
       }
 
-      if (accountsRes.error)
-        throw new InternalServerErrorException(accountsRes.error.message);
-
       return {
-        users: users.slice(0, 5),
-        accounts: accountsRes.data.map((a: any) => ({
+        users: users_.slice(0, 5),
+        accounts: accountsData.map((a) => ({
           id: a.id,
           title: a.name,
           subtitle: 'Account',
           type: 'account',
           url: `/admin/accounts?search=${a.name}`,
         })),
-        projects: projects.slice(0, 5),
+        projects: projects_.slice(0, 5),
       };
     } catch (error: any) {
       this.logger.warn(
@@ -155,51 +179,52 @@ export class SearchService {
    * Traditional ILIKE search (fallback when embeddings unavailable)
    */
   private async ilikeSearch(query: string) {
-    const supabase = this.supabaseService.getAdminClient();
     const searchTerm = `%${query}%`;
 
     // Parallel queries
-    const [usersRes, accountsRes, projectsRes] = await Promise.all([
-      supabase
-        .from('users')
-        .select('id, email, name')
-        .or(`email.ilike.${searchTerm},name.ilike.${searchTerm}`)
+    const [usersData, accountsData, projectsData] = await Promise.all([
+      this.db
+        .select({ id: users.id, email: users.email, name: users.name })
+        .from(users)
+        .where(or(ilike(users.email, searchTerm), ilike(users.name, searchTerm)))
         .limit(5),
-      supabase
-        .from('accounts')
-        .select('id, name')
-        .ilike('name', searchTerm)
+      this.db
+        .select({ id: accounts.id, name: accounts.name })
+        .from(accounts)
+        .where(ilike(accounts.name, searchTerm))
         .limit(5),
-      supabase
-        .from('projects')
-        .select('id, name, account_id')
-        .or(`name.ilike.${searchTerm},description.ilike.${searchTerm}`)
+      this.db
+        .select({
+          id: projects.id,
+          name: projects.name,
+          accountId: projects.accountId,
+        })
+        .from(projects)
+        .where(
+          or(
+            ilike(projects.name, searchTerm),
+            ilike(projects.description, searchTerm),
+          ),
+        )
         .limit(5),
     ]);
 
-    if (usersRes.error)
-      throw new InternalServerErrorException(usersRes.error.message);
-    if (accountsRes.error)
-      throw new InternalServerErrorException(accountsRes.error.message);
-    if (projectsRes.error)
-      throw new InternalServerErrorException(projectsRes.error.message);
-
     return {
-      users: usersRes.data.map((u: any) => ({
+      users: usersData.map((u) => ({
         id: u.id,
         title: u.name || u.email,
         subtitle: u.email,
         type: 'user',
         url: `/admin/users?search=${u.email}`,
       })),
-      accounts: accountsRes.data.map((a: any) => ({
+      accounts: accountsData.map((a) => ({
         id: a.id,
         title: a.name,
         subtitle: 'Account',
         type: 'account',
         url: `/admin/accounts?search=${a.name}`,
       })),
-      projects: projectsRes.data.map((p: any) => ({
+      projects: projectsData.map((p) => ({
         id: p.id,
         title: p.name,
         subtitle: 'Project',

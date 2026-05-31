@@ -1,9 +1,7 @@
-import {
-  Injectable,
-  InternalServerErrorException,
-  ForbiddenException,
-} from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import { Injectable, Inject, InternalServerErrorException } from '@nestjs/common';
+import { and, count, desc, eq, ilike } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { accounts, accountUsers } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 
 import { SystemSettingsService } from '../system-settings/system-settings.service';
@@ -12,34 +10,34 @@ import { ProjectsService } from '../projects/projects.service';
 @Injectable()
 export class AccountsService {
   constructor(
-    private readonly supabaseService: SupabaseService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControlHelper: AccessControlHelper,
     private readonly systemSettingsService: SystemSettingsService,
     private readonly projectsService: ProjectsService,
   ) {}
 
-  async getUserAccounts(userId: string, accessToken?: string) {
-    // We use the service role client (via getClient with token) to bypass RLS
-    // But we manually filter by user_id here, so it is safe.
-    const supabase = this.supabaseService.getClient(accessToken);
-
-    const { data, error } = await supabase
-      .from('account_users')
-      .select(
-        `
-        role,
-        account:accounts (
-          id,
-          name,
-          onboarding_completed
-        )
-      `,
-      )
-      .eq('user_id', userId);
-
-    if (error) {
+  async getUserAccounts(userId: string, _accessToken?: string) {
+    let data;
+    try {
+      // We manually filter by user_id here, so it is safe.
+      data = await this.db.query.accountUsers.findMany({
+        where: eq(accountUsers.userId, userId),
+        columns: { role: true },
+        with: {
+          account: {
+            columns: {
+              id: true,
+              name: true,
+              onboardingCompleted: true,
+            },
+          },
+        },
+      });
+    } catch (error) {
       console.error('AccountsService Error:', error);
-      throw new InternalServerErrorException(error.message);
+      throw new InternalServerErrorException(
+        error instanceof Error ? error.message : 'Failed to load accounts',
+      );
     }
 
     if (!data) {
@@ -50,41 +48,47 @@ export class AccountsService {
       id: item.account.id,
       name: item.account.name,
       role: item.role,
-      onboarding_completed: item.account.onboarding_completed ?? false,
+      onboarding_completed: item.account.onboardingCompleted ?? false,
       plan: 'Free', // Placeholder for now
     }));
   }
 
   async createAccount(userId: string, name: string, accessToken?: string) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // 1. Create the account
     // No access control needed for creation (anyone can create an account if authenticated)
-    const { data: account, error: accountError } = await supabase
-      .from('accounts')
-      .insert({
-        name,
-        owner_user_id: userId,
-      })
-      .select()
-      .single();
-
-    if (accountError) {
+    let account;
+    try {
+      [account] = await this.db
+        .insert(accounts)
+        .values({
+          name,
+          ownerUserId: userId,
+        })
+        .returning();
+    } catch (accountError) {
       console.error('AccountsService: Error creating account', accountError);
-      throw new InternalServerErrorException(accountError.message);
+      throw new InternalServerErrorException(
+        accountError instanceof Error
+          ? accountError.message
+          : 'Failed to create account',
+      );
     }
 
     // 2. Add the user as owner in account_users
-    const { error: memberError } = await supabase.from('account_users').insert({
-      account_id: account.id,
-      user_id: userId,
-      role: 'owner',
-    });
-
-    if (memberError) {
+    try {
+      await this.db.insert(accountUsers).values({
+        accountId: account.id,
+        userId: userId,
+        role: 'owner',
+      });
+    } catch (memberError) {
       console.error('AccountsService: Error adding owner', memberError);
       // Ideally we should rollback the account creation here
-      throw new InternalServerErrorException(memberError.message);
+      throw new InternalServerErrorException(
+        memberError instanceof Error
+          ? memberError.message
+          : 'Failed to add owner',
+      );
     }
 
     // 3. Check system settings and auto-create project if needed
@@ -92,20 +96,6 @@ export class AccountsService {
       const settings = await this.systemSettingsService.getSettings();
       if (!settings.allow_multiple_projects) {
         // Auto-create default project
-        // We need to use the admin client or pass the access token if available.
-        // Since ProjectsService uses SupabaseService which might need context, let's see.
-        // ProjectsService.createProject expects (accountId, name, userId).
-        // Wait, let's check ProjectsService signature.
-        // Assuming createProject(accountId: string, name: string, userId: string)
-        // We might need to handle the "accessToken" part if ProjectsService relies on it for RLS.
-        // However, since we are in the backend, we might be able to bypass RLS or use the token we have.
-
-        // Actually, ProjectsService usually takes (createProjectDto, userId) or similar.
-        // Let's assume for now I can call it. I'll need to verify ProjectsService signature.
-        // But wait, I can't see ProjectsService right now.
-        // I'll assume standard signature and fix if needed.
-        // Re-reading my previous thought: "ProjectsService.createProject(account.id, 'Default Project', accessToken)"
-
         await this.projectsService.createProject(
           account.id,
           'Default Project',
@@ -125,27 +115,27 @@ export class AccountsService {
     accountId: string,
     name: string,
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // Verify user is owner/admin
     await this.accessControlHelper.verifyAccountAccess(
-      supabase,
+      null,
       accountId,
       userId,
       ['owner', 'admin'],
     );
 
-    const { data, error } = await supabase
-      .from('accounts')
-      .update({ name })
-      .eq('id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new InternalServerErrorException(error.message);
+    let data;
+    try {
+      [data] = await this.db
+        .update(accounts)
+        .set({ name })
+        .where(eq(accounts.id, accountId))
+        .returning();
+    } catch (error) {
+      throw new InternalServerErrorException(
+        error instanceof Error ? error.message : 'Failed to update account',
+      );
     }
 
     return data;
@@ -155,76 +145,87 @@ export class AccountsService {
     accountId: string,
     updates: { name?: string; onboarding_completed?: boolean },
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // Verify user is owner/admin/member
     await this.accessControlHelper.verifyAccountAccess(
-      supabase,
+      null,
       accountId,
       userId,
     );
 
     // Build update payload (only include defined fields)
-    const payload: Record<string, any> = {};
+    const payload: Partial<typeof accounts.$inferInsert> = {};
     if (updates.name !== undefined) payload.name = updates.name;
     if (updates.onboarding_completed !== undefined)
-      payload.onboarding_completed = updates.onboarding_completed;
+      payload.onboardingCompleted = updates.onboarding_completed;
 
     if (Object.keys(payload).length === 0) {
       return { message: 'No updates provided' };
     }
 
-    // Use admin client to bypass RLS for account updates
-    const adminClient = this.supabaseService.getAdminClient();
-    const { data, error } = await adminClient
-      .from('accounts')
-      .update(payload)
-      .eq('id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new InternalServerErrorException(error.message);
+    let data;
+    try {
+      [data] = await this.db
+        .update(accounts)
+        .set(payload)
+        .where(eq(accounts.id, accountId))
+        .returning();
+    } catch (error) {
+      throw new InternalServerErrorException(
+        error instanceof Error ? error.message : 'Failed to update account',
+      );
     }
 
     return data;
   }
   async findAllAccounts(page: number = 1, limit: number = 10, search?: string) {
-    const supabase = this.supabaseService.getAdminClient();
     const offset = (page - 1) * limit;
 
-    let query = supabase
-      .from('accounts')
-      .select('*, owner:users!owner_user_id(email)', { count: 'exact' });
+    const where = search ? ilike(accounts.name, `%${search}%`) : undefined;
 
-    if (search) {
-      query = query.ilike('name', `%${search}%`);
-    }
-
-    const {
-      data: accounts,
-      count,
-      error,
-    } = await query
-      .range(offset, offset + limit - 1)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new InternalServerErrorException(error.message);
+    let accountRows;
+    let total;
+    try {
+      const [rows, totalResult] = await Promise.all([
+        this.db.query.accounts.findMany({
+          where,
+          with: {
+            user: {
+              columns: { email: true },
+            },
+          },
+          orderBy: desc(accounts.createdAt),
+          limit,
+          offset,
+        }),
+        this.db.select({ value: count() }).from(accounts).where(where),
+      ]);
+      accountRows = rows;
+      total = totalResult[0]?.value ?? 0;
+    } catch (error) {
+      throw new InternalServerErrorException(
+        error instanceof Error ? error.message : 'Failed to load accounts',
+      );
     }
 
     return {
-      data: accounts.map((account: any) => ({
-        ...account,
-        ownerEmail: account.owner?.email || 'Unknown',
-      })),
+      // Re-key the `user` relation back to `owner` to preserve the response
+      // shape PostgREST exposed via `owner:users!owner_user_id(email)`.
+      data: accountRows.map((account: any) => {
+        const { user, ...rest } = account;
+        const owner = user ?? null;
+        return {
+          ...rest,
+          owner,
+          ownerEmail: owner?.email || 'Unknown',
+        };
+      }),
       meta: {
-        total: count,
+        total,
         page,
         limit,
-        totalPages: Math.ceil((count || 0) / limit),
+        totalPages: Math.ceil((total || 0) / limit),
       },
     };
   }

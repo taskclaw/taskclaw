@@ -10,11 +10,14 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { and, desc, eq } from 'drizzle-orm';
 import { AuthGuard } from '../common/guards/auth.guard';
 import { PilotService } from './pilot.service';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { DB, type Db } from '../db';
+import { pilotConfigs } from '../db/schema';
 
 @ApiTags('Pilot')
 @Controller('accounts/:accountId/pilot')
@@ -22,7 +25,7 @@ import { SupabaseAdminService } from '../supabase/supabase-admin.service';
 export class PilotController {
   constructor(
     private readonly pilotService: PilotService,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
   ) {}
 
   // ─── Pilot Config CRUD ───────────────────────────────────────────────────
@@ -30,18 +33,11 @@ export class PilotController {
   @Get('configs')
   @ApiOperation({ summary: 'List pilot configs for account' })
   async findConfigs(@Param('accountId') accountId: string) {
-    const { data, error } = await this.supabaseAdmin
-      .getClient()
-      .from('pilot_configs')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new Error(`Failed to fetch pilot configs: ${error.message}`);
-    }
-
-    return data;
+    return this.db
+      .select()
+      .from(pilotConfigs)
+      .where(eq(pilotConfigs.accountId, accountId))
+      .orderBy(desc(pilotConfigs.createdAt));
   }
 
   @Post('configs')
@@ -59,38 +55,47 @@ export class PilotController {
       approval_required?: boolean;
     },
   ) {
-    const client = this.supabaseAdmin.getClient();
+    const now = new Date().toISOString();
 
-    const payload: Record<string, any> = {
-      account_id: accountId,
-      pod_id: body.pod_id ?? null,
-      updated_at: new Date().toISOString(),
+    const values: typeof pilotConfigs.$inferInsert = {
+      accountId,
+      podId: body.pod_id ?? null,
+      updatedAt: now,
     };
-
     if (body.backbone_connection_id !== undefined)
-      payload.backbone_connection_id = body.backbone_connection_id;
+      values.backboneConnectionId = body.backbone_connection_id;
     if (body.system_prompt !== undefined)
-      payload.system_prompt = body.system_prompt;
-    if (body.is_active !== undefined) payload.is_active = body.is_active;
+      values.systemPrompt = body.system_prompt;
+    if (body.is_active !== undefined) values.isActive = body.is_active;
     if (body.max_tasks_per_cycle !== undefined)
-      payload.max_tasks_per_cycle = body.max_tasks_per_cycle;
+      values.maxTasksPerCycle = body.max_tasks_per_cycle;
     if (body.approval_required !== undefined)
-      payload.approval_required = body.approval_required;
+      values.approvalRequired = body.approval_required;
 
-    const { data, error } = await client
-      .from('pilot_configs')
-      .upsert(payload, {
-        onConflict: 'account_id,pod_id',
-        ignoreDuplicates: false,
+    // Mirror PostgREST upsert: only the explicitly provided fields are written
+    // on conflict (plus updated_at). The non-conflict, non-provided columns keep
+    // their existing values.
+    const updateSet: Record<string, unknown> = { updatedAt: now };
+    if (body.backbone_connection_id !== undefined)
+      updateSet.backboneConnectionId = body.backbone_connection_id;
+    if (body.system_prompt !== undefined)
+      updateSet.systemPrompt = body.system_prompt;
+    if (body.is_active !== undefined) updateSet.isActive = body.is_active;
+    if (body.max_tasks_per_cycle !== undefined)
+      updateSet.maxTasksPerCycle = body.max_tasks_per_cycle;
+    if (body.approval_required !== undefined)
+      updateSet.approvalRequired = body.approval_required;
+
+    const rows = await this.db
+      .insert(pilotConfigs)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [pilotConfigs.accountId, pilotConfigs.podId],
+        set: updateSet,
       })
-      .select()
-      .single();
+      .returning();
 
-    if (error) {
-      throw new Error(`Failed to upsert pilot config: ${error.message}`);
-    }
-
-    return data;
+    return rows[0];
   }
 
   @Patch('configs/:configId')
@@ -107,24 +112,31 @@ export class PilotController {
       approval_required?: boolean;
     },
   ) {
-    const client = this.supabaseAdmin.getClient();
+    const patch: Record<string, unknown> = {
+      updatedAt: new Date().toISOString(),
+    };
+    if (body.backbone_connection_id !== undefined)
+      patch.backboneConnectionId = body.backbone_connection_id;
+    if (body.system_prompt !== undefined)
+      patch.systemPrompt = body.system_prompt;
+    if (body.is_active !== undefined) patch.isActive = body.is_active;
+    if (body.max_tasks_per_cycle !== undefined)
+      patch.maxTasksPerCycle = body.max_tasks_per_cycle;
+    if (body.approval_required !== undefined)
+      patch.approvalRequired = body.approval_required;
 
-    const { data, error } = await client
-      .from('pilot_configs')
-      .update({
-        ...body,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', configId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
+    const rows = await this.db
+      .update(pilotConfigs)
+      .set(patch)
+      .where(
+        and(
+          eq(pilotConfigs.id, configId),
+          eq(pilotConfigs.accountId, accountId),
+        ),
+      )
+      .returning();
 
-    if (error) {
-      throw new Error(`Failed to update pilot config: ${error.message}`);
-    }
-
-    return data;
+    return rows[0];
   }
 
   @Delete('configs/:configId')
@@ -134,16 +146,14 @@ export class PilotController {
     @Param('accountId') accountId: string,
     @Param('configId') configId: string,
   ) {
-    const { error } = await this.supabaseAdmin
-      .getClient()
-      .from('pilot_configs')
-      .delete()
-      .eq('id', configId)
-      .eq('account_id', accountId);
-
-    if (error) {
-      throw new Error(`Failed to delete pilot config: ${error.message}`);
-    }
+    await this.db
+      .delete(pilotConfigs)
+      .where(
+        and(
+          eq(pilotConfigs.id, configId),
+          eq(pilotConfigs.accountId, accountId),
+        ),
+      );
 
     return;
   }

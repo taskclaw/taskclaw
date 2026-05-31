@@ -1,6 +1,16 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Inject,
+  BadRequestException,
+} from '@nestjs/common';
 import * as crypto from 'crypto';
-import { SupabaseAdminService } from '../../supabase/supabase-admin.service';
+import { and, eq, isNotNull, lt } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import {
+  integrationConnections,
+  integrationDefinitions,
+} from '../../db/schema';
 import { IntegrationsService } from '../integrations.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
@@ -25,7 +35,7 @@ export class OAuthService {
   private readonly STATE_TTL_MS = 10 * 60 * 1000;
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly integrationsService: IntegrationsService,
   ) {}
 
@@ -76,23 +86,24 @@ export class OAuthService {
     definitionId: string,
     callbackUrl: string,
   ): Promise<{ redirect_url: string }> {
-    const client = this.supabaseAdmin.getClient();
+    const [def] = await this.db
+      .select({
+        authType: integrationDefinitions.authType,
+        authConfig: integrationDefinitions.authConfig,
+      })
+      .from(integrationDefinitions)
+      .where(eq(integrationDefinitions.id, definitionId))
+      .limit(1);
 
-    const { data: def, error } = await client
-      .from('integration_definitions')
-      .select('auth_type, auth_config')
-      .eq('id', definitionId)
-      .single();
-
-    if (error || !def) {
+    if (!def) {
       throw new BadRequestException('Integration definition not found');
     }
 
-    if (def.auth_type !== 'oauth2') {
+    if (def.authType !== 'oauth2') {
       throw new BadRequestException('This integration does not use OAuth2');
     }
 
-    const authConfig = def.auth_config;
+    const authConfig = def.authConfig as any;
     if (!authConfig?.authorization_url) {
       throw new BadRequestException('OAuth2 authorization_url not configured');
     }
@@ -145,20 +156,22 @@ export class OAuthService {
     // Validate state
     const stateData = this.validateAndConsumeState(state);
 
-    const client = this.supabaseAdmin.getClient();
-
     // Get definition auth_config
-    const { data: def, error: defError } = await client
-      .from('integration_definitions')
-      .select('id, slug, auth_config')
-      .eq('id', stateData.definitionId)
-      .single();
+    const [def] = await this.db
+      .select({
+        id: integrationDefinitions.id,
+        slug: integrationDefinitions.slug,
+        authConfig: integrationDefinitions.authConfig,
+      })
+      .from(integrationDefinitions)
+      .where(eq(integrationDefinitions.id, stateData.definitionId))
+      .limit(1);
 
-    if (defError || !def) {
+    if (!def) {
       throw new BadRequestException('Integration definition not found');
     }
 
-    const authConfig = def.auth_config;
+    const authConfig = def.authConfig as any;
 
     // Exchange code for tokens
     const tokenResponse = await this.exchangeCode(
@@ -179,36 +192,40 @@ export class OAuthService {
       : null;
 
     // Upsert connection
-    const { data: existingConn } = await client
-      .from('integration_connections')
-      .select('id')
-      .eq('account_id', stateData.accountId)
-      .eq('definition_id', stateData.definitionId)
-      .single();
+    const [existingConn] = await this.db
+      .select({ id: integrationConnections.id })
+      .from(integrationConnections)
+      .where(
+        and(
+          eq(integrationConnections.accountId, stateData.accountId),
+          eq(integrationConnections.definitionId, stateData.definitionId),
+        ),
+      )
+      .limit(1);
 
     if (existingConn) {
-      await client
-        .from('integration_connections')
-        .update({
+      await this.db
+        .update(integrationConnections)
+        .set({
           credentials: encryptedCredentials,
           status: 'active',
-          token_expires_at: tokenExpiresAt,
+          tokenExpiresAt: tokenExpiresAt,
           scopes: tokenResponse.scope
             ? tokenResponse.scope.split(/[, ]+/)
             : null,
-          verified_at: new Date().toISOString(),
-          error_message: null,
+          verifiedAt: new Date().toISOString(),
+          errorMessage: null,
         })
-        .eq('id', existingConn.id);
+        .where(eq(integrationConnections.id, existingConn.id));
     } else {
-      await client.from('integration_connections').insert({
-        account_id: stateData.accountId,
-        definition_id: stateData.definitionId,
+      await this.db.insert(integrationConnections).values({
+        accountId: stateData.accountId,
+        definitionId: stateData.definitionId,
         credentials: encryptedCredentials,
         status: 'active',
-        token_expires_at: tokenExpiresAt,
+        tokenExpiresAt: tokenExpiresAt,
         scopes: tokenResponse.scope ? tokenResponse.scope.split(/[, ]+/) : null,
-        verified_at: new Date().toISOString(),
+        verifiedAt: new Date().toISOString(),
       });
     }
 
@@ -282,23 +299,37 @@ export class OAuthService {
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async refreshExpiringSoonTokens() {
-    const client = this.supabaseAdmin.getClient();
-
     // Find connections expiring within 10 minutes
     const tenMinFromNow = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-    const { data: connections, error } = await client
-      .from('integration_connections')
-      .select(
-        'id, credentials, definition:integration_definitions(auth_config)',
-      )
-      .eq('status', 'active')
-      .not('token_expires_at', 'is', null)
-      .lt('token_expires_at', tenMinFromNow);
+    const connections = await this.db.query.integrationConnections.findMany({
+      columns: { id: true, credentials: true },
+      where: and(
+        eq(integrationConnections.status, 'active'),
+        isNotNull(integrationConnections.tokenExpiresAt),
+        lt(integrationConnections.tokenExpiresAt, tenMinFromNow),
+      ),
+      with: {
+        integrationDefinition: { columns: { authConfig: true } },
+      },
+    });
 
-    if (error || !connections?.length) return;
+    if (!connections?.length) return;
 
-    for (const conn of connections) {
+    for (const row of connections) {
+      // Re-key the relational embed (`integrationDefinition` → `definition`)
+      // and its column (`authConfig` → `auth_config`) back to the PostgREST
+      // shape the refresh logic reads (`conn.definition.auth_config`).
+      const { integrationDefinition, ...rest } = row;
+      // `one` relation, but normalize defensively in case the inferred type is a union.
+      const def = Array.isArray(integrationDefinition)
+        ? integrationDefinition[0]
+        : integrationDefinition;
+      const conn = {
+        ...rest,
+        definition: def ? { auth_config: def.authConfig } : null,
+      };
+
       // Concurrency lock
       if (this.refreshLocks.get(conn.id)) continue;
       this.refreshLocks.set(conn.id, true);
@@ -368,16 +399,15 @@ export class OAuthService {
         ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
         : null;
 
-      const client = this.supabaseAdmin.getClient();
-      await client
-        .from('integration_connections')
-        .update({
+      await this.db
+        .update(integrationConnections)
+        .set({
           credentials: encryptedCredentials,
-          token_expires_at: tokenExpiresAt,
+          tokenExpiresAt: tokenExpiresAt,
           status: 'active',
-          error_message: null,
+          errorMessage: null,
         })
-        .eq('id', conn.id);
+        .where(eq(integrationConnections.id, conn.id));
 
       this.logger.log(`Refreshed token for connection ${conn.id}`);
     } catch (err) {
@@ -385,14 +415,13 @@ export class OAuthService {
         `Token refresh failed for connection ${conn.id}: ${err.message}`,
       );
 
-      const client = this.supabaseAdmin.getClient();
-      await client
-        .from('integration_connections')
-        .update({
+      await this.db
+        .update(integrationConnections)
+        .set({
           status: 'expired',
-          error_message: `Token refresh failed: ${err.message}`,
+          errorMessage: `Token refresh failed: ${err.message}`,
         })
-        .eq('id', conn.id);
+        .where(eq(integrationConnections.id, conn.id));
     }
   }
 

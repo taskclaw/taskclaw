@@ -1,10 +1,12 @@
 import {
   Injectable,
+  Inject,
   NotFoundException,
-  BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { backboneConnections } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { BackboneAdapterRegistry } from './adapters/backbone-adapter.registry';
 import { CreateBackboneConnectionDto } from './dto/create-backbone-connection.dto';
@@ -28,15 +30,15 @@ function isSecretKey(key: string): boolean {
  * BackboneConnectionsService (F010)
  *
  * CRUD operations for backbone connections with encryption for sensitive
- * config fields.  Follows the same Supabase + AES-256-GCM pattern used
- * by AiProviderService.
+ * config fields.  Data access uses Drizzle; sensitive config fields are
+ * encrypted with AES-256-GCM (same pattern used by AiProviderService).
  */
 @Injectable()
 export class BackboneConnectionsService {
   private readonly logger = new Logger(BackboneConnectionsService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
     private readonly registry: BackboneAdapterRegistry,
   ) {}
@@ -47,76 +49,79 @@ export class BackboneConnectionsService {
    * List all connections for an account (masked config).
    */
   async findAll(userId: string, accountId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('backbone_connections')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
+    const data = await this.db
+      .select()
+      .from(backboneConnections)
+      .where(eq(backboneConnections.accountId, accountId))
+      .orderBy(desc(backboneConnections.createdAt));
 
-    if (error) {
-      throw new Error(`Failed to fetch backbone connections: ${error.message}`);
-    }
-
-    return (data || []).map((row) => this.toMaskedResponse(row));
+    return data.map((row) => this.toMaskedResponse(row));
   }
 
   /**
    * Get a single connection by ID (masked config).
    */
   async findById(userId: string, accountId: string, connectionId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     const row = await this.findRowOrFail(accountId, connectionId);
     return this.toMaskedResponse(row);
   }
 
   /**
+   * Fetch a single connection as a raw snake_case row (config left encrypted),
+   * matching the shape the health checker (`checkOne`) consumes. Throws
+   * NotFoundException when the connection does not exist for the account.
+   */
+  async getRawConnection(accountId: string, connectionId: string) {
+    const row = await this.findRowOrFail(accountId, connectionId);
+    return this.toRawRow(row);
+  }
+
+  /**
    * Find all active connections for an account (internal use).
+   *
+   * Returns raw rows re-keyed to snake_case (config left encrypted) so callers
+   * like BackboneRouterService — which read `conn.backbone_type` / `conn.config`
+   * and then call `decryptConfig` — keep the exact shape PostgREST gave them.
    */
   async findAllActive(accountId: string) {
-    const client = this.supabaseAdmin.getClient();
+    const rows = await this.db
+      .select()
+      .from(backboneConnections)
+      .where(
+        and(
+          eq(backboneConnections.accountId, accountId),
+          eq(backboneConnections.isActive, true),
+        ),
+      )
+      .orderBy(desc(backboneConnections.createdAt));
 
-    const { data, error } = await client
-      .from('backbone_connections')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new Error(
-        `Failed to fetch active backbone connections: ${error.message}`,
-      );
-    }
-
-    return data || [];
+    return rows.map((row) => this.toRawRow(row));
   }
 
   /**
    * Get the account-level default backbone connection (internal use).
+   *
+   * Returns the raw row re-keyed to snake_case (config left encrypted) so
+   * callers keep the exact shape PostgREST gave them; `null` when none.
    */
   async getAccountDefault(accountId: string) {
-    const client = this.supabaseAdmin.getClient();
+    const [row] = await this.db
+      .select()
+      .from(backboneConnections)
+      .where(
+        and(
+          eq(backboneConnections.accountId, accountId),
+          eq(backboneConnections.isDefault, true),
+          eq(backboneConnections.isActive, true),
+        ),
+      )
+      .limit(1);
 
-    const { data, error } = await client
-      .from('backbone_connections')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('is_default', true)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(
-        `Failed to fetch default backbone connection: ${error.message}`,
-      );
-    }
-
-    return data;
+    return row ? this.toRawRow(row) : null;
   }
 
   // ─── Mutations ───────────────────────────────────────────
@@ -129,8 +134,7 @@ export class BackboneConnectionsService {
     accountId: string,
     dto: CreateBackboneConnectionDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId, [
+    await this.accessControl.verifyAccountAccess(null, accountId, userId, [
       'owner',
       'admin',
     ]);
@@ -146,25 +150,18 @@ export class BackboneConnectionsService {
 
     const encryptedConfig = this.encryptConfig(dto.config);
 
-    const { data, error } = await client
-      .from('backbone_connections')
-      .insert({
-        account_id: accountId,
-        backbone_type: dto.backbone_type,
+    const [data] = await this.db
+      .insert(backboneConnections)
+      .values({
+        accountId,
+        backboneType: dto.backbone_type,
         name: dto.name,
         description: dto.description || null,
         config: encryptedConfig,
-        is_default: dto.is_default ?? false,
-        is_active: dto.is_active ?? true,
+        isDefault: dto.is_default ?? false,
+        isActive: dto.is_active ?? true,
       })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(
-        `Failed to create backbone connection: ${error.message}`,
-      );
-    }
+      .returning();
 
     this.logger.log(
       `Created backbone connection "${dto.name}" (${dto.backbone_type}) for account ${accountId}`,
@@ -182,8 +179,7 @@ export class BackboneConnectionsService {
     connectionId: string,
     dto: UpdateBackboneConnectionDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId, [
+    await this.accessControl.verifyAccountAccess(null, accountId, userId, [
       'owner',
       'admin',
     ]);
@@ -191,7 +187,7 @@ export class BackboneConnectionsService {
     const existing = await this.findRowOrFail(accountId, connectionId);
 
     // If backbone_type changes, validate with the new adapter
-    const backboneType = dto.backbone_type || existing.backbone_type;
+    const backboneType = dto.backbone_type || existing.backboneType;
     if (dto.config) {
       const adapter = this.registry.get(backboneType);
       adapter.validateConfig(dto.config);
@@ -202,34 +198,32 @@ export class BackboneConnectionsService {
       await this.clearAccountDefault(accountId);
     }
 
-    const updateData: Record<string, any> = {};
+    const updateData: Partial<typeof backboneConnections.$inferInsert> = {};
     if (dto.name !== undefined) updateData.name = dto.name;
-    if (dto.description !== undefined)
-      updateData.description = dto.description;
+    if (dto.description !== undefined) updateData.description = dto.description;
     if (dto.backbone_type !== undefined)
-      updateData.backbone_type = dto.backbone_type;
-    if (dto.is_default !== undefined) updateData.is_default = dto.is_default;
-    if (dto.is_active !== undefined) updateData.is_active = dto.is_active;
+      updateData.backboneType = dto.backbone_type;
+    if (dto.is_default !== undefined) updateData.isDefault = dto.is_default;
+    if (dto.is_active !== undefined) updateData.isActive = dto.is_active;
     if (dto.config) {
       // Merge: keep existing encrypted values for keys not provided
-      const existingDecrypted = this.decryptConfig(existing.config);
+      const existingDecrypted = this.decryptConfig(
+        existing.config as Record<string, any>,
+      );
       const merged = { ...existingDecrypted, ...dto.config };
       updateData.config = this.encryptConfig(merged);
     }
 
-    const { data, error } = await client
-      .from('backbone_connections')
-      .update(updateData)
-      .eq('id', connectionId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(
-        `Failed to update backbone connection: ${error.message}`,
-      );
-    }
+    const [data] = await this.db
+      .update(backboneConnections)
+      .set(updateData)
+      .where(
+        and(
+          eq(backboneConnections.id, connectionId),
+          eq(backboneConnections.accountId, accountId),
+        ),
+      )
+      .returning();
 
     this.logger.log(
       `Updated backbone connection ${connectionId} for account ${accountId}`,
@@ -242,25 +236,21 @@ export class BackboneConnectionsService {
    * Delete a backbone connection.
    */
   async remove(userId: string, accountId: string, connectionId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId, [
+    await this.accessControl.verifyAccountAccess(null, accountId, userId, [
       'owner',
       'admin',
     ]);
 
     await this.findRowOrFail(accountId, connectionId);
 
-    const { error } = await client
-      .from('backbone_connections')
-      .delete()
-      .eq('id', connectionId)
-      .eq('account_id', accountId);
-
-    if (error) {
-      throw new Error(
-        `Failed to delete backbone connection: ${error.message}`,
+    await this.db
+      .delete(backboneConnections)
+      .where(
+        and(
+          eq(backboneConnections.id, connectionId),
+          eq(backboneConnections.accountId, accountId),
+        ),
       );
-    }
 
     this.logger.log(
       `Deleted backbone connection ${connectionId} from account ${accountId}`,
@@ -273,8 +263,7 @@ export class BackboneConnectionsService {
    * Set a connection as the account default.
    */
   async setDefault(userId: string, accountId: string, connectionId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId, [
+    await this.accessControl.verifyAccountAccess(null, accountId, userId, [
       'owner',
       'admin',
     ]);
@@ -282,19 +271,16 @@ export class BackboneConnectionsService {
     await this.findRowOrFail(accountId, connectionId);
     await this.clearAccountDefault(accountId);
 
-    const { data, error } = await client
-      .from('backbone_connections')
-      .update({ is_default: true })
-      .eq('id', connectionId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(
-        `Failed to set default backbone connection: ${error.message}`,
-      );
-    }
+    const [data] = await this.db
+      .update(backboneConnections)
+      .set({ isDefault: true })
+      .where(
+        and(
+          eq(backboneConnections.id, connectionId),
+          eq(backboneConnections.accountId, accountId),
+        ),
+      )
+      .returning();
 
     this.logger.log(
       `Set backbone connection ${connectionId} as default for account ${accountId}`,
@@ -313,42 +299,38 @@ export class BackboneConnectionsService {
     status: 'healthy' | 'degraded' | 'down',
     error?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
-    await client
-      .from('backbone_connections')
-      .update({
-        health_status: status,
-        health_checked_at: new Date().toISOString(),
-        health_error: error || null,
+    await this.db
+      .update(backboneConnections)
+      .set({
+        healthStatus: status,
+        healthCheckedAt: new Date().toISOString(),
+        healthError: error || null,
       })
-      .eq('id', connectionId);
+      .where(eq(backboneConnections.id, connectionId));
   }
 
   /**
    * Increment usage counters after a successful request.
    */
-  async trackUsage(
-    connectionId: string,
-    tokens: number,
-  ) {
-    const client = this.supabaseAdmin.getClient();
-
+  async trackUsage(connectionId: string, tokens: number) {
     // Use raw SQL via rpc if available; otherwise read-modify-write
-    const { data: row } = await client
-      .from('backbone_connections')
-      .select('total_requests, total_tokens')
-      .eq('id', connectionId)
-      .single();
+    const [row] = await this.db
+      .select({
+        totalRequests: backboneConnections.totalRequests,
+        totalTokens: backboneConnections.totalTokens,
+      })
+      .from(backboneConnections)
+      .where(eq(backboneConnections.id, connectionId))
+      .limit(1);
 
     if (row) {
-      await client
-        .from('backbone_connections')
-        .update({
-          total_requests: (row.total_requests || 0) + 1,
-          total_tokens: (row.total_tokens || 0) + tokens,
+      await this.db
+        .update(backboneConnections)
+        .set({
+          totalRequests: (row.totalRequests || 0) + 1,
+          totalTokens: (row.totalTokens || 0) + tokens,
         })
-        .eq('id', connectionId);
+        .where(eq(backboneConnections.id, connectionId));
     }
   }
 
@@ -374,20 +356,16 @@ export class BackboneConnectionsService {
   // ─── Private helpers ─────────────────────────────────────
 
   private async findRowOrFail(accountId: string, connectionId: string) {
-    const client = this.supabaseAdmin.getClient();
-
-    const { data, error } = await client
-      .from('backbone_connections')
-      .select('*')
-      .eq('id', connectionId)
-      .eq('account_id', accountId)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(
-        `Failed to fetch backbone connection: ${error.message}`,
-      );
-    }
+    const [data] = await this.db
+      .select()
+      .from(backboneConnections)
+      .where(
+        and(
+          eq(backboneConnections.id, connectionId),
+          eq(backboneConnections.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
     if (!data) {
       throw new NotFoundException(
@@ -399,13 +377,15 @@ export class BackboneConnectionsService {
   }
 
   private async clearAccountDefault(accountId: string) {
-    const client = this.supabaseAdmin.getClient();
-
-    await client
-      .from('backbone_connections')
-      .update({ is_default: false })
-      .eq('account_id', accountId)
-      .eq('is_default', true);
+    await this.db
+      .update(backboneConnections)
+      .set({ isDefault: false })
+      .where(
+        and(
+          eq(backboneConnections.accountId, accountId),
+          eq(backboneConnections.isDefault, true),
+        ),
+      );
   }
 
   private encryptConfig(config: Record<string, any>): Record<string, any> {
@@ -420,7 +400,33 @@ export class BackboneConnectionsService {
     return encrypted;
   }
 
-  private toMaskedResponse(row: any) {
+  /**
+   * Re-key a raw Drizzle row to the snake_case shape PostgREST returned for
+   * `select('*')`, leaving `config` in its stored (encrypted) form. Used by the
+   * internal-use query methods whose consumers read snake_case keys.
+   */
+  private toRawRow(row: typeof backboneConnections.$inferSelect) {
+    return {
+      id: row.id,
+      account_id: row.accountId,
+      backbone_type: row.backboneType,
+      name: row.name,
+      description: row.description,
+      config: row.config as Record<string, any>,
+      is_default: row.isDefault,
+      is_active: row.isActive,
+      health_status: row.healthStatus,
+      health_checked_at: row.healthCheckedAt,
+      health_error: row.healthError,
+      verified_at: row.verifiedAt,
+      total_requests: row.totalRequests || 0,
+      total_tokens: row.totalTokens || 0,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
+    };
+  }
+
+  private toMaskedResponse(row: typeof backboneConnections.$inferSelect) {
     const maskedConfig: Record<string, any> = {};
     if (row.config && typeof row.config === 'object') {
       for (const [key, value] of Object.entries(row.config)) {
@@ -438,20 +444,20 @@ export class BackboneConnectionsService {
 
     return {
       id: row.id,
-      account_id: row.account_id,
-      backbone_type: row.backbone_type,
+      account_id: row.accountId,
+      backbone_type: row.backboneType,
       name: row.name,
       description: row.description,
       config: maskedConfig,
-      is_default: row.is_default,
-      is_active: row.is_active,
-      health_status: row.health_status,
-      health_checked_at: row.health_checked_at,
-      verified_at: row.verified_at,
-      total_requests: row.total_requests || 0,
-      total_tokens: row.total_tokens || 0,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
+      is_default: row.isDefault,
+      is_active: row.isActive,
+      health_status: row.healthStatus,
+      health_checked_at: row.healthCheckedAt,
+      verified_at: row.verifiedAt,
+      total_requests: row.totalRequests || 0,
+      total_tokens: row.totalTokens || 0,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
     };
   }
 }

@@ -1,7 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Queue } from 'bullmq';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, eq, lt } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { orchestratedTasks } from '../db/schema';
 import { CircuitBreakerService } from '../heartbeat/circuit-breaker.service';
 
 /**
@@ -26,7 +28,7 @@ export class StaleTaskReconcilerService {
   private backboneDispatchQueue?: Queue;
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly circuitBreaker: CircuitBreakerService,
   ) {}
 
@@ -42,19 +44,30 @@ export class StaleTaskReconcilerService {
   async reconcileStaleTasks(): Promise<void> {
     this.logger.log('[Reconciler] Scanning for stale orchestration tasks...');
 
-    const client = this.supabaseAdmin.getClient();
-
     // Query tasks stuck in 'running' for more than 10 minutes
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const { data: staleTasks, error } = await client
-      .from('orchestrated_tasks')
-      .select('id, account_id, pod_id')
-      .eq('status', 'running')
-      .lt('updated_at', tenMinutesAgo);
-
-    if (error) {
+    let staleTasks: {
+      id: string;
+      account_id: string;
+      pod_id: string | null;
+    }[];
+    try {
+      staleTasks = await this.db
+        .select({
+          id: orchestratedTasks.id,
+          account_id: orchestratedTasks.accountId,
+          pod_id: orchestratedTasks.podId,
+        })
+        .from(orchestratedTasks)
+        .where(
+          and(
+            eq(orchestratedTasks.status, 'running'),
+            lt(orchestratedTasks.updatedAt, tenMinutesAgo),
+          ),
+        );
+    } catch (error) {
       this.logger.error(
-        `[Reconciler] Failed to query stale tasks: ${error.message}`,
+        `[Reconciler] Failed to query stale tasks: ${(error as Error).message}`,
       );
       return;
     }
@@ -87,15 +100,19 @@ export class StaleTaskReconcilerService {
           `[Reconciler] Task ${taskId}: circuit open for pod ${task.pod_id} → marking failed`,
         );
 
-        await client
-          .from('orchestrated_tasks')
-          .update({
+        await this.db
+          .update(orchestratedTasks)
+          .set({
             status: 'failed',
-            result_summary: 'stale_execution_timeout: circuit breaker open',
-            updated_at: new Date().toISOString(),
+            resultSummary: 'stale_execution_timeout: circuit breaker open',
+            updatedAt: new Date().toISOString(),
           })
-          .eq('id', taskId)
-          .eq('status', 'running'); // Conditional update to avoid race
+          .where(
+            and(
+              eq(orchestratedTasks.id, taskId),
+              eq(orchestratedTasks.status, 'running'),
+            ),
+          ); // Conditional update to avoid race
 
         failed++;
       } else {
@@ -127,15 +144,19 @@ export class StaleTaskReconcilerService {
             `[Reconciler] Task ${taskId}: no queue available → marking failed`,
           );
 
-          await client
-            .from('orchestrated_tasks')
-            .update({
+          await this.db
+            .update(orchestratedTasks)
+            .set({
               status: 'failed',
-              result_summary: 'stale_execution_timeout: no queue available for requeue',
-              updated_at: new Date().toISOString(),
+              resultSummary: 'stale_execution_timeout: no queue available for requeue',
+              updatedAt: new Date().toISOString(),
             })
-            .eq('id', taskId)
-            .eq('status', 'running');
+            .where(
+              and(
+                eq(orchestratedTasks.id, taskId),
+                eq(orchestratedTasks.status, 'running'),
+              ),
+            );
 
           failed++;
         }

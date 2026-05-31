@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { isNull, eq } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import { aiProviderConfigs, backboneConnections } from '../../db/schema';
 import { decrypt, encrypt } from '../../common/utils/encryption.util';
 
 /**
@@ -36,14 +38,13 @@ export interface MigrationResult {
 export class MigrateAiProvidersService {
   private readonly logger = new Logger(MigrateAiProvidersService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   /**
    * Migrate all un-migrated ai_provider_configs to backbone_connections.
    * Safe to run multiple times — only processes rows where `migrated_to IS NULL`.
    */
   async migrateAll(): Promise<MigrationResult> {
-    const client = this.supabaseAdmin.getClient();
     const result: MigrationResult = {
       total: 0,
       migrated: 0,
@@ -53,19 +54,10 @@ export class MigrateAiProvidersService {
     };
 
     // ── 1. Fetch all un-migrated rows ────────────────────────
-    const { data: rows, error: fetchError } = await client
-      .from('ai_provider_configs')
-      .select('*')
-      .is('migrated_to', null);
-
-    if (fetchError) {
-      this.logger.error(
-        `Failed to fetch ai_provider_configs: ${fetchError.message}`,
-      );
-      throw new Error(
-        `Failed to fetch ai_provider_configs: ${fetchError.message}`,
-      );
-    }
+    const rows = await this.db
+      .select()
+      .from(aiProviderConfigs)
+      .where(isNull(aiProviderConfigs.migratedTo));
 
     if (!rows || rows.length === 0) {
       this.logger.log('No un-migrated ai_provider_configs found. Nothing to do.');
@@ -86,11 +78,11 @@ export class MigrateAiProvidersService {
         const errorMsg = err?.message || String(err);
         result.errors.push({
           configId: row.id,
-          accountId: row.account_id,
+          accountId: row.accountId,
           error: errorMsg,
         });
         this.logger.error(
-          `Failed to migrate config ${row.id} (account ${row.account_id}): ${errorMsg}`,
+          `Failed to migrate config ${row.id} (account ${row.accountId}): ${errorMsg}`,
         );
       }
     }
@@ -111,17 +103,19 @@ export class MigrateAiProvidersService {
 
   // ── Private ────────────────────────────────────────────────
 
-  private async migrateRow(row: any, result: MigrationResult): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-    const providerType: string = row.provider_type || 'openclaw';
+  private async migrateRow(
+    row: typeof aiProviderConfigs.$inferSelect,
+    result: MigrationResult,
+  ): Promise<void> {
+    const providerType: string = row.providerType || 'openclaw';
     const backboneType = PROVIDER_TYPE_TO_SLUG[providerType] ?? FALLBACK_SLUG;
 
     // ── a. Decrypt legacy fields ──
     let apiUrl: string;
     let apiKey: string;
     try {
-      apiUrl = decrypt(row.api_url);
-      apiKey = decrypt(row.api_key);
+      apiUrl = decrypt(row.apiUrl);
+      apiKey = decrypt(row.apiKey);
     } catch (decryptErr: any) {
       throw new Error(
         `Decryption failed for provider config ${row.id}: ${decryptErr.message}`,
@@ -135,26 +129,26 @@ export class MigrateAiProvidersService {
     };
 
     // Carry over optional fields that were encrypted
-    if (row.agent_id) {
-      plainConfig.agent_id = row.agent_id;
+    if (row.agentId) {
+      plainConfig.agent_id = row.agentId;
     }
-    if (row.openrouter_api_key) {
+    if (row.openrouterApiKey) {
       try {
-        plainConfig.openrouter_api_key = decrypt(row.openrouter_api_key);
+        plainConfig.openrouter_api_key = decrypt(row.openrouterApiKey);
       } catch {
         // non-critical — skip this field
       }
     }
-    if (row.telegram_bot_token) {
+    if (row.telegramBotToken) {
       try {
-        plainConfig.telegram_bot_token = decrypt(row.telegram_bot_token);
+        plainConfig.telegram_bot_token = decrypt(row.telegramBotToken);
       } catch {
         // non-critical
       }
     }
-    if (row.brave_search_api_key) {
+    if (row.braveSearchApiKey) {
       try {
-        plainConfig.brave_search_api_key = decrypt(row.brave_search_api_key);
+        plainConfig.brave_search_api_key = decrypt(row.braveSearchApiKey);
       } catch {
         // non-critical
       }
@@ -183,51 +177,52 @@ export class MigrateAiProvidersService {
     const name = `My ${prettyType} (migrated)`;
 
     // ── e. Insert into backbone_connections ──
-    const insertPayload: Record<string, any> = {
-      account_id: row.account_id,
-      backbone_type: backboneType,
+    const insertPayload: typeof backboneConnections.$inferInsert = {
+      accountId: row.accountId,
+      backboneType,
       name,
       config: encryptedConfig,
-      is_default: true,
-      is_active: row.is_active ?? true,
+      isDefault: true,
+      isActive: row.isActive ?? true,
     };
 
-    if (row.verified_at) {
-      insertPayload.verified_at = row.verified_at;
+    if (row.verifiedAt) {
+      insertPayload.verifiedAt = row.verifiedAt;
     }
 
-    const { data: inserted, error: insertError } = await client
-      .from('backbone_connections')
-      .insert(insertPayload)
-      .select('id')
-      .single();
-
-    if (insertError) {
+    let inserted: { id: string };
+    try {
+      const insertedRows = await this.db
+        .insert(backboneConnections)
+        .values(insertPayload)
+        .returning({ id: backboneConnections.id });
+      inserted = insertedRows[0];
+    } catch (insertErr: any) {
       throw new Error(
-        `Insert into backbone_connections failed: ${insertError.message}`,
+        `Insert into backbone_connections failed: ${insertErr?.message ?? String(insertErr)}`,
       );
     }
 
     // ── f. Mark the old row as migrated ──
-    const { error: updateError } = await client
-      .from('ai_provider_configs')
-      .update({ migrated_to: inserted.id })
-      .eq('id', row.id);
-
-    if (updateError) {
+    try {
+      await this.db
+        .update(aiProviderConfigs)
+        .set({ migratedTo: inserted.id })
+        .where(eq(aiProviderConfigs.id, row.id));
+    } catch (updateErr: any) {
       // The connection was created but we couldn't mark the source.
       // Log a warning — re-running the migration would skip it via the
       // `migrated_to IS NULL` filter only if this update eventually succeeds.
       this.logger.warn(
         `Created backbone_connection ${inserted.id} but failed to update ` +
-          `ai_provider_configs.migrated_to for ${row.id}: ${updateError.message}`,
+          `ai_provider_configs.migrated_to for ${row.id}: ${updateErr?.message ?? String(updateErr)}`,
       );
     }
 
     result.migrated++;
     this.logger.log(
       `Migrated config ${row.id} -> backbone_connection ${inserted.id} ` +
-        `(${backboneType}) for account ${row.account_id}`,
+        `(${backboneType}) for account ${row.accountId}`,
     );
   }
 }

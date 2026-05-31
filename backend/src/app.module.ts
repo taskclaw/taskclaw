@@ -1,11 +1,14 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { MailerModule } from './common/mailer/mailer.module';
+import { StorageModule } from './storage/storage.module';
 import { CorrelationIdMiddleware } from './common/middleware/correlation-id.middleware';
 import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { SupabaseModule } from './supabase/supabase.module';
+import { DrizzleModule } from './db';
 import { UsersModule } from './users/users.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { ProjectsModule } from './projects/projects.module';
@@ -41,6 +44,7 @@ import { SyncsModule } from './syncs/syncs.module';
 import { MentionModule } from './mention/mention.module';
 import { TaskRunsModule } from './task-runs/task-runs.module';
 import { InboxModule } from './inbox/inbox.module';
+import { EventsModule } from './events/events.module';
 
 // Edition-gated modules (cloud-only)
 import { LangfuseModule } from './ee/langfuse/langfuse.module';
@@ -70,7 +74,10 @@ const editionModules = isCloudEdition
       isGlobal: true,
     }),
     ScheduleModule.forRoot(),
-    SupabaseModule,
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    MailerModule,
+    StorageModule,
+    DrizzleModule,
     ...editionModules,
     AuthModule,
     UsersModule,
@@ -106,6 +113,7 @@ const editionModules = isCloudEdition
     MentionModule,
     TaskRunsModule,
     InboxModule,
+    EventsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

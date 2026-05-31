@@ -1,5 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Logger, Inject } from '@nestjs/common';
+import { and, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  boardInstances,
+  boardSteps,
+  agents,
+  taskDags,
+  tasks,
+  taskDependencies,
+} from '../db/schema';
 import { BackboneRouterService } from '../backbone/backbone-router.service';
 
 @Injectable()
@@ -7,9 +16,20 @@ export class CoordinatorService {
   private readonly logger = new Logger(CoordinatorService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly backboneRouter: BackboneRouterService,
   ) {}
+
+  /**
+   * Drizzle's relational query returns the embedded board steps under the
+   * relation name (`boardSteps`); PostgREST returned them under the table name
+   * (`board_steps`). Re-key to `board_steps` so the response shape the prompt
+   * builder depends on is unchanged.
+   */
+  private presentBoard(row: any) {
+    const { boardSteps: steps, ...rest } = row;
+    return { ...rest, board_steps: steps ?? [] };
+  }
 
   async decomposeGoal(options: {
     accountId: string;
@@ -17,37 +37,57 @@ export class CoordinatorService {
     goal: string;
     conversationId?: string;
   }) {
-    const client = this.supabaseAdmin.getClient();
-
     // 1. Fetch available boards (filtered by podId if provided)
-    let boardsQuery = client
-      .from('board_instances')
-      .select('id, name, board_steps(id, name, position, default_agent_id)')
-      .eq('account_id', options.accountId);
-    if (options.podId) {
-      boardsQuery = boardsQuery.eq('pod_id', options.podId);
-    }
-    const { data: boards } = await boardsQuery;
+    const boardRows = await this.db.query.boardInstances.findMany({
+      where: options.podId
+        ? and(
+            eq(boardInstances.accountId, options.accountId),
+            eq(boardInstances.podId, options.podId),
+          )
+        : eq(boardInstances.accountId, options.accountId),
+      columns: { id: true, name: true },
+      with: {
+        boardSteps: {
+          columns: {
+            id: true,
+            name: true,
+            position: true,
+            defaultAgentId: true,
+          },
+        },
+      },
+    });
+    const boards = boardRows.map((b) => this.presentBoard(b));
 
     // 1b. Fetch available agents for this account (F11)
-    const { data: agents } = await client
-      .from('agents')
-      .select('id, name, description, agent_type, status')
-      .eq('account_id', options.accountId)
-      .eq('is_active', true);
+    const agentRows = await this.db
+      .select({
+        id: agents.id,
+        name: agents.name,
+        description: agents.description,
+        agent_type: agents.agentType,
+        status: agents.status,
+      })
+      .from(agents)
+      .where(
+        and(
+          eq(agents.accountId, options.accountId),
+          eq(agents.isActive, true),
+        ),
+      );
 
     // 2. Build system prompt describing available boards and agents
     const boardDescriptions =
       boards
         ?.map(
           (b: any) =>
-            `Board: "${b.name}" (id: ${b.id})\n  Columns: ${b.board_steps?.map((s: any) => `"${s.name}" (id: ${s.id})${s.default_agent_id ? ` [agent: ${s.default_agent_id}]` : ''}`).join(', ')}`,
+            `Board: "${b.name}" (id: ${b.id})\n  Columns: ${b.board_steps?.map((s: any) => `"${s.name}" (id: ${s.id})${s.defaultAgentId ? ` [agent: ${s.defaultAgentId}]` : ''}`).join(', ')}`,
         )
         .join('\n') ?? 'No boards available';
 
     const agentDescriptions =
-      agents && agents.length > 0
-        ? agents
+      agentRows && agentRows.length > 0
+        ? agentRows
             .map(
               (a: any) =>
                 `### ${a.name} (ID: ${a.id})\nType: ${a.agent_type}\nStatus: ${a.status}\nDescription: ${a.description || 'General purpose agent'}`,
@@ -116,21 +156,24 @@ Each depends_on_indexes is an array of 0-based indexes of tasks this task depend
     }
 
     // 5. Create task_dag record
-    const { data: dag, error: dagError } = await client
-      .from('task_dags')
-      .insert({
-        account_id: options.accountId,
-        pod_id: options.podId ?? null,
-        goal: options.goal,
-        status: 'pending_approval',
-        created_by: 'pod_agent',
-        conversation_id: options.conversationId ?? null,
-      })
-      .select()
-      .single();
-
-    if (dagError) {
-      throw new Error(`Failed to create task DAG: ${dagError.message}`);
+    let dag: typeof taskDags.$inferSelect;
+    try {
+      const createdDags = await this.db
+        .insert(taskDags)
+        .values({
+          accountId: options.accountId,
+          podId: options.podId ?? null,
+          goal: options.goal,
+          status: 'pending_approval',
+          createdBy: 'pod_agent',
+          conversationId: options.conversationId ?? null,
+        })
+        .returning();
+      dag = createdDags[0];
+    } catch (dagError) {
+      throw new Error(
+        `Failed to create task DAG: ${(dagError as Error).message}`,
+      );
     }
 
     // 6. Create tasks
@@ -145,36 +188,37 @@ Each depends_on_indexes is an array of 0-based indexes of tasks this task depend
         assigneeId = taskSpec.assignee_agent_id;
       } else if (taskSpec.step_id) {
         // Check if the column has a default agent
-        const { data: step } = await client
-          .from('board_steps')
-          .select('default_agent_id')
-          .eq('id', taskSpec.step_id)
-          .single();
-        if (step?.default_agent_id) {
+        const [step] = await this.db
+          .select({ defaultAgentId: boardSteps.defaultAgentId })
+          .from(boardSteps)
+          .where(eq(boardSteps.id, taskSpec.step_id))
+          .limit(1);
+        if (step?.defaultAgentId) {
           assigneeType = 'agent';
-          assigneeId = step.default_agent_id;
+          assigneeId = step.defaultAgentId;
         }
       }
 
-      const { data: task, error: taskError } = await client
-        .from('tasks')
-        .insert({
-          account_id: options.accountId,
-          board_instance_id: taskSpec.board_id,
-          current_step_id: taskSpec.step_id,
-          title: taskSpec.title,
-          notes: taskSpec.description ?? '',
-          dag_id: dag.id,
-          status: 'To-Do',
-          assignee_type: assigneeType,
-          assignee_id: assigneeId,
-        })
-        .select()
-        .single();
-
-      if (taskError) {
+      let task: typeof tasks.$inferSelect;
+      try {
+        const createdTasks = await this.db
+          .insert(tasks)
+          .values({
+            accountId: options.accountId,
+            boardInstanceId: taskSpec.board_id,
+            currentStepId: taskSpec.step_id,
+            title: taskSpec.title,
+            notes: taskSpec.description ?? '',
+            dagId: dag.id,
+            status: 'To-Do',
+            assigneeType,
+            assigneeId,
+          })
+          .returning();
+        task = createdTasks[0];
+      } catch (taskError) {
         this.logger.error(
-          `Failed to create task "${taskSpec.title}": ${taskError.message}`,
+          `Failed to create task "${taskSpec.title}": ${(taskError as Error).message}`,
         );
         continue;
       }
@@ -187,11 +231,11 @@ Each depends_on_indexes is an array of 0-based indexes of tasks this task depend
       const taskSpec = parsed.tasks[i];
       for (const depIndex of taskSpec.depends_on_indexes ?? []) {
         if (depIndex < createdTaskIds.length && depIndex < i) {
-          await client.from('task_dependencies').insert({
-            source_task_id: createdTaskIds[depIndex],
-            target_task_id: createdTaskIds[i],
-            dependency_type: 'dag',
-            dag_id: dag.id,
+          await this.db.insert(taskDependencies).values({
+            sourceTaskId: createdTaskIds[depIndex],
+            targetTaskId: createdTaskIds[i],
+            dependencyType: 'dag',
+            dagId: dag.id,
           });
         }
       }

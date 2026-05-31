@@ -1,10 +1,13 @@
 import {
   BadRequestException,
   Injectable,
+  Inject,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { syncs, syncRuns, skills } from '../db/schema';
 import {
   CreateSyncSchema,
   type CreateSyncInput,
@@ -38,6 +41,11 @@ export interface SyncRunner {
  * SyncsService — CRUD + run dispatch for inbound content ingestion.
  * Runners register themselves at module init via registerRunner(); the
  * service routes runs by (sync_type, source_kind).
+ *
+ * Data access is Drizzle. The Zod row schemas (`SyncRowSchema`,
+ * `SyncRunRowSchema`) still gate every row that crosses the boundary
+ * (§12.3 "Parse, don't cast"), so Drizzle's camelCase rows are re-keyed
+ * to the snake_case shape those schemas — and all callers — expect.
  */
 @Injectable()
 export class SyncsService {
@@ -47,7 +55,7 @@ export class SyncsService {
   // overlapping schedule + manual triggers.
   private readonly running = new Set<string>();
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   registerRunner(runner: SyncRunner) {
     const key = this.runnerKey(runner.handles.sync_type, runner.handles.source_kind);
@@ -62,31 +70,62 @@ export class SyncsService {
     return `${syncType}:${sourceKind}`;
   }
 
+  /** Re-key a Drizzle `syncs` row (camelCase) to the snake_case SyncRow shape. */
+  private toSyncRow(row: typeof syncs.$inferSelect): SyncRow {
+    return SyncRowSchema.parse({
+      id: row.id,
+      account_id: row.accountId,
+      name: row.name,
+      sync_type: row.syncType,
+      source_kind: row.sourceKind,
+      config: row.config,
+      schedule_cron: row.scheduleCron,
+      last_run_at: row.lastRunAt,
+      last_status: row.lastStatus,
+      last_error: row.lastError,
+      enabled: row.enabled,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
+    });
+  }
+
+  /** Re-key a Drizzle `sync_runs` row (camelCase) to the snake_case SyncRunRow shape. */
+  private toSyncRunRow(row: typeof syncRuns.$inferSelect): SyncRunRow {
+    return SyncRunRowSchema.parse({
+      id: row.id,
+      sync_id: row.syncId,
+      started_at: row.startedAt,
+      finished_at: row.finishedAt,
+      status: row.status,
+      items_added: row.itemsAdded,
+      items_updated: row.itemsUpdated,
+      items_removed: row.itemsRemoved,
+      log_excerpt: row.logExcerpt,
+      trigger: row.trigger,
+    });
+  }
+
   // ------------------------------------------------------------
   // CRUD
   // ------------------------------------------------------------
 
   async list(accountId: string): Promise<SyncRow[]> {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('syncs')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-    if (error) throw new BadRequestException(error.message);
-    return (data ?? []).map((row) => SyncRowSchema.parse(row));
+    const rows = await this.db
+      .select()
+      .from(syncs)
+      .where(eq(syncs.accountId, accountId))
+      .orderBy(desc(syncs.createdAt));
+    return rows.map((row) => this.toSyncRow(row));
   }
 
   async get(accountId: string, syncId: string): Promise<SyncRow> {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('syncs')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('id', syncId)
-      .single();
-    if (error || !data) throw new NotFoundException('Sync not found');
-    return SyncRowSchema.parse(data);
+    const [data] = await this.db
+      .select()
+      .from(syncs)
+      .where(and(eq(syncs.accountId, accountId), eq(syncs.id, syncId)))
+      .limit(1);
+    if (!data) throw new NotFoundException('Sync not found');
+    return this.toSyncRow(data);
   }
 
   async create(accountId: string, input: unknown): Promise<SyncRow> {
@@ -99,46 +138,44 @@ export class SyncsService {
         `No runner registered for ${parsed.sync_type}:${parsed.source_kind}; sync will be runnable only after a runner is loaded.`,
       );
     }
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('syncs')
-      .insert({
-        account_id: accountId,
+    const [data] = await this.db
+      .insert(syncs)
+      .values({
+        accountId,
         name: parsed.name,
-        sync_type: parsed.sync_type,
-        source_kind: parsed.source_kind,
+        syncType: parsed.sync_type,
+        sourceKind: parsed.source_kind,
         config: parsed.config,
-        schedule_cron: parsed.schedule_cron ?? null,
+        scheduleCron: parsed.schedule_cron ?? null,
         enabled: parsed.enabled,
       })
-      .select('*')
-      .single();
-    if (error || !data) throw new BadRequestException(error?.message ?? 'Insert failed');
-    return SyncRowSchema.parse(data);
+      .returning();
+    if (!data) throw new BadRequestException('Insert failed');
+    return this.toSyncRow(data);
   }
 
   async update(accountId: string, syncId: string, input: unknown): Promise<SyncRow> {
     const parsed: UpdateSyncInput = UpdateSyncSchema.parse(input);
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('syncs')
-      .update(parsed)
-      .eq('account_id', accountId)
-      .eq('id', syncId)
-      .select('*')
-      .single();
-    if (error || !data) throw new NotFoundException('Sync not found');
-    return SyncRowSchema.parse(data);
+    // Map the snake_case DTO to camelCase columns (only defined fields).
+    const patch: Partial<typeof syncs.$inferInsert> = {};
+    if (parsed.name !== undefined) patch.name = parsed.name;
+    if (parsed.config !== undefined) patch.config = parsed.config;
+    if (parsed.schedule_cron !== undefined) patch.scheduleCron = parsed.schedule_cron;
+    if (parsed.enabled !== undefined) patch.enabled = parsed.enabled;
+
+    const [data] = await this.db
+      .update(syncs)
+      .set(patch)
+      .where(and(eq(syncs.accountId, accountId), eq(syncs.id, syncId)))
+      .returning();
+    if (!data) throw new NotFoundException('Sync not found');
+    return this.toSyncRow(data);
   }
 
   async remove(accountId: string, syncId: string): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-    const { error } = await client
-      .from('syncs')
-      .delete()
-      .eq('account_id', accountId)
-      .eq('id', syncId);
-    if (error) throw new BadRequestException(error.message);
+    await this.db
+      .delete(syncs)
+      .where(and(eq(syncs.accountId, accountId), eq(syncs.id, syncId)));
   }
 
   /**
@@ -160,29 +197,31 @@ export class SyncsService {
   > {
     // Verify sync ownership.
     await this.get(accountId, syncId);
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('skills')
-      .select('id, name, description, source_uri, source_version, locally_available')
-      .eq('account_id', accountId)
-      .eq('source_sync_id', syncId)
-      .order('name', { ascending: true });
-    if (error) throw new BadRequestException(error.message);
-    return (data ?? []) as any;
+    const rows = await this.db
+      .select({
+        id: skills.id,
+        name: skills.name,
+        description: skills.description,
+        source_uri: skills.sourceUri,
+        source_version: skills.sourceVersion,
+        locally_available: skills.locallyAvailable,
+      })
+      .from(skills)
+      .where(and(eq(skills.accountId, accountId), eq(skills.sourceSyncId, syncId)))
+      .orderBy(asc(skills.name));
+    return rows;
   }
 
   async listRuns(accountId: string, syncId: string, limit = 20): Promise<SyncRunRow[]> {
     // Verify sync ownership first.
     await this.get(accountId, syncId);
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('sync_runs')
-      .select('*')
-      .eq('sync_id', syncId)
-      .order('started_at', { ascending: false })
+    const rows = await this.db
+      .select()
+      .from(syncRuns)
+      .where(eq(syncRuns.syncId, syncId))
+      .orderBy(desc(syncRuns.startedAt))
       .limit(limit);
-    if (error) throw new BadRequestException(error.message);
-    return (data ?? []).map((row) => SyncRunRowSchema.parse(row));
+    return rows.map((row) => this.toSyncRunRow(row));
   }
 
   // ------------------------------------------------------------
@@ -224,78 +263,78 @@ export class SyncsService {
     }
 
     this.running.add(sync.id);
-    const client = this.supabaseAdmin.getClient();
 
-    const { data: started, error: startErr } = await client
-      .from('sync_runs')
-      .insert({
-        sync_id: sync.id,
-        status: 'running',
-        trigger,
-      })
-      .select('*')
-      .single();
-    if (startErr || !started) {
+    let started: typeof syncRuns.$inferSelect;
+    try {
+      [started] = await this.db
+        .insert(syncRuns)
+        .values({
+          syncId: sync.id,
+          status: 'running',
+          trigger,
+        })
+        .returning();
+      if (!started) throw new Error('no row');
+    } catch {
       this.running.delete(sync.id);
-      throw new BadRequestException(startErr?.message ?? 'Could not start sync run');
+      throw new BadRequestException('Could not start sync run');
     }
 
     // Mark the sync as running too, so the UI can show a spinner.
-    await client
-      .from('syncs')
-      .update({ last_status: 'running', last_error: null })
-      .eq('id', sync.id);
+    await this.db
+      .update(syncs)
+      .set({ lastStatus: 'running', lastError: null })
+      .where(eq(syncs.id, sync.id));
 
     try {
       const result = await runner.run(sync);
       const finalStatus = result.status;
 
-      const { data: finished, error: finErr } = await client
-        .from('sync_runs')
-        .update({
-          finished_at: new Date().toISOString(),
+      const [finished] = await this.db
+        .update(syncRuns)
+        .set({
+          finishedAt: new Date().toISOString(),
           status: finalStatus,
-          items_added: result.items_added,
-          items_updated: result.items_updated,
-          items_removed: result.items_removed,
-          log_excerpt: result.log_excerpt ?? null,
+          itemsAdded: result.items_added,
+          itemsUpdated: result.items_updated,
+          itemsRemoved: result.items_removed,
+          logExcerpt: result.log_excerpt ?? null,
         })
-        .eq('id', started.id)
-        .select('*')
-        .single();
-      if (finErr || !finished) throw new Error(finErr?.message ?? 'Could not finalize run');
+        .where(eq(syncRuns.id, started.id))
+        .returning();
+      if (!finished) throw new Error('Could not finalize run');
 
-      await client
-        .from('syncs')
-        .update({
-          last_run_at: new Date().toISOString(),
-          last_status: finalStatus,
-          last_error: result.error ?? null,
+      await this.db
+        .update(syncs)
+        .set({
+          lastRunAt: new Date().toISOString(),
+          lastStatus: finalStatus,
+          lastError: result.error ?? null,
         })
-        .eq('id', sync.id);
+        .where(eq(syncs.id, sync.id));
 
-      return SyncRunRowSchema.parse(finished);
+      return this.toSyncRunRow(finished);
     } catch (err) {
       this.logger.error(
         `Sync ${sync.id} failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       const message = err instanceof Error ? err.message : String(err);
-      await client
-        .from('sync_runs')
-        .update({
-          finished_at: new Date().toISOString(),
+      await this.db
+        .update(syncRuns)
+        .set({
+          finishedAt: new Date().toISOString(),
           status: 'error',
-          log_excerpt: message.slice(0, 4000),
+          logExcerpt: message.slice(0, 4000),
         })
-        .eq('id', started.id);
-      await client
-        .from('syncs')
-        .update({
-          last_run_at: new Date().toISOString(),
-          last_status: 'error',
-          last_error: message.slice(0, 4000),
+        .where(eq(syncRuns.id, started.id));
+      await this.db
+        .update(syncs)
+        .set({
+          lastRunAt: new Date().toISOString(),
+          lastStatus: 'error',
+          lastError: message.slice(0, 4000),
         })
-        .eq('id', sync.id);
+        .where(eq(syncs.id, sync.id));
       throw err;
     } finally {
       this.running.delete(sync.id);
@@ -309,13 +348,11 @@ export class SyncsService {
    * cron evaluation to the BullMQ repeatable job.
    */
   async findEnabledSyncs(): Promise<SyncRow[]> {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('syncs')
-      .select('*')
-      .eq('enabled', true)
-      .order('last_run_at', { ascending: true, nullsFirst: true });
-    if (error) throw new BadRequestException(error.message);
-    return (data ?? []).map((row) => SyncRowSchema.parse(row));
+    const rows = await this.db
+      .select()
+      .from(syncs)
+      .where(eq(syncs.enabled, true))
+      .orderBy(sql`${syncs.lastRunAt} ASC NULLS FIRST`);
+    return rows.map((row) => this.toSyncRow(row));
   }
 }

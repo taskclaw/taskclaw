@@ -1,5 +1,20 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import {
+  Injectable,
+  Inject,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { and, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  tasks,
+  boardSteps,
+  boardInstances,
+  agents,
+  categories,
+  pods,
+  backboneConnections,
+} from '../db/schema';
 import { BackboneAdapterRegistry } from './adapters/backbone-adapter.registry';
 import { BackboneConnectionsService } from './backbone-connections.service';
 import { TokenUsageService } from './token-usage.service';
@@ -61,7 +76,7 @@ export class BackboneRouterService {
   private readonly logger = new Logger(BackboneRouterService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly registry: BackboneAdapterRegistry,
     private readonly connections: BackboneConnectionsService,
     private readonly tokenUsage: TokenUsageService,
@@ -75,8 +90,6 @@ export class BackboneRouterService {
     accountId: string,
     options?: { taskId?: string; stepId?: string; boardId?: string; categoryId?: string; agentId?: string; podId?: string; conversationBackboneId?: string },
   ): Promise<ResolveResult> {
-    const client = this.supabaseAdmin.getClient();
-
     // -1. Conversation-pinned backbone (explicit user selection, highest priority)
     if (options?.conversationBackboneId) {
       const result = await this.loadConnection(
@@ -88,15 +101,15 @@ export class BackboneRouterService {
 
     // 0. Task-level override (highest priority)
     if (options?.taskId) {
-      const { data: task } = await client
-        .from('tasks')
-        .select('backbone_connection_id')
-        .eq('id', options.taskId)
-        .maybeSingle();
+      const [task] = await this.db
+        .select({ backboneConnectionId: tasks.backboneConnectionId })
+        .from(tasks)
+        .where(eq(tasks.id, options.taskId))
+        .limit(1);
 
-      if (task?.backbone_connection_id) {
+      if (task?.backboneConnectionId) {
         const result = await this.loadConnection(
-          task.backbone_connection_id,
+          task.backboneConnectionId,
           'task',
         );
         if (result) return result;
@@ -105,15 +118,15 @@ export class BackboneRouterService {
 
     // 1. Step-level override
     if (options?.stepId) {
-      const { data: step } = await client
-        .from('board_steps')
-        .select('backbone_connection_id')
-        .eq('id', options.stepId)
-        .maybeSingle();
+      const [step] = await this.db
+        .select({ backboneConnectionId: boardSteps.backboneConnectionId })
+        .from(boardSteps)
+        .where(eq(boardSteps.id, options.stepId))
+        .limit(1);
 
-      if (step?.backbone_connection_id) {
+      if (step?.backboneConnectionId) {
         const result = await this.loadConnection(
-          step.backbone_connection_id,
+          step.backboneConnectionId,
           'step',
         );
         if (result) return result;
@@ -122,15 +135,18 @@ export class BackboneRouterService {
 
     // 2. Board-level override
     if (options?.boardId) {
-      const { data: board } = await client
-        .from('board_instances')
-        .select('default_backbone_connection_id')
-        .eq('id', options.boardId)
-        .maybeSingle();
+      const [board] = await this.db
+        .select({
+          defaultBackboneConnectionId:
+            boardInstances.defaultBackboneConnectionId,
+        })
+        .from(boardInstances)
+        .where(eq(boardInstances.id, options.boardId))
+        .limit(1);
 
-      if (board?.default_backbone_connection_id) {
+      if (board?.defaultBackboneConnectionId) {
         const result = await this.loadConnection(
-          board.default_backbone_connection_id,
+          board.defaultBackboneConnectionId,
           'board',
         );
         if (result) return result;
@@ -139,15 +155,15 @@ export class BackboneRouterService {
 
     // 3. Agent-level override (new — replaces category level for assigned tasks)
     if (options?.agentId) {
-      const { data: agent } = await client
-        .from('agents')
-        .select('backbone_connection_id')
-        .eq('id', options.agentId)
-        .maybeSingle();
+      const [agent] = await this.db
+        .select({ backboneConnectionId: agents.backboneConnectionId })
+        .from(agents)
+        .where(eq(agents.id, options.agentId))
+        .limit(1);
 
-      if (agent?.backbone_connection_id) {
+      if (agent?.backboneConnectionId) {
         const result = await this.loadConnection(
-          agent.backbone_connection_id,
+          agent.backboneConnectionId,
           'agent',
         );
         if (result) return result;
@@ -156,15 +172,18 @@ export class BackboneRouterService {
 
     // 3b. Category-level override (legacy — kept for backward compat during migration)
     if (options?.categoryId) {
-      const { data: category } = await client
-        .from('categories')
-        .select('preferred_backbone_connection_id')
-        .eq('id', options.categoryId)
-        .maybeSingle();
+      const [category] = await this.db
+        .select({
+          preferredBackboneConnectionId:
+            categories.preferredBackboneConnectionId,
+        })
+        .from(categories)
+        .where(eq(categories.id, options.categoryId))
+        .limit(1);
 
-      if (category?.preferred_backbone_connection_id) {
+      if (category?.preferredBackboneConnectionId) {
         const result = await this.loadConnection(
-          category.preferred_backbone_connection_id,
+          category.preferredBackboneConnectionId,
           'category',
         );
         if (result) return result;
@@ -173,14 +192,14 @@ export class BackboneRouterService {
 
     // 4. Pod-level override
     if (options?.podId) {
-      const { data: pod } = await client
-        .from('pods')
-        .select('backbone_connection_id')
-        .eq('id', options.podId)
-        .maybeSingle();
-      if (pod?.backbone_connection_id) {
+      const [pod] = await this.db
+        .select({ backboneConnectionId: pods.backboneConnectionId })
+        .from(pods)
+        .where(eq(pods.id, options.podId))
+        .limit(1);
+      if (pod?.backboneConnectionId) {
         const result = await this.loadConnection(
-          pod.backbone_connection_id,
+          pod.backboneConnectionId,
           'pod',
         );
         if (result) return result;
@@ -323,19 +342,30 @@ export class BackboneRouterService {
     connectionId: string,
     resolvedFrom: ResolvedFrom,
   ): Promise<ResolveResult | null> {
-    const client = this.supabaseAdmin.getClient();
+    const [row] = await this.db
+      .select()
+      .from(backboneConnections)
+      .where(
+        and(
+          eq(backboneConnections.id, connectionId),
+          eq(backboneConnections.isActive, true),
+        ),
+      )
+      .limit(1);
 
-    const { data: conn } = await client
-      .from('backbone_connections')
-      .select('*')
-      .eq('id', connectionId)
-      .eq('is_active', true)
-      .maybeSingle();
+    if (!row) return null;
 
-    if (!conn) return null;
+    // Re-key to the snake_case shape callers depend on (raw DB row),
+    // preserving `backbone_type` / `config` / `id` access downstream.
+    const conn = {
+      ...row,
+      backbone_type: row.backboneType,
+    };
 
     const adapter = this.registry.get(conn.backbone_type);
-    const config = this.connections.decryptConfig(conn.config);
+    const config = this.connections.decryptConfig(
+      conn.config as Record<string, any>,
+    );
 
     return { adapter, connection: conn, config, resolvedFrom };
   }

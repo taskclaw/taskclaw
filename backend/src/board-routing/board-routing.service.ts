@@ -1,67 +1,99 @@
+import { Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
 import {
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+  boardRoutes,
+  tasks,
+  boardSteps,
+  taskDependencies,
+} from '../db/schema';
 import { CreateBoardRouteDto } from './dto/create-board-route.dto';
 import { UpdateBoardRouteDto } from './dto/update-board-route.dto';
+
+/**
+ * Maps the snake_case task column names that may appear in a route's
+ * `transform_config.field_mapping` to the camelCase keys Drizzle uses on the
+ * fetched row / insert payload. PostgREST exposed columns as snake_case, so the
+ * stored field_mapping configs reference snake_case names — translate them here
+ * to preserve the original transform behavior unchanged.
+ */
+const TASK_FIELD_MAP: Record<string, string> = {
+  account_id: 'accountId',
+  category_id: 'categoryId',
+  source_id: 'sourceId',
+  external_id: 'externalId',
+  title: 'title',
+  status: 'status',
+  priority: 'priority',
+  completed: 'completed',
+  notes: 'notes',
+  metadata: 'metadata',
+  external_url: 'externalUrl',
+  due_date: 'dueDate',
+  completed_at: 'completedAt',
+  last_synced_at: 'lastSyncedAt',
+  board_instance_id: 'boardInstanceId',
+  current_step_id: 'currentStepId',
+  card_data: 'cardData',
+  step_history: 'stepHistory',
+  override_category_id: 'overrideCategoryId',
+  result: 'result',
+  dag_id: 'dagId',
+  backbone_connection_id: 'backboneConnectionId',
+  assignee_type: 'assigneeType',
+  assignee_id: 'assigneeId',
+  creator_type: 'creatorType',
+  creator_id: 'creatorId',
+  input_context: 'inputContext',
+};
 
 @Injectable()
 export class BoardRoutingService {
   private readonly logger = new Logger(BoardRoutingService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   async createRoute(accountId: string, dto: CreateBoardRouteDto) {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('board_routes')
-      .insert({
-        account_id: accountId,
-        source_board_id: dto.source_board_id,
-        source_step_id: dto.source_step_id ?? null,
-        target_board_id: dto.target_board_id,
-        target_step_id: dto.target_step_id ?? null,
+    const [data] = await this.db
+      .insert(boardRoutes)
+      .values({
+        accountId,
+        sourceBoardId: dto.source_board_id,
+        sourceStepId: dto.source_step_id ?? null,
+        targetBoardId: dto.target_board_id,
+        targetStepId: dto.target_step_id ?? null,
         trigger: dto.trigger ?? 'auto',
-        transform_config: dto.transform_config ?? {},
-        is_active: dto.is_active ?? true,
+        transformConfig: dto.transform_config ?? {},
+        isActive: dto.is_active ?? true,
       })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to create board route: ${error.message}`);
-    }
+      .returning();
 
     return data;
   }
 
   async findAllRoutes(accountId: string) {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('board_routes')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new Error(`Failed to fetch board routes: ${error.message}`);
-    }
+    const data = await this.db
+      .select()
+      .from(boardRoutes)
+      .where(eq(boardRoutes.accountId, accountId))
+      .orderBy(desc(boardRoutes.createdAt));
 
     return data;
   }
 
   async findRoute(accountId: string, routeId: string) {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('board_routes')
-      .select('*')
-      .eq('id', routeId)
-      .eq('account_id', accountId)
-      .single();
+    const [data] = await this.db
+      .select()
+      .from(boardRoutes)
+      .where(
+        and(
+          eq(boardRoutes.id, routeId),
+          eq(boardRoutes.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (error || !data) {
+    if (!data) {
       throw new NotFoundException(`Board route ${routeId} not found`);
     }
 
@@ -73,81 +105,74 @@ export class BoardRoutingService {
     routeId: string,
     dto: UpdateBoardRouteDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify exists
     await this.findRoute(accountId, routeId);
 
-    const { data, error } = await client
-      .from('board_routes')
-      .update(dto)
-      .eq('id', routeId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to update board route: ${error.message}`);
-    }
+    const [data] = await this.db
+      .update(boardRoutes)
+      .set(this.toRoutePatch(dto))
+      .where(
+        and(
+          eq(boardRoutes.id, routeId),
+          eq(boardRoutes.accountId, accountId),
+        ),
+      )
+      .returning();
 
     return data;
   }
 
   async deleteRoute(accountId: string, routeId: string) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify exists
     await this.findRoute(accountId, routeId);
 
-    const { error } = await client
-      .from('board_routes')
-      .delete()
-      .eq('id', routeId)
-      .eq('account_id', accountId);
-
-    if (error) {
-      throw new Error(`Failed to delete board route: ${error.message}`);
-    }
+    await this.db
+      .delete(boardRoutes)
+      .where(
+        and(
+          eq(boardRoutes.id, routeId),
+          eq(boardRoutes.accountId, accountId),
+        ),
+      );
 
     return { message: 'Board route deleted successfully' };
   }
 
   async triggerRoute(taskId: string, routeId: string) {
-    const client = this.supabaseAdmin.getClient();
-
     // Fetch the route
-    const { data: route, error: routeError } = await client
-      .from('board_routes')
-      .select('*')
-      .eq('id', routeId)
-      .single();
+    const [route] = await this.db
+      .select()
+      .from(boardRoutes)
+      .where(eq(boardRoutes.id, routeId))
+      .limit(1);
 
-    if (routeError || !route) {
+    if (!route) {
       throw new NotFoundException(`Board route ${routeId} not found`);
     }
 
     // Fetch the source task
-    const { data: task, error: taskError } = await client
-      .from('tasks')
-      .select('*')
-      .eq('id', taskId)
-      .single();
+    const [task] = await this.db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
 
-    if (taskError || !task) {
+    if (!task) {
       throw new NotFoundException(`Task ${taskId} not found`);
     }
 
     // Apply transform_config (field mapping)
-    const transformConfig = route.transform_config || {};
-    const newTaskData: Record<string, any> = {
-      account_id: task.account_id,
+    const transformConfig =
+      (route.transformConfig as Record<string, any>) || {};
+    const newTaskData: typeof tasks.$inferInsert = {
+      accountId: task.accountId,
       title: task.title,
       notes: task.notes || '',
       priority: task.priority || 'Medium',
-      board_instance_id: route.target_board_id,
-      current_step_id: route.target_step_id || null,
+      boardInstanceId: route.targetBoardId,
+      currentStepId: route.targetStepId || null,
       status: 'To-Do',
-      card_data: task.card_data || {},
+      cardData: (task.cardData as Record<string, any>) || {},
     };
 
     // Apply field transforms if configured
@@ -155,49 +180,70 @@ export class BoardRoutingService {
       for (const [targetField, sourceField] of Object.entries(
         transformConfig.field_mapping as Record<string, string>,
       )) {
-        if (task[sourceField] !== undefined) {
-          newTaskData[targetField] = task[sourceField];
+        const targetKey = TASK_FIELD_MAP[targetField];
+        const sourceKey = TASK_FIELD_MAP[sourceField];
+        const taskRow = task as Record<string, any>;
+        if (targetKey && sourceKey && taskRow[sourceKey] !== undefined) {
+          (newTaskData as Record<string, any>)[targetKey] = taskRow[sourceKey];
         }
       }
     }
 
     // If target_step_id provided, resolve status from step name
-    if (route.target_step_id) {
-      const { data: step } = await client
-        .from('board_steps')
-        .select('name')
-        .eq('id', route.target_step_id)
-        .single();
+    if (route.targetStepId) {
+      const [step] = await this.db
+        .select({ name: boardSteps.name })
+        .from(boardSteps)
+        .where(eq(boardSteps.id, route.targetStepId))
+        .limit(1);
       if (step) {
         newTaskData.status = step.name;
       }
     }
 
     // Create the new task in the target board
-    const { data: newTask, error: createError } = await client
-      .from('tasks')
-      .insert(newTaskData)
-      .select()
-      .single();
-
-    if (createError) {
-      throw new Error(
-        `Failed to create routed task: ${createError.message}`,
-      );
-    }
+    const inserted = await this.db
+      .insert(tasks)
+      .values(newTaskData)
+      .returning();
+    const newTask = inserted[0];
 
     // Create a dependency record linking source -> target
-    await client.from('task_dependencies').insert({
-      source_task_id: taskId,
-      target_task_id: newTask.id,
-      dependency_type: 'route',
-      route_id: routeId,
+    await this.db.insert(taskDependencies).values({
+      sourceTaskId: taskId,
+      targetTaskId: newTask.id,
+      dependencyType: 'route',
+      routeId: routeId,
     });
 
     this.logger.log(
-      `Route ${routeId}: transferred task ${taskId} -> ${newTask.id} to board ${route.target_board_id}`,
+      `Route ${routeId}: transferred task ${taskId} -> ${newTask.id} to board ${route.targetBoardId}`,
     );
 
     return newTask;
+  }
+
+  /**
+   * Map the snake_case UpdateBoardRouteDto to the camelCase board_routes
+   * columns (only defined fields), mirroring the partial update PostgREST
+   * performed when passed the DTO directly.
+   */
+  private toRoutePatch(
+    dto: UpdateBoardRouteDto,
+  ): Partial<typeof boardRoutes.$inferInsert> {
+    const patch: Partial<typeof boardRoutes.$inferInsert> = {};
+    if (dto.source_board_id !== undefined)
+      patch.sourceBoardId = dto.source_board_id;
+    if (dto.source_step_id !== undefined)
+      patch.sourceStepId = dto.source_step_id;
+    if (dto.target_board_id !== undefined)
+      patch.targetBoardId = dto.target_board_id;
+    if (dto.target_step_id !== undefined)
+      patch.targetStepId = dto.target_step_id;
+    if (dto.trigger !== undefined) patch.trigger = dto.trigger;
+    if (dto.transform_config !== undefined)
+      patch.transformConfig = dto.transform_config;
+    if (dto.is_active !== undefined) patch.isActive = dto.is_active;
+    return patch;
   }
 }

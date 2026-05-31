@@ -1,9 +1,12 @@
 import {
   Injectable,
+  Inject,
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import { SupabaseService } from '../../supabase/supabase.service';
+import { asc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import { plans } from '../../db/schema';
 import { StripeService } from '../stripe/stripe.service';
 
 @Injectable()
@@ -11,36 +14,75 @@ export class PlansService {
   private readonly logger = new Logger(PlansService.name);
 
   constructor(
-    private readonly supabaseService: SupabaseService,
+    @Inject(DB) private readonly db: Db,
     private readonly stripeService: StripeService,
   ) {}
 
-  async getPlans(accessToken?: string) {
-    const supabase = this.supabaseService.getClient(accessToken);
+  /**
+   * Drizzle returns camelCase columns; PostgREST returned snake_case. Callers
+   * (admin/billing frontend) read `price_cents`, `is_default`, `is_hidden`,
+   * `stripe_product_id`, `stripe_price_id`, etc. Re-key to the snake_case shape
+   * so the response is unchanged from the PostgREST era.
+   */
+  private present(row: typeof plans.$inferSelect) {
+    return {
+      id: row.id,
+      name: row.name,
+      price_cents: row.priceCents,
+      currency: row.currency,
+      interval: row.interval,
+      features: row.features,
+      is_default: row.isDefault,
+      is_hidden: row.isHidden,
+      created_at: row.createdAt,
+      stripe_price_id: row.stripePriceId,
+      stripe_product_id: row.stripeProductId,
+    };
+  }
 
-    const { data, error } = await supabase
-      .from('plans')
-      .select('*')
-      .order('price_cents', { ascending: true });
+  /**
+   * Map a free-form (snake_case) plan payload to the schema's camelCase columns.
+   * Only keys present on the input are carried over, mirroring PostgREST's
+   * partial-insert/partial-update behaviour. Unknown keys are dropped.
+   */
+  private toPlanRow(planData: any): Partial<typeof plans.$inferInsert> {
+    const row: Partial<typeof plans.$inferInsert> = {};
+    if (planData.name !== undefined) row.name = planData.name;
+    if (planData.price_cents !== undefined)
+      row.priceCents = planData.price_cents;
+    if (planData.currency !== undefined) row.currency = planData.currency;
+    if (planData.interval !== undefined) row.interval = planData.interval;
+    if (planData.features !== undefined) row.features = planData.features;
+    if (planData.is_default !== undefined) row.isDefault = planData.is_default;
+    if (planData.is_hidden !== undefined) row.isHidden = planData.is_hidden;
+    if (planData.stripe_price_id !== undefined)
+      row.stripePriceId = planData.stripe_price_id;
+    if (planData.stripe_product_id !== undefined)
+      row.stripeProductId = planData.stripe_product_id;
+    return row;
+  }
 
-    if (error) {
+  async getPlans(_accessToken?: string) {
+    try {
+      const rows = await this.db
+        .select()
+        .from(plans)
+        .orderBy(asc(plans.priceCents));
+      return rows.map((r) => this.present(r));
+    } catch (error: any) {
       throw new InternalServerErrorException(error.message);
     }
-
-    return data;
   }
 
   async createPlan(planData: any) {
-    const supabase = this.supabaseService.getAdminClient();
-
     // Step 1: Insert into DB first (plan exists even if Stripe fails)
-    const { data: plan, error } = await supabase
-      .from('plans')
-      .insert(planData)
-      .select()
-      .single();
-
-    if (error) {
+    let plan: typeof plans.$inferSelect;
+    try {
+      [plan] = await this.db
+        .insert(plans)
+        .values(this.toPlanRow(planData) as typeof plans.$inferInsert)
+        .returning();
+    } catch (error: any) {
       throw new InternalServerErrorException(error.message);
     }
 
@@ -52,33 +94,33 @@ export class PlansService {
       try {
         const result = await this.stripeService.createProductAndPrice({
           name: plan.name,
-          price_cents: plan.price_cents,
+          price_cents: plan.priceCents,
           currency: plan.currency || 'usd',
-          interval: plan.interval,
-          features: plan.features,
+          interval: plan.interval as 'month' | 'year',
+          features: plan.features as string[] | undefined,
         });
 
         if (result) {
           // Step 3: Patch plan with Stripe IDs
-          const { error: patchError } = await supabase
-            .from('plans')
-            .update({
-              stripe_product_id: result.productId,
-              stripe_price_id: result.priceId,
-            })
-            .eq('id', plan.id);
+          try {
+            await this.db
+              .update(plans)
+              .set({
+                stripeProductId: result.productId,
+                stripePriceId: result.priceId,
+              })
+              .where(eq(plans.id, plan.id));
 
-          if (patchError) {
+            plan.stripeProductId = result.productId;
+            plan.stripePriceId = result.priceId;
+            stripe_sync_status = 'synced';
+          } catch (patchError: any) {
             this.logger.error(
               `Plan ${plan.id} created in Stripe but failed to save IDs: ${patchError.message}`,
             );
             stripe_sync_status = 'failed';
             stripe_sync_error =
               'Stripe product created but failed to save IDs to database';
-          } else {
-            plan.stripe_product_id = result.productId;
-            plan.stripe_price_id = result.priceId;
-            stripe_sync_status = 'synced';
           }
         }
       } catch (err: any) {
@@ -90,34 +132,30 @@ export class PlansService {
       }
     }
 
-    return { ...plan, stripe_sync_status, stripe_sync_error };
+    return { ...this.present(plan), stripe_sync_status, stripe_sync_error };
   }
 
   async updatePlan(id: string, planData: any) {
-    const supabase = this.supabaseService.getAdminClient();
-
     // Step 0: Fetch existing plan to compare price/interval changes
-    const { data: existingPlan, error: fetchError } = await supabase
-      .from('plans')
-      .select('*')
-      .eq('id', id)
-      .single();
+    const [existingPlan] = await this.db
+      .select()
+      .from(plans)
+      .where(eq(plans.id, id))
+      .limit(1);
 
-    if (fetchError || !existingPlan) {
-      throw new InternalServerErrorException(
-        fetchError?.message || 'Plan not found',
-      );
+    if (!existingPlan) {
+      throw new InternalServerErrorException('Plan not found');
     }
 
     // Step 1: Update the DB first
-    const { data: plan, error } = await supabase
-      .from('plans')
-      .update(planData)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
+    let plan: typeof plans.$inferSelect;
+    try {
+      [plan] = await this.db
+        .update(plans)
+        .set(this.toPlanRow(planData))
+        .where(eq(plans.id, id))
+        .returning();
+    } catch (error: any) {
       throw new InternalServerErrorException(error.message);
     }
 
@@ -127,39 +165,39 @@ export class PlansService {
 
     if (this.stripeService.isConfigured()) {
       try {
-        if (existingPlan.stripe_product_id) {
+        if (existingPlan.stripeProductId) {
           // Product already exists in Stripe — update it
           const result = await this.stripeService.updateProductAndPrice(
-            existingPlan.stripe_product_id,
-            existingPlan.stripe_price_id,
+            existingPlan.stripeProductId,
+            existingPlan.stripePriceId,
             {
               name: plan.name,
-              price_cents: plan.price_cents,
+              price_cents: plan.priceCents,
               currency: plan.currency || 'usd',
-              interval: plan.interval,
-              features: plan.features,
+              interval: plan.interval as 'month' | 'year',
+              features: plan.features as string[] | undefined,
             },
-            existingPlan.price_cents,
+            existingPlan.priceCents,
             existingPlan.interval,
           );
 
-          if (result && result.priceId !== existingPlan.stripe_price_id) {
+          if (result && result.priceId !== existingPlan.stripePriceId) {
             // Price ID changed (price or interval was modified)
-            const { error: patchError } = await supabase
-              .from('plans')
-              .update({ stripe_price_id: result.priceId })
-              .eq('id', id);
+            try {
+              await this.db
+                .update(plans)
+                .set({ stripePriceId: result.priceId })
+                .where(eq(plans.id, id));
 
-            if (patchError) {
+              plan.stripePriceId = result.priceId;
+              stripe_sync_status = 'synced';
+            } catch (patchError: any) {
               this.logger.error(
                 `Plan ${id}: new Stripe price created but failed to save ID: ${patchError.message}`,
               );
               stripe_sync_status = 'failed';
               stripe_sync_error =
                 'New Stripe price created but failed to save ID';
-            } else {
-              plan.stripe_price_id = result.priceId;
-              stripe_sync_status = 'synced';
             }
           } else {
             stripe_sync_status = 'synced';
@@ -168,28 +206,28 @@ export class PlansService {
           // No Stripe product yet — create one (plan was created before Stripe was configured)
           const result = await this.stripeService.createProductAndPrice({
             name: plan.name,
-            price_cents: plan.price_cents,
+            price_cents: plan.priceCents,
             currency: plan.currency || 'usd',
-            interval: plan.interval,
-            features: plan.features,
+            interval: plan.interval as 'month' | 'year',
+            features: plan.features as string[] | undefined,
           });
 
           if (result) {
-            const { error: patchError } = await supabase
-              .from('plans')
-              .update({
-                stripe_product_id: result.productId,
-                stripe_price_id: result.priceId,
-              })
-              .eq('id', id);
+            try {
+              await this.db
+                .update(plans)
+                .set({
+                  stripeProductId: result.productId,
+                  stripePriceId: result.priceId,
+                })
+                .where(eq(plans.id, id));
 
-            if (patchError) {
+              plan.stripeProductId = result.productId;
+              plan.stripePriceId = result.priceId;
+              stripe_sync_status = 'synced';
+            } catch (patchError: any) {
               stripe_sync_status = 'failed';
               stripe_sync_error = 'Created in Stripe but failed to save IDs';
-            } else {
-              plan.stripe_product_id = result.productId;
-              plan.stripe_price_id = result.priceId;
-              stripe_sync_status = 'synced';
             }
           }
         }
@@ -202,30 +240,31 @@ export class PlansService {
       }
     }
 
-    return { ...plan, stripe_sync_status, stripe_sync_error };
+    return { ...this.present(plan), stripe_sync_status, stripe_sync_error };
   }
 
   async deletePlan(id: string) {
-    const supabase = this.supabaseService.getAdminClient();
-
     // Fetch Stripe IDs before deletion
-    const { data: plan } = await supabase
-      .from('plans')
-      .select('stripe_product_id, stripe_price_id')
-      .eq('id', id)
-      .single();
+    const [plan] = await this.db
+      .select({
+        stripeProductId: plans.stripeProductId,
+        stripePriceId: plans.stripePriceId,
+      })
+      .from(plans)
+      .where(eq(plans.id, id))
+      .limit(1);
 
     // Delete from DB
-    const { error } = await supabase.from('plans').delete().eq('id', id);
-
-    if (error) {
+    try {
+      await this.db.delete(plans).where(eq(plans.id, id));
+    } catch (error: any) {
       throw new InternalServerErrorException(error.message);
     }
 
     // Archive in Stripe (fire-and-forget)
-    if (plan?.stripe_product_id) {
+    if (plan?.stripeProductId) {
       this.stripeService
-        .archiveProduct(plan.stripe_product_id, plan.stripe_price_id)
+        .archiveProduct(plan.stripeProductId, plan.stripePriceId)
         .catch((err) =>
           this.logger.error(`Failed to archive Stripe product: ${err.message}`),
         );

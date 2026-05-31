@@ -1,9 +1,11 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { SupabaseAdminService } from '../../supabase/supabase-admin.service';
+import { and, eq, ilike } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import { boardInstances, boardSteps, tasks } from '../../db/schema';
 
 export function createQueryBoardTasksTool(
-  supabaseAdmin: SupabaseAdminService,
+  db: Db,
   accountId: string,
 ): DynamicStructuredTool {
   return new DynamicStructuredTool({
@@ -29,19 +31,17 @@ export function createQueryBoardTasksTool(
     }),
     func: async ({ board_name, step_name, search_query }) => {
       try {
-        const client = supabaseAdmin.getClient();
-
         // 1. Find the board instance by name (ILIKE)
-        const { data: boards, error: boardError } = await client
-          .from('board_instances')
-          .select('id, name')
-          .eq('account_id', accountId)
-          .ilike('name', `%${board_name}%`)
+        const boards = await db
+          .select({ id: boardInstances.id, name: boardInstances.name })
+          .from(boardInstances)
+          .where(
+            and(
+              eq(boardInstances.accountId, accountId),
+              ilike(boardInstances.name, `%${board_name}%`),
+            ),
+          )
           .limit(1);
-
-        if (boardError) {
-          return JSON.stringify({ error: `Board lookup error: ${boardError.message}` });
-        }
 
         if (!boards || boards.length === 0) {
           return JSON.stringify({
@@ -54,16 +54,16 @@ export function createQueryBoardTasksTool(
         // 2. Optionally find the step
         let stepId: string | null = null;
         if (step_name) {
-          const { data: steps, error: stepError } = await client
-            .from('board_steps')
-            .select('id, name')
-            .eq('board_instance_id', board.id)
-            .ilike('name', `%${step_name}%`)
+          const steps = await db
+            .select({ id: boardSteps.id, name: boardSteps.name })
+            .from(boardSteps)
+            .where(
+              and(
+                eq(boardSteps.boardInstanceId, board.id),
+                ilike(boardSteps.name, `%${step_name}%`),
+              ),
+            )
             .limit(1);
-
-          if (stepError) {
-            return JSON.stringify({ error: `Step lookup error: ${stepError.message}` });
-          }
 
           if (!steps || steps.length === 0) {
             return JSON.stringify({
@@ -74,35 +74,31 @@ export function createQueryBoardTasksTool(
           stepId = steps[0].id;
         }
 
-        // 3. Query tasks
-        let taskQuery = client
-          .from('tasks')
-          .select(
-            'id, title, input_fields, output_fields, metadata, step_id, board_step:board_steps(name)',
-          )
-          .eq('board_instance_id', board.id);
+        // 3. Query tasks. The PostgREST embed `board_step:board_steps(name)`
+        // re-keys to the Drizzle `boardStep` relation (tasks.currentStepId →
+        // board_steps). PostgREST's `step_id` filter maps to `currentStepId`.
+        const taskConds = [eq(tasks.boardInstanceId, board.id)];
+        if (stepId) taskConds.push(eq(tasks.currentStepId, stepId));
+        if (search_query) taskConds.push(ilike(tasks.title, `%${search_query}%`));
 
-        if (stepId) {
-          taskQuery = taskQuery.eq('step_id', stepId);
-        }
+        const taskRows = await db.query.tasks.findMany({
+          with: {
+            boardStep: true,
+          },
+          where: and(...taskConds),
+          limit: 50,
+        });
 
-        if (search_query) {
-          taskQuery = taskQuery.ilike('title', `%${search_query}%`);
-        }
-
-        const { data: tasks, error: taskError } = await taskQuery.limit(50);
-
-        if (taskError) {
-          return JSON.stringify({ error: `Task query error: ${taskError.message}` });
-        }
-
-        const formattedTasks = (tasks || []).map((t: any) => ({
+        const formattedTasks = (taskRows ?? []).map((t) => ({
           id: t.id,
           title: t.title,
-          input_fields: t.input_fields,
-          output_fields: t.output_fields,
+          // The migrated `tasks` table has no `input_fields`/`output_fields`
+          // columns; the field schema now lives on the step. Preserve the
+          // original output keys by surfacing the step's field definitions.
+          input_fields: t.boardStep?.inputFields ?? null,
+          output_fields: t.boardStep?.outputFields ?? null,
           metadata: t.metadata,
-          step_name: t.board_step?.name ?? null,
+          step_name: t.boardStep?.name ?? null,
         }));
 
         return JSON.stringify({

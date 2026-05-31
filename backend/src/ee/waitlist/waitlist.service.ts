@@ -1,5 +1,7 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { SupabaseService } from '../../supabase/supabase.service';
+import { Injectable, Inject, BadRequestException } from '@nestjs/common';
+import { count, desc } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import { waitlist } from '../../db/schema';
 
 const DISPOSABLE_DOMAINS = new Set([
   'mailinator.com',
@@ -45,7 +47,7 @@ const TEST_EMAILS = new Set([
 
 @Injectable()
 export class WaitlistService {
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   private validateEmail(email: string): void {
     const normalized = email.toLowerCase().trim();
@@ -71,17 +73,13 @@ export class WaitlistService {
     const normalized = email.toLowerCase().trim();
     this.validateEmail(normalized);
 
-    const client = this.supabaseService.getAdminClient();
-
     // Upsert: if email already exists, do nothing (ON CONFLICT)
-    const { error } = await client
-      .from('waitlist')
-      .upsert(
-        { email: normalized, source },
-        { onConflict: 'email', ignoreDuplicates: true },
-      );
-
-    if (error) {
+    try {
+      await this.db
+        .insert(waitlist)
+        .values({ email: normalized, source })
+        .onConflictDoNothing({ target: [waitlist.email] });
+    } catch {
       throw new BadRequestException(
         'Unable to join waitlist. Please try again.',
       );
@@ -94,38 +92,39 @@ export class WaitlistService {
   }
 
   async getCount(): Promise<{ count: number }> {
-    const client = this.supabaseService.getAdminClient();
+    try {
+      const [row] = await this.db
+        .select({ value: count() })
+        .from(waitlist);
 
-    const { count, error } = await client
-      .from('waitlist')
-      .select('*', { count: 'exact', head: true });
-
-    if (error) {
+      return { count: row?.value ?? 0 };
+    } catch {
       return { count: 0 };
     }
-
-    return { count: count ?? 0 };
   }
 
   async findAll(page = 1, limit = 50) {
-    const client = this.supabaseService.getAdminClient();
     const offset = (page - 1) * limit;
 
-    const { data, count, error } = await client
-      .from('waitlist')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    try {
+      const [data, [total]] = await Promise.all([
+        this.db
+          .select()
+          .from(waitlist)
+          .orderBy(desc(waitlist.createdAt))
+          .limit(limit)
+          .offset(offset),
+        this.db.select({ value: count() }).from(waitlist),
+      ]);
 
-    if (error) {
+      return {
+        data: data ?? [],
+        total: total?.value ?? 0,
+        page,
+        limit,
+      };
+    } catch {
       throw new BadRequestException('Failed to fetch waitlist');
     }
-
-    return {
-      data: data ?? [],
-      total: count ?? 0,
-      page,
-      limit,
-    };
   }
 }

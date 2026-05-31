@@ -44,3 +44,20 @@ export class ForgotPasswordDto {
   @IsString()
   redirectTo?: string;
 }
+
+export class ResetPasswordDto {
+  @IsNotEmpty()
+  @IsString()
+  token!: string;
+
+  @IsNotEmpty()
+  @IsString()
+  @MinLength(6)
+  password!: string;
+}
+
+export class RefreshDto {
+  @IsNotEmpty()
+  @IsString()
+  refresh_token!: string;
+}

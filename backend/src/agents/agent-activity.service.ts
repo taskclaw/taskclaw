@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { and, count, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { agentActivity } from '../db/schema';
 
 export type AgentActivityType =
   | 'task_completed'
@@ -31,29 +33,28 @@ export interface RecordActivityOptions {
 export class AgentActivityService {
   private readonly logger = new Logger(AgentActivityService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   /**
    * Record a single activity event. Non-throwing — logs errors instead.
    */
   async record(opts: RecordActivityOptions): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
-    const { error } = await client.from('agent_activity').insert({
-      account_id: opts.accountId,
-      agent_id: opts.agentId,
-      activity_type: opts.activityType,
-      summary: opts.summary,
-      task_id: opts.taskId ?? null,
-      dag_id: opts.dagId ?? null,
-      conversation_id: opts.conversationId ?? null,
-      board_id: opts.boardId ?? null,
-      metadata: opts.metadata ?? {},
-    });
-
-    if (error) {
+    try {
+      await this.db.insert(agentActivity).values({
+        accountId: opts.accountId,
+        agentId: opts.agentId,
+        activityType: opts.activityType,
+        summary: opts.summary,
+        taskId: opts.taskId ?? null,
+        dagId: opts.dagId ?? null,
+        conversationId: opts.conversationId ?? null,
+        boardId: opts.boardId ?? null,
+        metadata: opts.metadata ?? {},
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.error(
-        `[AgentActivityService] Failed to record activity (${opts.activityType}) for agent ${opts.agentId}: ${error.message}`,
+        `[AgentActivityService] Failed to record activity (${opts.activityType}) for agent ${opts.agentId}: ${message}`,
       );
     }
   }
@@ -67,28 +68,34 @@ export class AgentActivityService {
     page = 1,
     limit = 20,
   ) {
-    const client = this.supabaseAdmin.getClient();
     const offset = (page - 1) * limit;
 
-    const { data, error, count } = await client
-      .from('agent_activity')
-      .select('*', { count: 'exact' })
-      .eq('account_id', accountId)
-      .eq('agent_id', agentId)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const where = and(
+      eq(agentActivity.accountId, accountId),
+      eq(agentActivity.agentId, agentId),
+    );
 
-    if (error) {
-      throw new Error(`Failed to fetch agent activity: ${error.message}`);
-    }
+    const [data, [{ value: total }]] = await Promise.all([
+      this.db
+        .select()
+        .from(agentActivity)
+        .where(where)
+        .orderBy(desc(agentActivity.createdAt))
+        .limit(limit)
+        .offset(offset),
+      this.db
+        .select({ value: count() })
+        .from(agentActivity)
+        .where(where),
+    ]);
 
     return {
       data: data ?? [],
       pagination: {
         page,
         limit,
-        total: count ?? 0,
-        totalPages: Math.ceil((count ?? 0) / limit),
+        total: total ?? 0,
+        totalPages: Math.ceil((total ?? 0) / limit),
       },
     };
   }

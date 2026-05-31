@@ -6,8 +6,9 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { aiProviderConfigs } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { OpenClawService } from '../conversations/openclaw.service';
 import { CreateAiProviderDto } from './dto/create-ai-provider.dto';
@@ -24,31 +25,50 @@ export class AiProviderService {
   private readonly logger = new Logger(AiProviderService.name);
 
   constructor(
-    private readonly supabase: SupabaseService,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
     @Inject(forwardRef(() => OpenClawService))
     private readonly openClawService: OpenClawService,
   ) {}
 
   /**
+   * Re-key a Drizzle row (camelCase) to the snake_case column shape that
+   * PostgREST returned, so the HTTP responses and internal consumers
+   * (frontend reads `verified_at`/`provider_type`/...; openclaw.service reads
+   * `api_url`/`api_key`/`agent_id`; the `is_active` gate) are byte-for-byte
+   * compatible with the pre-migration behavior.
+   */
+  private toRow(data: typeof aiProviderConfigs.$inferSelect) {
+    return {
+      id: data.id,
+      account_id: data.accountId,
+      provider_type: data.providerType,
+      api_url: data.apiUrl,
+      api_key: data.apiKey,
+      agent_id: data.agentId,
+      is_active: data.isActive,
+      verified_at: data.verifiedAt,
+      created_at: data.createdAt,
+      updated_at: data.updatedAt,
+      openrouter_api_key: data.openrouterApiKey,
+      telegram_bot_token: data.telegramBotToken,
+      brave_search_api_key: data.braveSearchApiKey,
+      migrated_to: data.migratedTo,
+    };
+  }
+
+  /**
    * Get AI provider config for an account (with masked API key)
    */
   async findOne(userId: string, accountId: string, accessToken: string) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('ai_provider_configs')
-      .select('*')
-      .eq('account_id', accountId)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(`Failed to fetch AI provider config: ${error.message}`);
-    }
+    const [data] = await this.db
+      .select()
+      .from(aiProviderConfigs)
+      .where(eq(aiProviderConfigs.accountId, accountId))
+      .limit(1);
 
     if (!data) {
       return null; // No AI provider configured yet
@@ -56,18 +76,18 @@ export class AiProviderService {
 
     // Decrypt and mask sensitive fields for display
     return {
-      ...data,
-      api_url: decrypt(data.api_url),
-      api_key: maskSensitiveValue(decrypt(data.api_key)),
+      ...this.toRow(data),
+      api_url: decrypt(data.apiUrl),
+      api_key: maskSensitiveValue(decrypt(data.apiKey)),
       api_key_masked: true, // Flag to indicate key is masked
-      openrouter_api_key: data.openrouter_api_key
-        ? maskSensitiveValue(decrypt(data.openrouter_api_key))
+      openrouter_api_key: data.openrouterApiKey
+        ? maskSensitiveValue(decrypt(data.openrouterApiKey))
         : null,
-      telegram_bot_token: data.telegram_bot_token
-        ? maskSensitiveValue(decrypt(data.telegram_bot_token))
+      telegram_bot_token: data.telegramBotToken
+        ? maskSensitiveValue(decrypt(data.telegramBotToken))
         : null,
-      brave_search_api_key: data.brave_search_api_key
-        ? maskSensitiveValue(decrypt(data.brave_search_api_key))
+      brave_search_api_key: data.braveSearchApiKey
+        ? maskSensitiveValue(decrypt(data.braveSearchApiKey))
         : null,
     };
   }
@@ -81,36 +101,34 @@ export class AiProviderService {
     dto: CreateAiProviderDto,
     accessToken: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user is owner/admin
-    await this.accessControl.verifyAccountAccess(client, accountId, userId, [
+    await this.accessControl.verifyAccountAccess(null, accountId, userId, [
       'owner',
       'admin',
     ]);
 
     // If api_key or api_url not provided, reuse existing encrypted values
-    let existingEncrypted: Record<string, any> | null = null;
+    let existingEncrypted: typeof aiProviderConfigs.$inferSelect | null = null;
     if (!dto.api_key || !dto.api_url) {
-      const { data: existing } = await client
-        .from('ai_provider_configs')
-        .select('*')
-        .eq('account_id', accountId)
-        .maybeSingle();
-      existingEncrypted = existing;
+      const [existing] = await this.db
+        .select()
+        .from(aiProviderConfigs)
+        .where(eq(aiProviderConfigs.accountId, accountId))
+        .limit(1);
+      existingEncrypted = existing ?? null;
     }
 
     // Encrypt sensitive fields
     const encryptedData: Record<string, any> = {
-      account_id: accountId,
-      provider_type: dto.provider_type || 'openclaw',
-      api_url: dto.api_url ? encrypt(dto.api_url) : existingEncrypted?.api_url,
-      api_key: dto.api_key ? encrypt(dto.api_key) : existingEncrypted?.api_key,
-      agent_id: dto.agent_id,
-      is_active: dto.is_active ?? true,
+      accountId: accountId,
+      providerType: dto.provider_type || 'openclaw',
+      apiUrl: dto.api_url ? encrypt(dto.api_url) : existingEncrypted?.apiUrl,
+      apiKey: dto.api_key ? encrypt(dto.api_key) : existingEncrypted?.apiKey,
+      agentId: dto.agent_id,
+      isActive: dto.is_active ?? true,
     };
 
-    if (!encryptedData.api_url || !encryptedData.api_key) {
+    if (!encryptedData.apiUrl || !encryptedData.apiKey) {
       throw new BadRequestException(
         'API URL and API key are required. Please provide them or ensure an existing configuration exists.',
       );
@@ -118,32 +136,29 @@ export class AiProviderService {
 
     // Sprint 7: Extended OpenClaw credentials
     if (dto.openrouter_api_key !== undefined) {
-      encryptedData.openrouter_api_key = dto.openrouter_api_key
+      encryptedData.openrouterApiKey = dto.openrouter_api_key
         ? encrypt(dto.openrouter_api_key)
         : null;
     }
     if (dto.telegram_bot_token !== undefined) {
-      encryptedData.telegram_bot_token = dto.telegram_bot_token
+      encryptedData.telegramBotToken = dto.telegram_bot_token
         ? encrypt(dto.telegram_bot_token)
         : null;
     }
     if (dto.brave_search_api_key !== undefined) {
-      encryptedData.brave_search_api_key = dto.brave_search_api_key
+      encryptedData.braveSearchApiKey = dto.brave_search_api_key
         ? encrypt(dto.brave_search_api_key)
         : null;
     }
 
-    const { data, error } = await client
-      .from('ai_provider_configs')
-      .upsert(encryptedData, {
-        onConflict: 'account_id,provider_type',
+    const [data] = await this.db
+      .insert(aiProviderConfigs)
+      .values(encryptedData as typeof aiProviderConfigs.$inferInsert)
+      .onConflictDoUpdate({
+        target: [aiProviderConfigs.accountId, aiProviderConfigs.providerType],
+        set: encryptedData,
       })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to save AI provider config: ${error.message}`);
-    }
+      .returning();
 
     this.logger.log(
       `AI provider config saved for account ${accountId}: ${dto.provider_type}`,
@@ -151,26 +166,26 @@ export class AiProviderService {
 
     // Return with decrypted but masked values
     return {
-      ...data,
-      api_url: dto.api_url || decrypt(data.api_url),
+      ...this.toRow(data),
+      api_url: dto.api_url || decrypt(data.apiUrl),
       api_key: dto.api_key
         ? maskSensitiveValue(dto.api_key)
-        : maskSensitiveValue(decrypt(data.api_key)),
+        : maskSensitiveValue(decrypt(data.apiKey)),
       api_key_masked: true,
       openrouter_api_key: dto.openrouter_api_key
         ? maskSensitiveValue(dto.openrouter_api_key)
-        : data.openrouter_api_key
-          ? maskSensitiveValue(decrypt(data.openrouter_api_key))
+        : data.openrouterApiKey
+          ? maskSensitiveValue(decrypt(data.openrouterApiKey))
           : null,
       telegram_bot_token: dto.telegram_bot_token
         ? maskSensitiveValue(dto.telegram_bot_token)
-        : data.telegram_bot_token
-          ? maskSensitiveValue(decrypt(data.telegram_bot_token))
+        : data.telegramBotToken
+          ? maskSensitiveValue(decrypt(data.telegramBotToken))
           : null,
       brave_search_api_key: dto.brave_search_api_key
         ? maskSensitiveValue(dto.brave_search_api_key)
-        : data.brave_search_api_key
-          ? maskSensitiveValue(decrypt(data.brave_search_api_key))
+        : data.braveSearchApiKey
+          ? maskSensitiveValue(decrypt(data.braveSearchApiKey))
           : null,
     };
   }
@@ -184,10 +199,8 @@ export class AiProviderService {
     dto: UpdateAiProviderDto,
     accessToken: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user is owner/admin
-    await this.accessControl.verifyAccountAccess(client, accountId, userId, [
+    await this.accessControl.verifyAccountAccess(null, accountId, userId, [
       'owner',
       'admin',
     ]);
@@ -199,46 +212,41 @@ export class AiProviderService {
     }
 
     // Encrypt updated fields
-    const updateData: any = {};
-    if (dto.api_url) updateData.api_url = encrypt(dto.api_url);
-    if (dto.api_key) updateData.api_key = encrypt(dto.api_key);
-    if (dto.agent_id !== undefined) updateData.agent_id = dto.agent_id;
-    if (dto.is_active !== undefined) updateData.is_active = dto.is_active;
+    const updateData: Partial<typeof aiProviderConfigs.$inferInsert> = {};
+    if (dto.api_url) updateData.apiUrl = encrypt(dto.api_url);
+    if (dto.api_key) updateData.apiKey = encrypt(dto.api_key);
+    if (dto.agent_id !== undefined) updateData.agentId = dto.agent_id;
+    if (dto.is_active !== undefined) updateData.isActive = dto.is_active;
     // Sprint 7: Extended OpenClaw credentials
     if (dto.openrouter_api_key !== undefined) {
-      updateData.openrouter_api_key = dto.openrouter_api_key
+      updateData.openrouterApiKey = dto.openrouter_api_key
         ? encrypt(dto.openrouter_api_key)
         : null;
     }
     if (dto.telegram_bot_token !== undefined) {
-      updateData.telegram_bot_token = dto.telegram_bot_token
+      updateData.telegramBotToken = dto.telegram_bot_token
         ? encrypt(dto.telegram_bot_token)
         : null;
     }
     if (dto.brave_search_api_key !== undefined) {
-      updateData.brave_search_api_key = dto.brave_search_api_key
+      updateData.braveSearchApiKey = dto.brave_search_api_key
         ? encrypt(dto.brave_search_api_key)
         : null;
     }
 
-    const { data, error } = await client
-      .from('ai_provider_configs')
-      .update(updateData)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to update AI provider config: ${error.message}`);
-    }
+    const [data] = await this.db
+      .update(aiProviderConfigs)
+      .set(updateData)
+      .where(eq(aiProviderConfigs.accountId, accountId))
+      .returning();
 
     // Return with masked values
     return {
-      ...data,
-      api_url: dto.api_url || decrypt(data.api_url),
+      ...this.toRow(data),
+      api_url: dto.api_url || decrypt(data.apiUrl),
       api_key: dto.api_key
         ? maskSensitiveValue(dto.api_key)
-        : maskSensitiveValue(decrypt(data.api_key)),
+        : maskSensitiveValue(decrypt(data.apiKey)),
       api_key_masked: true,
     };
   }
@@ -247,22 +255,15 @@ export class AiProviderService {
    * Delete AI provider config
    */
   async remove(userId: string, accountId: string, accessToken: string) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user is owner/admin
-    await this.accessControl.verifyAccountAccess(client, accountId, userId, [
+    await this.accessControl.verifyAccountAccess(null, accountId, userId, [
       'owner',
       'admin',
     ]);
 
-    const { error } = await client
-      .from('ai_provider_configs')
-      .delete()
-      .eq('account_id', accountId);
-
-    if (error) {
-      throw new Error(`Failed to delete AI provider config: ${error.message}`);
-    }
+    await this.db
+      .delete(aiProviderConfigs)
+      .where(eq(aiProviderConfigs.accountId, accountId));
 
     this.logger.log(`AI provider config deleted for account ${accountId}`);
 
@@ -280,10 +281,8 @@ export class AiProviderService {
     dto: VerifyConnectionDto,
     accessToken: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user has access to account
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Resolve API key: use provided key, or fall back to stored key
     let resolvedApiKey = dto.api_key;
@@ -331,11 +330,15 @@ export class AiProviderService {
       }
 
       // Update verified_at if config exists
-      await client
-        .from('ai_provider_configs')
-        .update({ verified_at: new Date().toISOString() })
-        .eq('account_id', accountId)
-        .eq('provider_type', 'openclaw');
+      await this.db
+        .update(aiProviderConfigs)
+        .set({ verifiedAt: new Date().toISOString() })
+        .where(
+          and(
+            eq(aiProviderConfigs.accountId, accountId),
+            eq(aiProviderConfigs.providerType, 'openclaw'),
+          ),
+        );
 
       this.logger.log(`AI provider verified for account ${accountId}`);
 
@@ -363,36 +366,36 @@ export class AiProviderService {
   /**
    * Get raw config with decrypted values (for internal use)
    */
-  private async findOneRaw(accountId: string, accessToken: string) {
-    const client = this.supabaseAdmin.getClient();
-
-    const { data, error } = await client
-      .from('ai_provider_configs')
-      .select('*')
-      .eq('account_id', accountId)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(`Failed to fetch AI provider config: ${error.message}`);
-    }
+  private async findOneRaw(
+    accountId: string,
+    accessToken: string,
+  ): Promise<any | null> {
+    const [data] = await this.db
+      .select()
+      .from(aiProviderConfigs)
+      .where(eq(aiProviderConfigs.accountId, accountId))
+      .limit(1);
 
     if (!data) {
       return null;
     }
 
-    // Decrypt sensitive fields
+    // Decrypt sensitive fields. PostgREST returned snake_case columns; Drizzle
+    // returns camelCase. Re-key (via toRow) the columns that downstream callers
+    // (openclaw.service, openclaw-rpc.client, integrations.service, and the
+    // `is_active` gate in getDecryptedConfig) read as snake_case.
     return {
-      ...data,
-      api_url: decrypt(data.api_url),
-      api_key: decrypt(data.api_key),
-      openrouter_api_key: data.openrouter_api_key
-        ? decrypt(data.openrouter_api_key)
+      ...this.toRow(data),
+      api_url: decrypt(data.apiUrl),
+      api_key: decrypt(data.apiKey),
+      openrouter_api_key: data.openrouterApiKey
+        ? decrypt(data.openrouterApiKey)
         : null,
-      telegram_bot_token: data.telegram_bot_token
-        ? decrypt(data.telegram_bot_token)
+      telegram_bot_token: data.telegramBotToken
+        ? decrypt(data.telegramBotToken)
         : null,
-      brave_search_api_key: data.brave_search_api_key
-        ? decrypt(data.brave_search_api_key)
+      brave_search_api_key: data.braveSearchApiKey
+        ? decrypt(data.braveSearchApiKey)
         : null,
     };
   }
