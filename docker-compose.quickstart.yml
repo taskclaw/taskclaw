@@ -266,6 +266,9 @@ services:
       INTERNAL_API_URL: http://backend:3003
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       BRAND_NAME: TaskClaw
+      # Lets next.config.ts allow this origin for Server Actions (the gateway
+      # can't preserve the port in X-Forwarded-Host). Drives allowedOrigins.
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
     depends_on:
       backend:
         condition: service_healthy

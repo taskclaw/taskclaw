@@ -32,15 +32,25 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Copy Next.js standalone output and static files
+# Copy Next.js build output and static files
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/public ./public
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+# Make .next writable by the non-root runtime user so the entrypoint can patch
+# required-server-files.json, and so Next can write its .next/cache at runtime
+# (otherwise: EACCES on /app/.next/cache). Then drop to the node user.
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+ && chown -R node:node /app/.next
 
 # Run as non-root user
 USER node
 
 EXPOSE 3002
 
+# Entrypoint injects this install's origin into Server Actions allowedOrigins
+# (from SITE_URL) before starting Next — see docker-entrypoint.sh.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["npm", "start"]

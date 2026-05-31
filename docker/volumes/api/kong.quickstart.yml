@@ -51,6 +51,13 @@ services:
     strip_path: true
 
 # ── Frontend (Next.js) — catch-all, must be last ──────────
+# NOTE: Next.js Server Actions reject a POST when X-Forwarded-Host != Origin.
+# Kong (nginx) derives X-Forwarded-Host from $host, which DROPS the port, so it
+# never matches the browser Origin (e.g. 1.2.3.4:3000). This can't be fixed at
+# the gateway with OSS Kong (request-transformer templating is Enterprise-only,
+# and Kong core re-sets X-Forwarded-Host after plugins run). It's handled in the
+# frontend instead via experimental.serverActions.allowedOrigins (driven by
+# SITE_URL at runtime — see frontend/next.config.ts).
 - name: frontend
   url: http://frontend:3002
   routes:
