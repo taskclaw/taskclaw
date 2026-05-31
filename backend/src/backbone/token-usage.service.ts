@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, asc, eq, gte, isNull } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { tokenUsage, tokenUsageDaily } from '../db/schema';
 
 export interface RecordUsageInput {
   account_id: string;
@@ -50,29 +52,31 @@ const FALLBACK_PRICE = { input: 5, output: 15, cache_read: 0.5, cache_write: 6.2
 export class TokenUsageService {
   private readonly logger = new Logger(TokenUsageService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   async record(input: RecordUsageInput): Promise<void> {
     const cost = this.estimateCost(input);
-    const client = this.supabaseAdmin.getClient();
-    const { error } = await client.from('token_usage').insert({
-      account_id: input.account_id,
-      agent_id: input.agent_id ?? null,
-      pod_id: input.pod_id ?? null,
-      conversation_id: input.conversation_id ?? null,
-      task_id: input.task_id ?? null,
-      message_id: input.message_id ?? null,
-      provider: input.provider,
-      model: input.model,
-      input_tokens: input.input_tokens ?? 0,
-      output_tokens: input.output_tokens ?? 0,
-      cache_read_tokens: input.cache_read_tokens ?? 0,
-      cache_write_tokens: input.cache_write_tokens ?? 0,
-      estimated_cost_usd: cost,
-      latency_ms: input.latency_ms ?? null,
-    });
-    if (error) {
-      this.logger.warn(`token_usage insert failed: ${error.message}`);
+    try {
+      await this.db.insert(tokenUsage).values({
+        accountId: input.account_id,
+        agentId: input.agent_id ?? null,
+        podId: input.pod_id ?? null,
+        conversationId: input.conversation_id ?? null,
+        taskId: input.task_id ?? null,
+        messageId: input.message_id ?? null,
+        provider: input.provider,
+        model: input.model,
+        inputTokens: input.input_tokens ?? 0,
+        outputTokens: input.output_tokens ?? 0,
+        cacheReadTokens: input.cache_read_tokens ?? 0,
+        cacheWriteTokens: input.cache_write_tokens ?? 0,
+        estimatedCostUsd: String(cost),
+        latencyMs: input.latency_ms ?? null,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `token_usage insert failed: ${error instanceof Error ? error.message : error}`,
+      );
     }
   }
 
@@ -112,35 +116,38 @@ export class TokenUsageService {
    * agent, provider, model) to upsert.
    */
   async runRollup(): Promise<{ days: number; rows_inserted: number }> {
-    const client = this.supabaseAdmin.getClient();
     // Pull last 48h of rows and group by day. We re-process today twice
     // an hour (idempotent) so the dashboard stays close to live.
     const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    const { data: rows, error } = await client
-      .from('token_usage')
-      .select('*')
-      .gte('created_at', since);
-    if (error) {
-      this.logger.warn(`rollup fetch failed: ${error.message}`);
+    let rows: (typeof tokenUsage.$inferSelect)[];
+    try {
+      rows = await this.db
+        .select()
+        .from(tokenUsage)
+        .where(gte(tokenUsage.createdAt, since));
+    } catch (error) {
+      this.logger.warn(
+        `rollup fetch failed: ${error instanceof Error ? error.message : error}`,
+      );
       return { days: 0, rows_inserted: 0 };
     }
 
     const groups = new Map<string, any>();
     for (const r of rows ?? []) {
-      const day = (r.created_at as string).slice(0, 10);
+      const day = (r.createdAt as string).slice(0, 10);
       const key = [
-        r.account_id,
+        r.accountId,
         day,
-        r.pod_id ?? '00000000-0000-0000-0000-000000000000',
-        r.agent_id ?? '00000000-0000-0000-0000-000000000000',
+        r.podId ?? '00000000-0000-0000-0000-000000000000',
+        r.agentId ?? '00000000-0000-0000-0000-000000000000',
         r.provider,
         r.model,
       ].join('|');
       const cur = groups.get(key) ?? {
-        account_id: r.account_id,
+        account_id: r.accountId,
         day,
-        pod_id: r.pod_id,
-        agent_id: r.agent_id,
+        pod_id: r.podId,
+        agent_id: r.agentId,
         provider: r.provider,
         model: r.model,
         total_input_tokens: 0,
@@ -150,12 +157,12 @@ export class TokenUsageService {
         total_cost_usd: 0,
         call_count: 0,
       };
-      cur.total_input_tokens += r.input_tokens ?? 0;
-      cur.total_output_tokens += r.output_tokens ?? 0;
-      cur.total_cache_read_tokens += r.cache_read_tokens ?? 0;
-      cur.total_cache_write_tokens += r.cache_write_tokens ?? 0;
+      cur.total_input_tokens += r.inputTokens ?? 0;
+      cur.total_output_tokens += r.outputTokens ?? 0;
+      cur.total_cache_read_tokens += r.cacheReadTokens ?? 0;
+      cur.total_cache_write_tokens += r.cacheWriteTokens ?? 0;
       cur.total_cost_usd =
-        Number(cur.total_cost_usd) + Number(r.estimated_cost_usd ?? 0);
+        Number(cur.total_cost_usd) + Number(r.estimatedCostUsd ?? 0);
       cur.call_count += 1;
       groups.set(key, cur);
     }
@@ -172,21 +179,45 @@ export class TokenUsageService {
     // Supabase doesn't expose composite-key upsert via PostgREST, so we
     // delete-then-insert per group. Cheap because the group set is small.
     for (const g of upserts) {
-      await client
-        .from('token_usage_daily')
-        .delete()
-        .eq('account_id', g.account_id)
-        .eq('day', g.day)
-        .eq('provider', g.provider)
-        .eq('model', g.model)
-        .eq('pod_id', g.pod_id ?? null)
-        .eq('agent_id', g.agent_id ?? null);
+      await this.db
+        .delete(tokenUsageDaily)
+        .where(
+          and(
+            eq(tokenUsageDaily.accountId, g.account_id),
+            eq(tokenUsageDaily.day, g.day),
+            eq(tokenUsageDaily.provider, g.provider),
+            eq(tokenUsageDaily.model, g.model),
+            g.pod_id == null
+              ? isNull(tokenUsageDaily.podId)
+              : eq(tokenUsageDaily.podId, g.pod_id),
+            g.agent_id == null
+              ? isNull(tokenUsageDaily.agentId)
+              : eq(tokenUsageDaily.agentId, g.agent_id),
+          ),
+        );
     }
-    const { error: insertErr } = await client
-      .from('token_usage_daily')
-      .insert(upserts);
-    if (insertErr) {
-      this.logger.warn(`rollup insert failed: ${insertErr.message}`);
+    try {
+      await this.db.insert(tokenUsageDaily).values(
+        upserts.map((g) => ({
+          accountId: g.account_id,
+          day: g.day,
+          podId: g.pod_id ?? null,
+          agentId: g.agent_id ?? null,
+          provider: g.provider,
+          model: g.model,
+          totalInputTokens: g.total_input_tokens,
+          totalOutputTokens: g.total_output_tokens,
+          totalCacheReadTokens: g.total_cache_read_tokens,
+          totalCacheWriteTokens: g.total_cache_write_tokens,
+          totalCostUsd: String(g.total_cost_usd),
+          callCount: g.call_count,
+          rolledUpAt: g.rolled_up_at,
+        })),
+      );
+    } catch (insertErr) {
+      this.logger.warn(
+        `rollup insert failed: ${insertErr instanceof Error ? insertErr.message : insertErr}`,
+      );
       return { days: 0, rows_inserted: 0 };
     }
     return { days: upserts.length, rows_inserted: upserts.length };
@@ -197,28 +228,31 @@ export class TokenUsageService {
   // ============================================================
 
   async getDashboardSummary(accountId: string, daysBack = 30) {
-    const client = this.supabaseAdmin.getClient();
     const cutoff = new Date(Date.now() - daysBack * 86_400_000)
       .toISOString()
       .slice(0, 10);
 
-    const { data: daily } = await client
-      .from('token_usage_daily')
-      .select('*')
-      .eq('account_id', accountId)
-      .gte('day', cutoff)
-      .order('day', { ascending: true });
+    const daily = await this.db
+      .select()
+      .from(tokenUsageDaily)
+      .where(
+        and(
+          eq(tokenUsageDaily.accountId, accountId),
+          gte(tokenUsageDaily.day, cutoff),
+        ),
+      )
+      .orderBy(asc(tokenUsageDaily.day));
 
     const totalCost = (daily ?? []).reduce(
-      (s, r: any) => s + Number(r.total_cost_usd ?? 0),
+      (s, r: any) => s + Number(r.totalCostUsd ?? 0),
       0,
     );
     const totalInput = (daily ?? []).reduce(
-      (s, r: any) => s + Number(r.total_input_tokens ?? 0),
+      (s, r: any) => s + Number(r.totalInputTokens ?? 0),
       0,
     );
     const totalCacheRead = (daily ?? []).reduce(
-      (s, r: any) => s + Number(r.total_cache_read_tokens ?? 0),
+      (s, r: any) => s + Number(r.totalCacheReadTokens ?? 0),
       0,
     );
     const cacheHitRate =
@@ -229,20 +263,20 @@ export class TokenUsageService {
     // Cost by pod (last N days)
     const byPod = new Map<string, number>();
     for (const r of daily ?? []) {
-      const k = r.pod_id ?? 'unassigned';
-      byPod.set(k, (byPod.get(k) ?? 0) + Number(r.total_cost_usd ?? 0));
+      const k = r.podId ?? 'unassigned';
+      byPod.set(k, (byPod.get(k) ?? 0) + Number(r.totalCostUsd ?? 0));
     }
 
     // Cost by day for the line chart
     const byDay = new Map<string, number>();
     for (const r of daily ?? []) {
-      byDay.set(r.day as string, (byDay.get(r.day as string) ?? 0) + Number(r.total_cost_usd ?? 0));
+      byDay.set(r.day as string, (byDay.get(r.day as string) ?? 0) + Number(r.totalCostUsd ?? 0));
     }
 
     return {
       window_days: daysBack,
       total_cost_usd: Number(totalCost.toFixed(4)),
-      total_calls: (daily ?? []).reduce((s: number, r: any) => s + (r.call_count ?? 0), 0),
+      total_calls: (daily ?? []).reduce((s: number, r: any) => s + (r.callCount ?? 0), 0),
       cache_hit_rate: Number(cacheHitRate.toFixed(4)),
       cost_by_pod: [...byPod.entries()].map(([pod_id, cost]) => ({
         pod_id,

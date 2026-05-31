@@ -1,78 +1,39 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AccessControlHelper } from './access-control.helper';
 import { createCacheMock } from '../../__test__/mocks/cache.mock';
+import { createDrizzleMock } from '../../__test__/mocks/drizzle.mock';
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function makeSupabaseClient(membershipResult: any, projectResult?: any) {
-  const membershipQuery = {
-    from: jest.fn().mockReturnThis(),
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue(membershipResult),
-  };
-
-  const client: any = {
-    from: jest.fn((table: string) => {
-      if (table === 'account_users') return membershipQuery;
-      if (table === 'projects') {
-        return {
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          single: jest
-            .fn()
-            .mockResolvedValue(
-              projectResult ?? { data: null, error: { message: 'not found' } },
-            ),
-        };
-      }
-      return membershipQuery;
-    }),
-  };
-
-  return client;
-}
-
-// ─── Tests ──────────────────────────────────────────────────────────────────
+// The legacy `supabase` arg is ignored by the Drizzle-backed helper; pass null.
 
 describe('AccessControlHelper', () => {
   let cacheMock: ReturnType<typeof createCacheMock>;
+  let db: ReturnType<typeof createDrizzleMock>;
   const ACCOUNT_ID = 'account-1';
   const USER_ID = 'user-1';
 
   beforeEach(() => {
     cacheMock = createCacheMock();
+    db = createDrizzleMock();
   });
 
-  // ── verifyAccountAccess() — cache miss ───────────────────────
+  /** Configure the next db.select(...) chain to resolve to `rows`. */
+  const nextSelect = (rows: any[]) =>
+    db.select.mockReturnValueOnce(db.makeBuilder(rows));
+
+  const helper = () =>
+    new AccessControlHelper(cacheMock as any, db.db as any);
 
   describe('verifyAccountAccess() — cache miss (DB lookup)', () => {
     it('returns role from DB on cache miss', async () => {
-      const client = makeSupabaseClient({
-        data: { role: 'owner' },
-        error: null,
-      });
-      const helper = new AccessControlHelper(cacheMock as any);
-
-      const result = await helper.verifyAccountAccess(
-        client,
-        ACCOUNT_ID,
-        USER_ID,
-      );
-
+      nextSelect([{ role: 'owner' }]);
+      const result = await helper().verifyAccountAccess(null, ACCOUNT_ID, USER_ID);
       expect(result.role).toBe('owner');
-      expect(client.from).toHaveBeenCalledWith('account_users');
+      expect(db.select).toHaveBeenCalled();
     });
 
     it('caches the role after DB lookup', async () => {
-      const client = makeSupabaseClient({
-        data: { role: 'member' },
-        error: null,
-      });
-      const helper = new AccessControlHelper(cacheMock as any);
-
-      await helper.verifyAccountAccess(client, ACCOUNT_ID, USER_ID);
-
+      nextSelect([{ role: 'member' }]);
+      await helper().verifyAccountAccess(null, ACCOUNT_ID, USER_ID);
       expect(cacheMock.set).toHaveBeenCalledWith(
         `account:${ACCOUNT_ID}:user:${USER_ID}:role`,
         'member',
@@ -81,119 +42,59 @@ describe('AccessControlHelper', () => {
     });
 
     it('throws ForbiddenException when user is not in account', async () => {
-      const client = makeSupabaseClient({
-        data: null,
-        error: { message: 'not found' },
-      });
-      const helper = new AccessControlHelper(cacheMock as any);
-
+      nextSelect([]); // no membership row
       await expect(
-        helper.verifyAccountAccess(client, ACCOUNT_ID, USER_ID),
+        helper().verifyAccountAccess(null, ACCOUNT_ID, USER_ID),
       ).rejects.toThrow(ForbiddenException);
     });
   });
-
-  // ── verifyAccountAccess() — cache hit ───────────────────────
 
   describe('verifyAccountAccess() — cache hit', () => {
     it('returns cached role without querying the DB', async () => {
       cacheMock.seed(`account:${ACCOUNT_ID}:user:${USER_ID}:role`, 'admin');
-      const client = makeSupabaseClient({
-        data: { role: 'owner' },
-        error: null,
-      });
-      const helper = new AccessControlHelper(cacheMock as any);
-
-      const result = await helper.verifyAccountAccess(
-        client,
-        ACCOUNT_ID,
-        USER_ID,
-      );
-
-      expect(result.role).toBe('admin'); // from cache, not DB
-      expect(client.from).not.toHaveBeenCalled(); // no DB call
+      const result = await helper().verifyAccountAccess(null, ACCOUNT_ID, USER_ID);
+      expect(result.role).toBe('admin');
+      expect(db.select).not.toHaveBeenCalled();
     });
   });
 
-  // ── verifyAccountAccess() — required roles ──────────────────
-
   describe('verifyAccountAccess() — required roles enforcement', () => {
-    it('allows access when user role is in requiredRoles', async () => {
-      const client = makeSupabaseClient({
-        data: { role: 'admin' },
-        error: null,
-      });
-      const helper = new AccessControlHelper(cacheMock as any);
-
-      const result = await helper.verifyAccountAccess(
-        client,
-        ACCOUNT_ID,
-        USER_ID,
-        ['admin', 'owner'],
-      );
+    it('allows access when role is in requiredRoles', async () => {
+      nextSelect([{ role: 'admin' }]);
+      const result = await helper().verifyAccountAccess(null, ACCOUNT_ID, USER_ID, [
+        'admin',
+        'owner',
+      ]);
       expect(result.role).toBe('admin');
     });
 
-    it('throws ForbiddenException when user role is not in requiredRoles', async () => {
-      const client = makeSupabaseClient({
-        data: { role: 'member' },
-        error: null,
-      });
-      const helper = new AccessControlHelper(cacheMock as any);
-
+    it('throws ForbiddenException when role is not in requiredRoles', async () => {
+      nextSelect([{ role: 'member' }]);
       await expect(
-        helper.verifyAccountAccess(client, ACCOUNT_ID, USER_ID, [
-          'admin',
-          'owner',
-        ]),
+        helper().verifyAccountAccess(null, ACCOUNT_ID, USER_ID, ['admin', 'owner']),
       ).rejects.toThrow(ForbiddenException);
     });
 
     it('allows any role when requiredRoles is undefined', async () => {
-      const client = makeSupabaseClient({
-        data: { role: 'viewer' },
-        error: null,
-      });
-      const helper = new AccessControlHelper(cacheMock as any);
-
-      const result = await helper.verifyAccountAccess(
-        client,
-        ACCOUNT_ID,
-        USER_ID,
-      );
+      nextSelect([{ role: 'viewer' }]);
+      const result = await helper().verifyAccountAccess(null, ACCOUNT_ID, USER_ID);
       expect(result.role).toBe('viewer');
     });
   });
 
-  // ── verifyProjectAccess() ────────────────────────────────────
-
   describe('verifyProjectAccess()', () => {
     it('resolves project account_id and verifies account membership', async () => {
-      const client = makeSupabaseClient(
-        { data: { role: 'member' }, error: null },
-        { data: { account_id: ACCOUNT_ID }, error: null },
-      );
-      const helper = new AccessControlHelper(cacheMock as any);
-
-      const result = await helper.verifyProjectAccess(
-        client,
-        'project-1',
-        USER_ID,
-      );
-
+      nextSelect([{ accountId: ACCOUNT_ID }]); // projects lookup
+      nextSelect([{ role: 'member' }]); // account_users lookup
+      const result = await helper().verifyProjectAccess(null, 'project-1', USER_ID);
       expect(result.accountId).toBe(ACCOUNT_ID);
       expect(result.role).toBe('member');
     });
 
     it('throws NotFoundException when project does not exist', async () => {
-      const client = makeSupabaseClient(
-        { data: { role: 'member' }, error: null },
-        { data: null, error: { message: 'not found' } },
-      );
-      const helper = new AccessControlHelper(cacheMock as any);
-
+      nextSelect([]); // no project row
       await expect(
-        helper.verifyProjectAccess(client, 'nonexistent-project', USER_ID),
+        helper().verifyProjectAccess(null, 'nonexistent-project', USER_ID),
       ).rejects.toThrow(NotFoundException);
     });
   });

@@ -2,7 +2,6 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 import { OpenClawService } from './openclaw.service';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { AiProviderModule } from '../ai-provider/ai-provider.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
@@ -18,7 +17,6 @@ import { OrchestrationModule } from '../orchestration/orchestration.module';
 
 @Module({
   imports: [
-    SupabaseModule,
     CommonModule,
     forwardRef(() => AiProviderModule),
     forwardRef(() => KnowledgeModule),

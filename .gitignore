@@ -167,3 +167,4 @@ docker/volumes/storage/
 docker-compose.supabase-local.yml
 
 backend/.env.secrets
+.taskstate/

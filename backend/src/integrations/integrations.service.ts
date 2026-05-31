@@ -9,7 +9,14 @@ import {
   Inject,
 } from '@nestjs/common';
 import { forwardRef } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, eq, ne, or, desc, asc, sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  integrationDefinitions,
+  integrationConnections,
+  boardIntegrationRefs,
+  boardInstances,
+} from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { AiProviderService } from '../ai-provider/ai-provider.service';
 import {
@@ -22,6 +29,7 @@ import { UpdateDefinitionDto } from './dto/update-definition.dto';
 import { CreateConnectionDto } from './dto/create-connection.dto';
 import { UpdateConnectionDto } from './dto/update-connection.dto';
 import { IntegrationContext } from './interfaces/integration.interfaces';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
@@ -30,7 +38,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   private healthCheckLocks = new Map<string, boolean>();
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
     @Inject(forwardRef(() => AiProviderService))
     private readonly aiProviderService: AiProviderService,
@@ -54,43 +62,67 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // SHAPE HELPERS — re-key Drizzle relations to PostgREST aliases
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Drizzle's relational query returns the joined definition under the relation
+   * name (`integrationDefinition`); PostgREST returned it under the alias
+   * `definition`. Re-key so the response shape callers depend on is unchanged.
+   */
+  private reKeyConnection(row: any): any {
+    if (!row) return row;
+    const { integrationDefinition, ...rest } = row;
+    return { ...snakeKeys(rest), definition: integrationDefinition ?? null };
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // DEFINITIONS CRUD
   // ═══════════════════════════════════════════════════════════
 
   async findAllDefinitions(userId: string, accountId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('integration_definitions')
-      .select('*')
-      .or(`account_id.eq.${accountId},is_system.eq.true`)
-      .order('name', { ascending: true });
-
-    if (error) {
+    try {
+      const defs = await this.db
+        .select()
+        .from(integrationDefinitions)
+        .where(
+          or(
+            eq(integrationDefinitions.accountId, accountId),
+            eq(integrationDefinitions.isSystem, true),
+          ),
+        )
+        .orderBy(asc(integrationDefinitions.name));
+      return defs.map(snakeKeys);
+    } catch (error: any) {
       this.logger.error(`Failed to fetch definitions: ${error.message}`);
       throw new Error(error.message);
     }
-
-    return data || [];
   }
 
   async findOneDefinition(userId: string, accountId: string, defId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('integration_definitions')
-      .select('*')
-      .eq('id', defId)
-      .or(`account_id.eq.${accountId},is_system.eq.true`)
-      .single();
+    const [data] = await this.db
+      .select()
+      .from(integrationDefinitions)
+      .where(
+        and(
+          eq(integrationDefinitions.id, defId),
+          or(
+            eq(integrationDefinitions.accountId, accountId),
+            eq(integrationDefinitions.isSystem, true),
+          ),
+        ),
+      )
+      .limit(1);
 
-    if (error || !data) {
+    if (!data) {
       throw new NotFoundException('Integration definition not found');
     }
 
-    return data;
+    return snakeKeys(data);
   }
 
   async createDefinition(
@@ -98,30 +130,29 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     accountId: string,
     dto: CreateDefinitionDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('integration_definitions')
-      .insert({
-        account_id: accountId,
-        slug: dto.slug,
-        name: dto.name,
-        description: dto.description || null,
-        icon: dto.icon || null,
-        categories: dto.categories || [],
-        auth_type: dto.auth_type,
-        auth_config: dto.auth_config || {},
-        config_fields: dto.config_fields || [],
-        skill_id: dto.skill_id || null,
-        setup_guide: dto.setup_guide || null,
-        proxy_base_url: dto.proxy_base_url || null,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      if (error.code === '23505') {
+    try {
+      const rows = await this.db
+        .insert(integrationDefinitions)
+        .values({
+          accountId: accountId,
+          slug: dto.slug,
+          name: dto.name,
+          description: dto.description || null,
+          icon: dto.icon || null,
+          categories: dto.categories || [],
+          authType: dto.auth_type,
+          authConfig: dto.auth_config || {},
+          configFields: dto.config_fields || [],
+          skillId: dto.skill_id || null,
+          setupGuide: dto.setup_guide || null,
+          proxyBaseUrl: dto.proxy_base_url || null,
+        })
+        .returning();
+      return snakeKeys(rows[0]);
+    } catch (error: any) {
+      if (error?.code === '23505') {
         throw new BadRequestException(
           `Integration with slug "${dto.slug}" already exists`,
         );
@@ -129,8 +160,6 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Failed to create definition: ${error.message}`);
       throw new Error(error.message);
     }
-
-    return data;
   }
 
   async updateDefinition(
@@ -139,66 +168,69 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     defId: string,
     dto: UpdateDefinitionDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Verify exists and is not system
     const existing = await this.findOneDefinition(userId, accountId, defId);
-    if (existing.is_system) {
+    if (existing.isSystem) {
       throw new ForbiddenException(
         'Cannot modify system integration definitions',
       );
     }
 
-    const updateData: Record<string, any> = {};
+    const updateData: Partial<typeof integrationDefinitions.$inferInsert> = {};
     if (dto.slug !== undefined) updateData.slug = dto.slug;
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.description !== undefined) updateData.description = dto.description;
     if (dto.icon !== undefined) updateData.icon = dto.icon;
     if (dto.categories !== undefined) updateData.categories = dto.categories;
-    if (dto.auth_type !== undefined) updateData.auth_type = dto.auth_type;
-    if (dto.auth_config !== undefined) updateData.auth_config = dto.auth_config;
+    if (dto.auth_type !== undefined) updateData.authType = dto.auth_type;
+    if (dto.auth_config !== undefined) updateData.authConfig = dto.auth_config;
     if (dto.config_fields !== undefined)
-      updateData.config_fields = dto.config_fields;
-    if (dto.skill_id !== undefined) updateData.skill_id = dto.skill_id;
-    if (dto.setup_guide !== undefined) updateData.setup_guide = dto.setup_guide;
+      updateData.configFields = dto.config_fields;
+    if (dto.skill_id !== undefined) updateData.skillId = dto.skill_id;
+    if (dto.setup_guide !== undefined) updateData.setupGuide = dto.setup_guide;
     if (dto.proxy_base_url !== undefined)
-      updateData.proxy_base_url = dto.proxy_base_url;
+      updateData.proxyBaseUrl = dto.proxy_base_url;
 
-    const { data, error } = await client
-      .from('integration_definitions')
-      .update(updateData)
-      .eq('id', defId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) {
+    try {
+      const rows = await this.db
+        .update(integrationDefinitions)
+        .set(updateData)
+        .where(
+          and(
+            eq(integrationDefinitions.id, defId),
+            eq(integrationDefinitions.accountId, accountId),
+          ),
+        )
+        .returning();
+      return snakeKeys(rows[0]);
+    } catch (error: any) {
       this.logger.error(`Failed to update definition: ${error.message}`);
       throw new Error(error.message);
     }
-
-    return data;
   }
 
   async removeDefinition(userId: string, accountId: string, defId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     const existing = await this.findOneDefinition(userId, accountId, defId);
-    if (existing.is_system) {
+    if (existing.isSystem) {
       throw new ForbiddenException(
         'Cannot delete system integration definitions',
       );
     }
 
-    const { error } = await client
-      .from('integration_definitions')
-      .delete()
-      .eq('id', defId)
-      .eq('account_id', accountId);
-
-    if (error) {
+    try {
+      await this.db
+        .delete(integrationDefinitions)
+        .where(
+          and(
+            eq(integrationDefinitions.id, defId),
+            eq(integrationDefinitions.accountId, accountId),
+          ),
+        );
+    } catch (error: any) {
       this.logger.error(`Failed to delete definition: ${error.message}`);
       throw new Error(error.message);
     }
@@ -211,40 +243,42 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   // ═══════════════════════════════════════════════════════════
 
   async findAllConnections(userId: string, accountId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('integration_connections')
-      .select('*, definition:integration_definitions(*)')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
+    let data: any[];
+    try {
+      data = await this.db.query.integrationConnections.findMany({
+        where: eq(integrationConnections.accountId, accountId),
+        orderBy: desc(integrationConnections.createdAt),
+        with: { integrationDefinition: true },
+      });
+    } catch (error: any) {
       this.logger.error(`Failed to fetch connections: ${error.message}`);
       throw new Error(error.message);
     }
 
     // Mask credentials on GET responses
-    return (data || []).map((conn) => this.maskConnectionCredentials(conn));
+    return data.map((conn) =>
+      this.maskConnectionCredentials(this.reKeyConnection(conn)),
+    );
   }
 
   async findOneConnection(userId: string, accountId: string, connId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('integration_connections')
-      .select('*, definition:integration_definitions(*)')
-      .eq('id', connId)
-      .eq('account_id', accountId)
-      .single();
+    const data = await this.db.query.integrationConnections.findFirst({
+      where: and(
+        eq(integrationConnections.id, connId),
+        eq(integrationConnections.accountId, accountId),
+      ),
+      with: { integrationDefinition: true },
+    });
 
-    if (error || !data) {
+    if (!data) {
       throw new NotFoundException('Integration connection not found');
     }
 
-    return this.maskConnectionCredentials(data);
+    return this.maskConnectionCredentials(this.reKeyConnection(data));
   }
 
   async createConnection(
@@ -252,18 +286,24 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     accountId: string,
     dto: CreateConnectionDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Verify definition exists
-    const { data: def, error: defError } = await client
-      .from('integration_definitions')
-      .select('id')
-      .eq('id', dto.definition_id)
-      .or(`account_id.eq.${accountId},is_system.eq.true`)
-      .single();
+    const [def] = await this.db
+      .select({ id: integrationDefinitions.id })
+      .from(integrationDefinitions)
+      .where(
+        and(
+          eq(integrationDefinitions.id, dto.definition_id),
+          or(
+            eq(integrationDefinitions.accountId, accountId),
+            eq(integrationDefinitions.isSystem, true),
+          ),
+        ),
+      )
+      .limit(1);
 
-    if (defError || !def) {
+    if (!def) {
       throw new NotFoundException('Integration definition not found');
     }
 
@@ -272,22 +312,23 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       ? this.encryptCredentials(dto.credentials)
       : null;
 
-    const { data, error } = await client
-      .from('integration_connections')
-      .insert({
-        account_id: accountId,
-        definition_id: dto.definition_id,
-        credentials: encryptedCredentials,
-        scopes: dto.scopes || null,
-        config: dto.config || {},
-        external_account_name: dto.external_account_name || null,
-        status: encryptedCredentials ? 'active' : 'pending',
-      })
-      .select('*, definition:integration_definitions(*)')
-      .single();
-
-    if (error) {
-      if (error.code === '23505') {
+    let insertedId: string;
+    try {
+      const rows = await this.db
+        .insert(integrationConnections)
+        .values({
+          accountId: accountId,
+          definitionId: dto.definition_id,
+          credentials: encryptedCredentials,
+          scopes: dto.scopes || null,
+          config: dto.config || {},
+          externalAccountName: dto.external_account_name || null,
+          status: encryptedCredentials ? 'active' : 'pending',
+        })
+        .returning({ id: integrationConnections.id });
+      insertedId = rows[0].id;
+    } catch (error: any) {
+      if (error?.code === '23505') {
         throw new BadRequestException(
           'Connection for this integration already exists',
         );
@@ -296,7 +337,13 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       throw new Error(error.message);
     }
 
-    return this.maskConnectionCredentials(data);
+    // Re-fetch with embedded definition to preserve the response shape.
+    const data = await this.db.query.integrationConnections.findFirst({
+      where: eq(integrationConnections.id, insertedId),
+      with: { integrationDefinition: true },
+    });
+
+    return this.maskConnectionCredentials(this.reKeyConnection(data));
   }
 
   async updateConnection(
@@ -305,22 +352,25 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     connId: string,
     dto: UpdateConnectionDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Verify connection exists
-    const { data: existing, error: existError } = await client
-      .from('integration_connections')
-      .select('*')
-      .eq('id', connId)
-      .eq('account_id', accountId)
-      .single();
+    const [existing] = await this.db
+      .select()
+      .from(integrationConnections)
+      .where(
+        and(
+          eq(integrationConnections.id, connId),
+          eq(integrationConnections.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (existError || !existing) {
+    if (!existing) {
       throw new NotFoundException('Integration connection not found');
     }
 
-    const updateData: Record<string, any> = {};
+    const updateData: Partial<typeof integrationConnections.$inferInsert> = {};
 
     if (dto.credentials !== undefined) {
       updateData.credentials = dto.credentials
@@ -331,36 +381,48 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     if (dto.status !== undefined) updateData.status = dto.status;
     if (dto.config !== undefined) updateData.config = dto.config;
     if (dto.external_account_name !== undefined) {
-      updateData.external_account_name = dto.external_account_name;
+      updateData.externalAccountName = dto.external_account_name;
     }
 
-    const { data, error } = await client
-      .from('integration_connections')
-      .update(updateData)
-      .eq('id', connId)
-      .eq('account_id', accountId)
-      .select('*, definition:integration_definitions(*)')
-      .single();
-
-    if (error) {
+    try {
+      await this.db
+        .update(integrationConnections)
+        .set(updateData)
+        .where(
+          and(
+            eq(integrationConnections.id, connId),
+            eq(integrationConnections.accountId, accountId),
+          ),
+        );
+    } catch (error: any) {
       this.logger.error(`Failed to update connection: ${error.message}`);
       throw new Error(error.message);
     }
 
-    return this.maskConnectionCredentials(data);
+    const data = await this.db.query.integrationConnections.findFirst({
+      where: and(
+        eq(integrationConnections.id, connId),
+        eq(integrationConnections.accountId, accountId),
+      ),
+      with: { integrationDefinition: true },
+    });
+
+    return this.maskConnectionCredentials(this.reKeyConnection(data));
   }
 
   async removeConnection(userId: string, accountId: string, connId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { error } = await client
-      .from('integration_connections')
-      .delete()
-      .eq('id', connId)
-      .eq('account_id', accountId);
-
-    if (error) {
+    try {
+      await this.db
+        .delete(integrationConnections)
+        .where(
+          and(
+            eq(integrationConnections.id, connId),
+            eq(integrationConnections.accountId, accountId),
+          ),
+        );
+    } catch (error: any) {
       this.logger.error(`Failed to delete connection: ${error.message}`);
       throw new Error(error.message);
     }
@@ -377,27 +439,34 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     accountId: string,
     category?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    let query = client
-      .from('integration_definitions')
-      .select('*')
-      .or(`account_id.eq.${accountId},is_system.eq.true`)
-      .order('name', { ascending: true });
+    try {
+      const conditions = [
+        or(
+          eq(integrationDefinitions.accountId, accountId),
+          eq(integrationDefinitions.isSystem, true),
+        ),
+      ];
 
-    if (category) {
-      query = query.contains('categories', [category]);
-    }
+      if (category) {
+        conditions.push(
+          sql`${integrationDefinitions.categories} @> ARRAY[${category}]::text[]`,
+        );
+      }
 
-    const { data, error } = await query;
-    if (error) {
+      const defs = await this.db
+        .select()
+        .from(integrationDefinitions)
+        .where(and(...conditions))
+        .orderBy(asc(integrationDefinitions.name));
+      return defs.map(snakeKeys);
+    } catch (error: any) {
       this.logger.error(
         `Failed to fetch definitions by category: ${error.message}`,
       );
       throw new Error(error.message);
     }
-    return data || [];
   }
 
   async findAllConnectionsByCategory(
@@ -405,23 +474,25 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     accountId: string,
     category?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('integration_connections')
-      .select(
-        '*, definition:integration_definitions(*, skill:skills(instructions))',
-      )
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
+    let data: any[];
+    try {
+      data = await this.db.query.integrationConnections.findMany({
+        where: eq(integrationConnections.accountId, accountId),
+        orderBy: desc(integrationConnections.createdAt),
+        with: {
+          integrationDefinition: {
+            with: { skill: { columns: { instructions: true } } },
+          },
+        },
+      });
+    } catch (error: any) {
       this.logger.error(`Failed to fetch connections: ${error.message}`);
       throw new Error(error.message);
     }
 
-    let filtered = data || [];
+    let filtered = data.map((conn) => this.reKeyConnection(conn));
     if (category) {
       filtered = filtered.filter((conn: any) =>
         conn.definition?.categories?.includes(category),
@@ -441,23 +512,26 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     connId: string,
     enabled: boolean,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data: conn, error: connError } = await client
-      .from('integration_connections')
-      .select('*, definition:integration_definitions(*)')
-      .eq('id', connId)
-      .eq('account_id', accountId)
-      .single();
+    const conn = await this.db.query.integrationConnections.findFirst({
+      where: and(
+        eq(integrationConnections.id, connId),
+        eq(integrationConnections.accountId, accountId),
+      ),
+      with: { integrationDefinition: true },
+    });
 
-    if (connError || !conn) {
+    if (!conn) {
       throw new NotFoundException('Integration connection not found');
     }
 
+    const connRe = this.reKeyConnection(conn);
+
     if (enabled) {
       // For comm tools: verify OpenClaw gateway is reachable
-      const isCommTool = conn.definition?.categories?.includes('communication');
+      const isCommTool =
+        connRe.definition?.categories?.includes('communication');
       let healthStatus = 'unknown';
       let lastError: string | null = null;
 
@@ -474,37 +548,45 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       }
 
       const now = new Date().toISOString();
-      const { data, error } = await client
-        .from('integration_connections')
-        .update({
-          status: 'active',
-          health_status: healthStatus,
-          last_checked_at: isCommTool ? now : undefined,
-          last_healthy_at: healthStatus === 'healthy' ? now : undefined,
-          error_message: lastError,
-        })
-        .eq('id', connId)
-        .select('*, definition:integration_definitions(*)')
-        .single();
-
-      if (error)
+      try {
+        await this.db
+          .update(integrationConnections)
+          .set({
+            status: 'active',
+            healthStatus: healthStatus,
+            lastCheckedAt: isCommTool ? now : undefined,
+            lastHealthyAt: healthStatus === 'healthy' ? now : undefined,
+            errorMessage: lastError,
+          })
+          .where(eq(integrationConnections.id, connId));
+      } catch (error: any) {
         throw new Error(`Failed to toggle connection: ${error.message}`);
-      return this.maskConnectionCredentials(data);
+      }
+
+      const data = await this.db.query.integrationConnections.findFirst({
+        where: eq(integrationConnections.id, connId),
+        with: { integrationDefinition: true },
+      });
+      return this.maskConnectionCredentials(this.reKeyConnection(data));
     } else {
-      const { data, error } = await client
-        .from('integration_connections')
-        .update({
-          status: 'pending',
-          health_status: 'unknown',
-          error_message: null,
-        })
-        .eq('id', connId)
-        .select('*, definition:integration_definitions(*)')
-        .single();
-
-      if (error)
+      try {
+        await this.db
+          .update(integrationConnections)
+          .set({
+            status: 'pending',
+            healthStatus: 'unknown',
+            errorMessage: null,
+          })
+          .where(eq(integrationConnections.id, connId));
+      } catch (error: any) {
         throw new Error(`Failed to toggle connection: ${error.message}`);
-      return this.maskConnectionCredentials(data);
+      }
+
+      const data = await this.db.query.integrationConnections.findFirst({
+        where: eq(integrationConnections.id, connId),
+        with: { integrationDefinition: true },
+      });
+      return this.maskConnectionCredentials(this.reKeyConnection(data));
     }
   }
 
@@ -513,78 +595,95 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     accountId: string,
     connId: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Set status to checking
-    await client
-      .from('integration_connections')
-      .update({ health_status: 'checking' })
-      .eq('id', connId)
-      .eq('account_id', accountId);
+    await this.db
+      .update(integrationConnections)
+      .set({ healthStatus: 'checking' })
+      .where(
+        and(
+          eq(integrationConnections.id, connId),
+          eq(integrationConnections.accountId, accountId),
+        ),
+      );
 
     const aiConfig = await this.getAiConfig(accountId);
     const now = new Date().toISOString();
 
     if (!aiConfig) {
-      const { data } = await client
-        .from('integration_connections')
-        .update({
-          health_status: 'unhealthy',
-          last_checked_at: now,
-          error_message: 'OpenClaw is not connected',
+      await this.db
+        .update(integrationConnections)
+        .set({
+          healthStatus: 'unhealthy',
+          lastCheckedAt: now,
+          errorMessage: 'OpenClaw is not connected',
         })
-        .eq('id', connId)
-        .select('*, definition:integration_definitions(*)')
-        .single();
-      return this.maskConnectionCredentials(data);
+        .where(eq(integrationConnections.id, connId));
+
+      const data = await this.db.query.integrationConnections.findFirst({
+        where: eq(integrationConnections.id, connId),
+        with: { integrationDefinition: true },
+      });
+      return this.maskConnectionCredentials(this.reKeyConnection(data));
     }
 
     const reachable = await this.checkGatewayReachable(aiConfig.api_url);
 
     const updateData = reachable
       ? {
-          health_status: 'healthy',
-          last_checked_at: now,
-          last_healthy_at: now,
-          error_message: null,
+          healthStatus: 'healthy',
+          lastCheckedAt: now,
+          lastHealthyAt: now,
+          errorMessage: null,
         }
       : {
-          health_status: 'unhealthy',
-          last_checked_at: now,
-          error_message: 'OpenClaw gateway is not reachable',
+          healthStatus: 'unhealthy',
+          lastCheckedAt: now,
+          errorMessage: 'OpenClaw gateway is not reachable',
         };
 
-    const { data, error } = await client
-      .from('integration_connections')
-      .update(updateData)
-      .eq('id', connId)
-      .select('*, definition:integration_definitions(*)')
-      .single();
-
-    if (error)
+    try {
+      await this.db
+        .update(integrationConnections)
+        .set(updateData)
+        .where(eq(integrationConnections.id, connId));
+    } catch (error: any) {
       throw new Error(`Failed to update health status: ${error.message}`);
-    return this.maskConnectionCredentials(data);
+    }
+
+    const data = await this.db.query.integrationConnections.findFirst({
+      where: eq(integrationConnections.id, connId),
+      with: { integrationDefinition: true },
+    });
+    return this.maskConnectionCredentials(this.reKeyConnection(data));
   }
 
   async getAvailableCommTools(accountId: string): Promise<string[]> {
-    const client = this.supabaseAdmin.getClient();
-
-    const { data, error } = await client
-      .from('integration_connections')
-      .select('definition:integration_definitions(slug, categories)')
-      .eq('account_id', accountId)
-      .eq('status', 'active')
-      .eq('health_status', 'healthy');
-
-    if (error) {
+    let data: any[];
+    try {
+      data = await this.db.query.integrationConnections.findMany({
+        where: and(
+          eq(integrationConnections.accountId, accountId),
+          eq(integrationConnections.status, 'active'),
+          eq(integrationConnections.healthStatus, 'healthy'),
+        ),
+        columns: {},
+        with: {
+          integrationDefinition: {
+            columns: { slug: true, categories: true },
+          },
+        },
+      });
+    } catch (error: any) {
       this.logger.warn(
         `Failed to fetch available comm tools: ${error.message}`,
       );
       return [];
     }
 
-    return (data || [])
+    return data
+      .map((r: any) => this.reKeyConnection(r))
       .filter((r: any) => r.definition?.categories?.includes('communication'))
       .map((r: any) => {
         // Map slug back to tool name (telegram-comm → telegram)
@@ -596,15 +695,13 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   async getConnectionCredentialsDecrypted(
     connectionId: string,
   ): Promise<Record<string, string>> {
-    const client = this.supabaseAdmin.getClient();
+    const [data] = await this.db
+      .select({ credentials: integrationConnections.credentials })
+      .from(integrationConnections)
+      .where(eq(integrationConnections.id, connectionId))
+      .limit(1);
 
-    const { data, error } = await client
-      .from('integration_connections')
-      .select('credentials')
-      .eq('id', connectionId)
-      .single();
-
-    if (error || !data) {
+    if (!data) {
       throw new NotFoundException('Connection not found');
     }
 
@@ -618,10 +715,10 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
         const parsed = JSON.parse(data.credentials);
         // Re-encrypt for next time
         const encrypted = this.encryptCredentials(parsed);
-        void client
-          .from('integration_connections')
-          .update({ credentials: encrypted })
-          .eq('id', connectionId);
+        void this.db
+          .update(integrationConnections)
+          .set({ credentials: encrypted })
+          .where(eq(integrationConnections.id, connectionId));
         return parsed;
       } catch {
         this.logger.warn(
@@ -637,25 +734,34 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   // ═══════════════════════════════════════════════════════════
 
   private async handleScheduledHealthChecks(): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
     // Find connections that are active, have health monitoring, and are due for check
-    const { data: dueConnections, error } = await client
-      .from('integration_connections')
-      .select('*, definition:integration_definitions(categories)')
-      .eq('status', 'active')
-      .neq('health_status', 'unknown')
-      .limit(20);
+    let dueConnections: any[];
+    try {
+      dueConnections = await this.db.query.integrationConnections.findMany({
+        where: and(
+          eq(integrationConnections.status, 'active'),
+          ne(integrationConnections.healthStatus, 'unknown'),
+        ),
+        limit: 20,
+        with: {
+          integrationDefinition: { columns: { categories: true } },
+        },
+      });
+    } catch {
+      return;
+    }
 
-    if (error || !dueConnections || dueConnections.length === 0) return;
+    if (!dueConnections || dueConnections.length === 0) return;
+
+    const reKeyed = dueConnections.map((conn) => this.reKeyConnection(conn));
 
     // Filter to only comm tool connections that are due
     const now = Date.now();
-    const commConnections = dueConnections.filter((conn: any) => {
+    const commConnections = reKeyed.filter((conn: any) => {
       if (!conn.definition?.categories?.includes('communication')) return false;
-      if (!conn.last_checked_at) return true;
-      const elapsed = now - new Date(conn.last_checked_at).getTime();
-      return elapsed >= (conn.check_interval_minutes || 5) * 60_000;
+      if (!conn.lastCheckedAt) return true;
+      const elapsed = now - new Date(conn.lastCheckedAt).getTime();
+      return elapsed >= (conn.checkIntervalMinutes || 5) * 60_000;
     });
 
     if (commConnections.length === 0) return;
@@ -668,47 +774,47 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
 
       this.healthCheckLocks.set(lockKey, true);
       try {
-        let aiConfig = aiConfigCache.get(conn.account_id);
+        let aiConfig = aiConfigCache.get(conn.accountId);
         if (aiConfig === undefined) {
-          aiConfig = await this.getAiConfig(conn.account_id);
-          aiConfigCache.set(conn.account_id, aiConfig);
+          aiConfig = await this.getAiConfig(conn.accountId);
+          aiConfigCache.set(conn.accountId, aiConfig);
         }
 
         const nowIso = new Date().toISOString();
 
         if (!aiConfig) {
-          await client
-            .from('integration_connections')
-            .update({
-              health_status: 'unhealthy',
-              last_checked_at: nowIso,
-              error_message: 'OpenClaw is not connected',
+          await this.db
+            .update(integrationConnections)
+            .set({
+              healthStatus: 'unhealthy',
+              lastCheckedAt: nowIso,
+              errorMessage: 'OpenClaw is not connected',
             })
-            .eq('id', conn.id);
+            .where(eq(integrationConnections.id, conn.id));
           continue;
         }
 
         const reachable = await this.checkGatewayReachable(aiConfig.api_url);
 
         if (reachable) {
-          await client
-            .from('integration_connections')
-            .update({
-              health_status: 'healthy',
-              last_checked_at: nowIso,
-              last_healthy_at: nowIso,
-              error_message: null,
+          await this.db
+            .update(integrationConnections)
+            .set({
+              healthStatus: 'healthy',
+              lastCheckedAt: nowIso,
+              lastHealthyAt: nowIso,
+              errorMessage: null,
             })
-            .eq('id', conn.id);
+            .where(eq(integrationConnections.id, conn.id));
         } else {
-          await client
-            .from('integration_connections')
-            .update({
-              health_status: 'unhealthy',
-              last_checked_at: nowIso,
-              error_message: 'OpenClaw gateway is not reachable',
+          await this.db
+            .update(integrationConnections)
+            .set({
+              healthStatus: 'unhealthy',
+              lastCheckedAt: nowIso,
+              errorMessage: 'OpenClaw gateway is not reachable',
             })
-            .eq('id', conn.id);
+            .where(eq(integrationConnections.id, conn.id));
         }
       } catch (err: any) {
         this.logger.error(
@@ -753,17 +859,19 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   // ═══════════════════════════════════════════════════════════
 
   async getRefsForBoard(userId: string, accountId: string, boardId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('board_integration_refs')
-      .select(
-        '*, connection:integration_connections(*, definition:integration_definitions(*))',
-      )
-      .eq('board_id', boardId);
-
-    if (error) {
+    let data: any[];
+    try {
+      data = await this.db.query.boardIntegrationRefs.findMany({
+        where: eq(boardIntegrationRefs.boardId, boardId),
+        with: {
+          integrationConnection: {
+            with: { integrationDefinition: true },
+          },
+        },
+      });
+    } catch (error: any) {
       this.logger.error(
         `Failed to fetch board integration refs: ${error.message}`,
       );
@@ -771,11 +879,18 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Mask credentials in nested connection data
-    return (data || []).map((ref) => {
-      if (ref.connection) {
-        ref.connection = this.maskConnectionCredentials(ref.connection);
+    return data.map((ref) => {
+      const { integrationConnection, ...rest } = ref;
+      const connection = integrationConnection ?? null;
+      if (connection) {
+        return {
+          ...snakeKeys(rest),
+          connection: this.maskConnectionCredentials(
+            this.reKeyConnection(connection),
+          ),
+        };
       }
-      return ref;
+      return { ...snakeKeys(rest), connection };
     });
   }
 
@@ -786,47 +901,53 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     connectionId: string,
     isRequired = false,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Verify board belongs to account
-    const { data: board, error: boardError } = await client
-      .from('board_instances')
-      .select('id')
-      .eq('id', boardId)
-      .eq('account_id', accountId)
-      .single();
+    const [board] = await this.db
+      .select({ id: boardInstances.id })
+      .from(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.id, boardId),
+          eq(boardInstances.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (boardError || !board) {
+    if (!board) {
       throw new NotFoundException('Board not found');
     }
 
     // Verify connection belongs to account
-    const { data: conn, error: connError } = await client
-      .from('integration_connections')
-      .select('id')
-      .eq('id', connectionId)
-      .eq('account_id', accountId)
-      .single();
+    const [conn] = await this.db
+      .select({ id: integrationConnections.id })
+      .from(integrationConnections)
+      .where(
+        and(
+          eq(integrationConnections.id, connectionId),
+          eq(integrationConnections.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (connError || !conn) {
+    if (!conn) {
       throw new NotFoundException('Integration connection not found');
     }
 
-    const { data, error } = await client
-      .from('board_integration_refs')
-      .insert({
-        board_id: boardId,
-        connection_id: connectionId,
-        is_required: isRequired,
-      })
-      .select(
-        '*, connection:integration_connections(*, definition:integration_definitions(*))',
-      )
-      .single();
-
-    if (error) {
-      if (error.code === '23505') {
+    let insertedId: string;
+    try {
+      const rows = await this.db
+        .insert(boardIntegrationRefs)
+        .values({
+          boardId: boardId,
+          connectionId: connectionId,
+          isRequired: isRequired,
+        })
+        .returning({ id: boardIntegrationRefs.id });
+      insertedId = rows[0].id;
+    } catch (error: any) {
+      if (error?.code === '23505') {
         throw new BadRequestException(
           'This integration is already linked to the board',
         );
@@ -837,11 +958,26 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       throw new Error(error.message);
     }
 
-    if (data.connection) {
-      data.connection = this.maskConnectionCredentials(data.connection);
-    }
+    const ref = await this.db.query.boardIntegrationRefs.findFirst({
+      where: eq(boardIntegrationRefs.id, insertedId),
+      with: {
+        integrationConnection: {
+          with: { integrationDefinition: true },
+        },
+      },
+    });
 
-    return data;
+    const { integrationConnection, ...rest } = ref as any;
+    const connection = integrationConnection ?? null;
+    if (connection) {
+      return {
+        ...snakeKeys(rest),
+        connection: this.maskConnectionCredentials(
+          this.reKeyConnection(connection),
+        ),
+      };
+    }
+    return { ...snakeKeys(rest), connection };
   }
 
   async removeRef(
@@ -850,16 +986,18 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     boardId: string,
     refId: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { error } = await client
-      .from('board_integration_refs')
-      .delete()
-      .eq('id', refId)
-      .eq('board_id', boardId);
-
-    if (error) {
+    try {
+      await this.db
+        .delete(boardIntegrationRefs)
+        .where(
+          and(
+            eq(boardIntegrationRefs.id, refId),
+            eq(boardIntegrationRefs.boardId, boardId),
+          ),
+        );
+    } catch (error: any) {
       this.logger.error(
         `Failed to remove board integration ref: ${error.message}`,
       );
@@ -919,32 +1057,33 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   async getIntegrationContextForBoard(
     boardId: string,
   ): Promise<IntegrationContext[]> {
-    const client = this.supabaseAdmin.getClient();
-
     // Fetch board refs with connection + definition + linked skill
-    const { data: refs, error } = await client
-      .from('board_integration_refs')
-      .select(
-        `
-        connection:integration_connections(
-          id,
-          credentials,
-          status,
-          config,
-          external_account_name,
-          definition:integration_definitions(
-            name,
-            slug,
-            skill:skills(
-              instructions
-            )
-          )
-        )
-      `,
-      )
-      .eq('board_id', boardId);
-
-    if (error) {
+    let refs: any[];
+    try {
+      refs = await this.db.query.boardIntegrationRefs.findMany({
+        where: eq(boardIntegrationRefs.boardId, boardId),
+        columns: {},
+        with: {
+          integrationConnection: {
+            columns: {
+              id: true,
+              credentials: true,
+              status: true,
+              config: true,
+              externalAccountName: true,
+            },
+            with: {
+              integrationDefinition: {
+                columns: { name: true, slug: true },
+                with: {
+                  skill: { columns: { instructions: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+    } catch (error: any) {
       this.logger.error(
         `Failed to fetch integration context for board ${boardId}: ${error.message}`,
       );
@@ -954,8 +1093,19 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     const contexts: IntegrationContext[] = [];
 
     for (const ref of refs || []) {
-      const conn = ref.connection as any;
-      if (!conn || !conn.definition) continue;
+      const rawConn = ref.integrationConnection as any;
+      if (!rawConn) continue;
+
+      // Re-key definition alias and normalize external_account_name to the
+      // PostgREST snake_case shape the rest of this method consumes.
+      const definition = rawConn.integrationDefinition ?? null;
+      if (!definition) continue;
+
+      const conn = {
+        ...rawConn,
+        definition,
+        external_account_name: rawConn.externalAccountName,
+      };
 
       let credentials: Record<string, string> = {};
       if (conn.credentials && conn.status === 'active') {
@@ -969,10 +1119,10 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Update last_used_at (fire-and-forget)
-      void client
-        .from('integration_connections')
-        .update({ last_used_at: new Date().toISOString() })
-        .eq('id', conn.id);
+      void this.db
+        .update(integrationConnections)
+        .set({ lastUsedAt: new Date().toISOString() })
+        .where(eq(integrationConnections.id, conn.id));
 
       contexts.push({
         name: conn.definition.name,

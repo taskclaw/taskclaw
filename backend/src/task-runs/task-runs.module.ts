@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { TaskRunsService } from './task-runs.service';
 import { TaskRunsController } from './task-runs.controller';
 
@@ -10,7 +9,7 @@ import { TaskRunsController } from './task-runs.controller';
  * BackboneDispatchProcessor calls when the flag is on.
  */
 @Module({
-  imports: [SupabaseModule],
+  imports: [],
   controllers: [TaskRunsController],
   providers: [TaskRunsService],
   exports: [TaskRunsService],

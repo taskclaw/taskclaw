@@ -1,10 +1,20 @@
 import {
   Injectable,
+  Inject,
   NotFoundException,
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  boardInstances,
+  boardSteps,
+  tasks,
+  categories,
+  knowledgeDocs,
+  backboneConnections,
+} from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 import { CreateBoardDto } from './dto/create-board.dto';
@@ -14,6 +24,7 @@ import {
   decrypt,
   maskSensitiveValue,
 } from '../common/utils/encryption.util';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 interface BoardFilters {
   archived?: boolean;
@@ -26,66 +37,112 @@ export class BoardsService {
   private readonly logger = new Logger(BoardsService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
     private readonly webhookEmitter: WebhookEmitterService,
   ) {}
 
-  async findAll(userId: string, accountId: string, filters?: BoardFilters) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+  /**
+   * Drizzle's relational query returns joined rows under the relation name
+   * (e.g. `category_defaultCategoryId`, `boardSteps`); PostgREST returned them
+   * under the embed alias (`default_category`, `board_steps`, etc).
+   * Re-key to the PostgREST aliases so the response shape callers depend on is
+   * unchanged.
+   */
+  private presentBoard(row: any): any {
+    const {
+      category_defaultCategoryId,
+      category_orchestratorCategoryId,
+      boardSteps: steps,
+      ...rest
+    } = row;
+    return {
+      ...snakeKeys(rest),
+      default_category: category_defaultCategoryId ?? null,
+      orchestrator_category: category_orchestratorCategoryId ?? null,
+      board_steps: (steps ?? []).map((s: any) => {
+        const { category, ...stepRest } = s;
+        return {
+          ...snakeKeys(stepRest),
+          linked_category: category ?? null,
+        };
+      }),
+    };
+  }
 
-    let query = client
-      .from('board_instances')
-      .select(
-        '*, default_category:categories!default_category_id(id, name, color, icon), orchestrator_category:categories!orchestrator_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, linked_category:categories!linked_category_id(id, name, color, icon))',
-      )
-      .eq('account_id', accountId);
+  async findAll(userId: string, accountId: string, filters?: BoardFilters) {
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
+
+    const conditions = [eq(boardInstances.accountId, accountId)];
 
     if (filters?.archived !== undefined) {
-      query = query.eq('is_archived', filters.archived);
+      conditions.push(eq(boardInstances.isArchived, filters.archived));
     } else {
       // Default: show non-archived boards
-      query = query.eq('is_archived', false);
+      conditions.push(eq(boardInstances.isArchived, false));
     }
 
     if (filters?.favorite !== undefined) {
-      query = query.eq('is_favorite', filters.favorite);
+      conditions.push(eq(boardInstances.isFavorite, filters.favorite));
     }
 
     if (filters?.pod_id !== undefined) {
-      query = query.eq('pod_id', filters.pod_id);
+      conditions.push(eq(boardInstances.podId, filters.pod_id));
     }
 
-    query = query
-      .order('is_favorite', { ascending: false })
-      .order('display_order', { ascending: true })
-      .order('updated_at', { ascending: false });
+    const rows = await this.db.query.boardInstances.findMany({
+      where: and(...conditions),
+      orderBy: [
+        desc(boardInstances.isFavorite),
+        asc(boardInstances.displayOrder),
+        desc(boardInstances.updatedAt),
+      ],
+      with: {
+        category_defaultCategoryId: {
+          columns: { id: true, name: true, color: true, icon: true },
+        },
+        category_orchestratorCategoryId: {
+          columns: { id: true, name: true, color: true, icon: true },
+        },
+        boardSteps: {
+          columns: {
+            id: true,
+            stepKey: true,
+            name: true,
+            stepType: true,
+            position: true,
+            color: true,
+            linkedCategoryId: true,
+          },
+          with: {
+            category: {
+              columns: { id: true, name: true, color: true, icon: true },
+            },
+          },
+        },
+      },
+    });
 
-    const { data, error } = await query;
-
-    if (error) {
-      throw new Error(`Failed to fetch boards: ${error.message}`);
-    }
+    const data = rows.map((r) => this.presentBoard(r));
 
     // Get task counts per board
     const boardIds = data.map((b) => b.id);
     if (boardIds.length > 0) {
-      const { data: taskCounts, error: countError } = await client
-        .from('tasks')
-        .select('board_instance_id')
-        .in('board_instance_id', boardIds);
+      const taskCounts = await this.db
+        .select({ boardInstanceId: tasks.boardInstanceId })
+        .from(tasks)
+        .where(inArray(tasks.boardInstanceId, boardIds));
 
-      if (!countError && taskCounts) {
-        const countMap: Record<string, number> = {};
-        taskCounts.forEach((t) => {
-          countMap[t.board_instance_id] =
-            (countMap[t.board_instance_id] || 0) + 1;
-        });
-        data.forEach((board) => {
-          board.task_count = countMap[board.id] || 0;
-        });
-      }
+      const countMap: Record<string, number> = {};
+      taskCounts.forEach((t) => {
+        if (t.boardInstanceId) {
+          countMap[t.boardInstanceId] =
+            (countMap[t.boardInstanceId] || 0) + 1;
+        }
+      });
+      data.forEach((board) => {
+        board.task_count = countMap[board.id] || 0;
+      });
     }
 
     // Sort steps by position
@@ -99,21 +156,54 @@ export class BoardsService {
   }
 
   async findOne(userId: string, accountId: string, boardId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('board_instances')
-      .select(
-        '*, default_category:categories!default_category_id(id, name, color, icon), orchestrator_category:categories!orchestrator_category_id(id, name, color, icon), board_steps(id, step_key, name, step_type, position, color, linked_category_id, trigger_type, ai_first, input_schema, output_schema, on_success_step_id, on_error_step_id, webhook_url, webhook_auth_header, schedule_cron, system_prompt, linked_category:categories!linked_category_id(id, name, color, icon))',
-      )
-      .eq('id', boardId)
-      .eq('account_id', accountId)
-      .single();
+    const row = await this.db.query.boardInstances.findFirst({
+      where: and(
+        eq(boardInstances.id, boardId),
+        eq(boardInstances.accountId, accountId),
+      ),
+      with: {
+        category_defaultCategoryId: {
+          columns: { id: true, name: true, color: true, icon: true },
+        },
+        category_orchestratorCategoryId: {
+          columns: { id: true, name: true, color: true, icon: true },
+        },
+        boardSteps: {
+          columns: {
+            id: true,
+            stepKey: true,
+            name: true,
+            stepType: true,
+            position: true,
+            color: true,
+            linkedCategoryId: true,
+            triggerType: true,
+            aiFirst: true,
+            inputSchema: true,
+            outputSchema: true,
+            onSuccessStepId: true,
+            onErrorStepId: true,
+            webhookUrl: true,
+            webhookAuthHeader: true,
+            scheduleCron: true,
+            systemPrompt: true,
+          },
+          with: {
+            category: {
+              columns: { id: true, name: true, color: true, icon: true },
+            },
+          },
+        },
+      },
+    });
 
-    if (error || !data) {
+    if (!row) {
       throw new NotFoundException(`Board with ID ${boardId} not found`);
     }
+
+    const data = this.presentBoard(row);
 
     // Sort steps by position
     if (data.board_steps) {
@@ -121,17 +211,17 @@ export class BoardsService {
     }
 
     // Get task counts per step
-    const { data: taskCounts } = await client
-      .from('tasks')
-      .select('current_step_id')
-      .eq('board_instance_id', boardId);
+    const taskCounts = await this.db
+      .select({ currentStepId: tasks.currentStepId })
+      .from(tasks)
+      .where(eq(tasks.boardInstanceId, boardId));
 
     const stepCountMap: Record<string, number> = {};
     if (taskCounts) {
       taskCounts.forEach((t) => {
-        if (t.current_step_id) {
-          stepCountMap[t.current_step_id] =
-            (stepCountMap[t.current_step_id] || 0) + 1;
+        if (t.currentStepId) {
+          stepCountMap[t.currentStepId] =
+            (stepCountMap[t.currentStepId] || 0) + 1;
         }
       });
     }
@@ -146,31 +236,26 @@ export class BoardsService {
   }
 
   async create(userId: string, accountId: string, dto: CreateBoardDto) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Create board instance
-    const { data: board, error } = await client
-      .from('board_instances')
-      .insert({
-        account_id: accountId,
+    const boardRows = await this.db
+      .insert(boardInstances)
+      .values({
+        accountId,
         name: dto.name,
         description: dto.description || null,
         icon: dto.icon || 'layout-grid',
         color: dto.color || '#6366f1',
         tags: dto.tags || [],
-        is_favorite: dto.is_favorite || false,
-        default_category_id: dto.default_category_id || null,
-        orchestrator_category_id: dto.orchestrator_category_id || null,
-        backbone_connection_id: dto.default_backbone_connection_id || null,
-        pod_id: dto.pod_id || null,
+        isFavorite: dto.is_favorite || false,
+        defaultCategoryId: dto.default_category_id || null,
+        orchestratorCategoryId: dto.orchestrator_category_id || null,
+        backboneConnectionId: dto.default_backbone_connection_id || null,
+        podId: dto.pod_id || null,
       })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to create board: ${error.message}`);
-    }
+      .returning();
+    const board = boardRows[0];
 
     // Create inline steps if provided
     if (dto.steps && dto.steps.length > 0) {
@@ -184,23 +269,21 @@ export class BoardsService {
         }
 
         return {
-          board_instance_id: board.id,
-          step_key: step.step_key,
+          boardInstanceId: board.id,
+          stepKey: step.step_key,
           name: step.name,
-          step_type: stepType,
+          stepType: stepType,
           position: index,
           color: step.color || null,
-          linked_category_id: step.linked_category_id || null,
+          linkedCategoryId: step.linked_category_id || null,
         };
       });
 
-      const { error: stepsError } = await client
-        .from('board_steps')
-        .insert(stepRows);
-
-      if (stepsError) {
+      try {
+        await this.db.insert(boardSteps).values(stepRows);
+      } catch (stepsError: any) {
         this.logger.error(
-          `Failed to create board steps: ${stepsError.message}`,
+          `Failed to create board steps: ${stepsError?.message}`,
         );
       }
     }
@@ -217,55 +300,68 @@ export class BoardsService {
     boardId: string,
     dto: UpdateBoardDto,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
     await this.findOne(userId, accountId, boardId);
 
-    const updateData: any = { ...dto };
+    // Map the DTO to camelCase columns (only defined fields).
+    const updateData: Partial<typeof boardInstances.$inferInsert> = {};
+    if (dto.name !== undefined) updateData.name = dto.name;
+    if (dto.description !== undefined) updateData.description = dto.description;
+    if (dto.icon !== undefined) updateData.icon = dto.icon;
+    if (dto.color !== undefined) updateData.color = dto.color;
+    if (dto.tags !== undefined) updateData.tags = dto.tags;
+    if (dto.is_favorite !== undefined) updateData.isFavorite = dto.is_favorite;
+    if (dto.display_order !== undefined)
+      updateData.displayOrder = dto.display_order;
+    if (dto.default_category_id !== undefined)
+      updateData.defaultCategoryId = dto.default_category_id;
+    if (dto.orchestrator_category_id !== undefined)
+      updateData.orchestratorCategoryId = dto.orchestrator_category_id;
+    if (dto.pod_id !== undefined) updateData.podId = dto.pod_id;
+    if (dto.settings_override !== undefined)
+      updateData.settingsOverride = dto.settings_override;
+    if (dto.is_archived !== undefined)
+      updateData.isArchived = dto.is_archived;
     // Map DTO field name to DB column name (F022)
-    if ('default_backbone_connection_id' in updateData) {
-      updateData.backbone_connection_id =
-        updateData.default_backbone_connection_id;
-      delete updateData.default_backbone_connection_id;
+    if (dto.default_backbone_connection_id !== undefined) {
+      updateData.backboneConnectionId = dto.default_backbone_connection_id;
     }
     if (dto.is_archived === true) {
-      updateData.archived_at = new Date().toISOString();
+      updateData.archivedAt = new Date().toISOString();
     } else if (dto.is_archived === false) {
-      updateData.archived_at = null;
+      updateData.archivedAt = null;
     }
 
-    const { data, error } = await client
-      .from('board_instances')
-      .update(updateData)
-      .eq('id', boardId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to update board: ${error.message}`);
-    }
+    const rows = await this.db
+      .update(boardInstances)
+      .set(updateData)
+      .where(
+        and(
+          eq(boardInstances.id, boardId),
+          eq(boardInstances.accountId, accountId),
+        ),
+      )
+      .returning();
+    const data = rows[0];
 
     this.webhookEmitter.emit(accountId, 'board.updated', { board: data });
 
-    return data;
+    return snakeKeys(data);
   }
 
   async remove(userId: string, accountId: string, boardId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
     await this.findOne(userId, accountId, boardId);
 
     // Tasks become boardless (ON DELETE SET NULL on FK)
-    const { error } = await client
-      .from('board_instances')
-      .delete()
-      .eq('id', boardId)
-      .eq('account_id', accountId);
-
-    if (error) {
-      throw new Error(`Failed to delete board: ${error.message}`);
-    }
+    await this.db
+      .delete(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.id, boardId),
+          eq(boardInstances.accountId, accountId),
+        ),
+      );
 
     this.webhookEmitter.emit(accountId, 'board.deleted', { board_id: boardId });
 
@@ -273,8 +369,7 @@ export class BoardsService {
   }
 
   async duplicate(userId: string, accountId: string, boardId: string) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     const original = await this.findOne(userId, accountId, boardId);
 
@@ -282,7 +377,7 @@ export class BoardsService {
     const cleanedSettings = { ...(original.settings_override || {}) };
     if (cleanedSettings.integrations) {
       const cleaned: Record<string, any> = {};
-      for (const [slug, cfg] of Object.entries(
+      for (const [slug] of Object.entries(
         cleanedSettings.integrations as Record<string, any>,
       )) {
         cleaned[slug] = { enabled: false, config: {}, test_status: 'untested' };
@@ -290,60 +385,55 @@ export class BoardsService {
       cleanedSettings.integrations = cleaned;
     }
 
-    const { data: copy, error } = await client
-      .from('board_instances')
-      .insert({
-        account_id: accountId,
-        template_id: original.template_id,
+    const copyRows = await this.db
+      .insert(boardInstances)
+      .values({
+        accountId,
+        templateId: original.template_id,
         name: `${original.name} (Copy)`,
         description: original.description,
         icon: original.icon,
         color: original.color,
         tags: original.tags,
-        is_favorite: false,
-        settings_override: cleanedSettings,
-        installed_manifest: original.installed_manifest,
-        installed_version: original.installed_version,
-        default_category_id: original.default_category_id || null,
-        orchestrator_category_id: original.orchestrator_category_id || null,
-        backbone_connection_id: original.backbone_connection_id || null,
+        isFavorite: false,
+        settingsOverride: cleanedSettings,
+        installedManifest: original.installed_manifest,
+        installedVersion: original.installed_version,
+        defaultCategoryId: original.default_category_id || null,
+        orchestratorCategoryId: original.orchestrator_category_id || null,
+        backboneConnectionId: original.backbone_connection_id || null,
       })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to duplicate board: ${error.message}`);
-    }
+      .returning();
+    const copy = copyRows[0];
 
     // Copy steps (including rich config)
     if (original.board_steps && original.board_steps.length > 0) {
       const stepRows = original.board_steps.map((step: any) => ({
-        board_instance_id: copy.id,
-        step_key: step.step_key,
+        boardInstanceId: copy.id,
+        stepKey: step.step_key,
         name: step.name,
-        step_type: step.step_type,
+        stepType: step.step_type,
         position: step.position,
         color: step.color,
-        linked_category_id: step.linked_category_id || null,
-        backbone_connection_id: step.backbone_connection_id || null,
-        trigger_type: step.trigger_type || 'on_entry',
-        ai_first: step.ai_first || false,
-        input_schema: step.input_schema || [],
-        output_schema: step.output_schema || [],
-        webhook_url: step.webhook_url || null,
-        webhook_auth_header: step.webhook_auth_header || null,
-        schedule_cron: step.schedule_cron || null,
-        system_prompt: step.system_prompt || null,
+        linkedCategoryId: step.linked_category_id || null,
+        backboneConnectionId: step.backbone_connection_id || null,
+        triggerType: step.trigger_type || 'on_entry',
+        aiFirst: step.ai_first || false,
+        inputSchema: step.input_schema || [],
+        outputSchema: step.output_schema || [],
+        webhookUrl: step.webhook_url || null,
+        webhookAuthHeader: step.webhook_auth_header || null,
+        scheduleCron: step.schedule_cron || null,
+        systemPrompt: step.system_prompt || null,
       }));
 
-      await client.from('board_steps').insert(stepRows);
+      await this.db.insert(boardSteps).values(stepRows);
     }
 
     return this.findOne(userId, accountId, copy.id);
   }
 
   async exportManifest(userId: string, accountId: string, boardId: string) {
-    const client = this.supabaseAdmin.getClient();
     const board = await this.findOne(userId, accountId, boardId);
 
     // Collect unique linked category IDs (from steps + board default + orchestrator)
@@ -361,18 +451,44 @@ export class BoardsService {
     const categoriesMap: Record<string, any> = {};
     if (categoryIds.length > 0) {
       // Fetch categories with skills
-      const { data: cats } = await client
-        .from('categories')
-        .select(
-          'id, name, color, icon, category_skills(skill:skills(id, name, description, instructions, is_active, file_attachments))',
-        )
-        .in('id', categoryIds);
+      const catsRaw = await this.db.query.categories.findMany({
+        columns: { id: true, name: true, color: true, icon: true },
+        where: inArray(categories.id, categoryIds),
+        with: {
+          categorySkills: {
+            with: {
+              skill: {
+                columns: {
+                  id: true,
+                  name: true,
+                  description: true,
+                  instructions: true,
+                  isActive: true,
+                  fileAttachments: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      // Re-key `categorySkills` → `category_skills` to preserve PostgREST shape
+      const cats = catsRaw.map((c: any) => {
+        const { categorySkills, ...rest } = c;
+        return { ...rest, category_skills: categorySkills ?? [] };
+      });
 
       // Fetch knowledge docs for these categories
-      const { data: knowledgeDocs } = await client
-        .from('knowledge_docs')
-        .select('id, category_id, title, content, is_master, file_attachments')
-        .in('category_id', categoryIds);
+      const knowledgeDocsRows = await this.db
+        .select({
+          id: knowledgeDocs.id,
+          category_id: knowledgeDocs.categoryId,
+          title: knowledgeDocs.title,
+          content: knowledgeDocs.content,
+          is_master: knowledgeDocs.isMaster,
+          file_attachments: knowledgeDocs.fileAttachments,
+        })
+        .from(knowledgeDocs)
+        .where(inArray(knowledgeDocs.categoryId, categoryIds));
 
       if (cats) {
         for (const cat of cats) {
@@ -399,7 +515,7 @@ export class BoardsService {
                 };
               })
               .filter(Boolean),
-            knowledge_docs: (knowledgeDocs || [])
+            knowledge_docs: (knowledgeDocsRows || [])
               .filter((d: any) => d.category_id === cat.id)
               .map((d: any) => ({
                 id: d.id,
@@ -432,10 +548,13 @@ export class BoardsService {
     ].filter(Boolean);
     const backboneIdToSlug: Record<string, string> = {};
     if (backboneIds.length > 0) {
-      const { data: conns } = await client
-        .from('backbone_connections')
-        .select('id, backbone_type')
-        .in('id', [...new Set(backboneIds)]);
+      const conns = await this.db
+        .select({
+          id: backboneConnections.id,
+          backbone_type: backboneConnections.backboneType,
+        })
+        .from(backboneConnections)
+        .where(inArray(backboneConnections.id, [...new Set(backboneIds)]));
       if (conns) {
         for (const c of conns) {
           backboneIdToSlug[c.id] = c.backbone_type;
@@ -507,23 +626,30 @@ export class BoardsService {
     accountId: string,
     boardId: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data: board, error } = await client
-      .from('board_instances')
-      .select('installed_manifest, settings_override')
-      .eq('id', boardId)
-      .eq('account_id', accountId)
-      .single();
+    const [board] = await this.db
+      .select({
+        installed_manifest: boardInstances.installedManifest,
+        settings_override: boardInstances.settingsOverride,
+      })
+      .from(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.id, boardId),
+          eq(boardInstances.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (error || !board) {
+    if (!board) {
       throw new NotFoundException(`Board with ID ${boardId} not found`);
     }
 
-    const definitions: any[] = board.installed_manifest?.integrations || [];
-    const runtimeConfigs: Record<string, any> =
-      board.settings_override?.integrations || {};
+    const manifest = (board.installed_manifest ?? {}) as Record<string, any>;
+    const settings = (board.settings_override ?? {}) as Record<string, any>;
+    const definitions: any[] = manifest.integrations || [];
+    const runtimeConfigs: Record<string, any> = settings.integrations || {};
 
     return definitions.map((def: any) => {
       const runtime = runtimeConfigs[def.slug] || {
@@ -581,21 +707,24 @@ export class BoardsService {
       }>;
     },
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data: board, error } = await client
-      .from('board_instances')
-      .select('installed_manifest')
-      .eq('id', boardId)
-      .eq('account_id', accountId)
-      .single();
+    const [board] = await this.db
+      .select({ installed_manifest: boardInstances.installedManifest })
+      .from(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.id, boardId),
+          eq(boardInstances.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (error || !board) {
+    if (!board) {
       throw new NotFoundException(`Board with ID ${boardId} not found`);
     }
 
-    const manifest = board.installed_manifest || {};
+    const manifest = (board.installed_manifest || {}) as Record<string, any>;
     const integrations: any[] = manifest.integrations || [];
 
     // Check for duplicate slug
@@ -608,14 +737,18 @@ export class BoardsService {
     integrations.push(integration);
     manifest.integrations = integrations;
 
-    const { error: updateError } = await client
-      .from('board_instances')
-      .update({ installed_manifest: manifest })
-      .eq('id', boardId)
-      .eq('account_id', accountId);
-
-    if (updateError) {
-      throw new Error(`Failed to add integration: ${updateError.message}`);
+    try {
+      await this.db
+        .update(boardInstances)
+        .set({ installedManifest: manifest })
+        .where(
+          and(
+            eq(boardInstances.id, boardId),
+            eq(boardInstances.accountId, accountId),
+          ),
+        );
+    } catch (updateError: any) {
+      throw new Error(`Failed to add integration: ${updateError?.message}`);
     }
 
     return { success: true };
@@ -627,21 +760,27 @@ export class BoardsService {
     boardId: string,
     slug: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data: board, error } = await client
-      .from('board_instances')
-      .select('installed_manifest, settings_override')
-      .eq('id', boardId)
-      .eq('account_id', accountId)
-      .single();
+    const [board] = await this.db
+      .select({
+        installed_manifest: boardInstances.installedManifest,
+        settings_override: boardInstances.settingsOverride,
+      })
+      .from(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.id, boardId),
+          eq(boardInstances.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (error || !board) {
+    if (!board) {
       throw new NotFoundException(`Board with ID ${boardId} not found`);
     }
 
-    const manifest = board.installed_manifest || {};
+    const manifest = (board.installed_manifest || {}) as Record<string, any>;
     const integrations: any[] = manifest.integrations || [];
     const idx = integrations.findIndex((i: any) => i.slug === slug);
 
@@ -655,22 +794,26 @@ export class BoardsService {
     manifest.integrations = integrations;
 
     // Also clean up runtime config
-    const settings = board.settings_override || {};
+    const settings = (board.settings_override || {}) as Record<string, any>;
     if (settings.integrations?.[slug]) {
       delete settings.integrations[slug];
     }
 
-    const { error: updateError } = await client
-      .from('board_instances')
-      .update({
-        installed_manifest: manifest,
-        settings_override: settings,
-      })
-      .eq('id', boardId)
-      .eq('account_id', accountId);
-
-    if (updateError) {
-      throw new Error(`Failed to remove integration: ${updateError.message}`);
+    try {
+      await this.db
+        .update(boardInstances)
+        .set({
+          installedManifest: manifest,
+          settingsOverride: settings,
+        })
+        .where(
+          and(
+            eq(boardInstances.id, boardId),
+            eq(boardInstances.accountId, accountId),
+          ),
+        );
+    } catch (updateError: any) {
+      throw new Error(`Failed to remove integration: ${updateError?.message}`);
     }
 
     return { success: true };
@@ -683,21 +826,29 @@ export class BoardsService {
     slug: string,
     data: { enabled: boolean; config: Record<string, string> },
   ) {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data: board, error } = await client
-      .from('board_instances')
-      .select('installed_manifest, settings_override')
-      .eq('id', boardId)
-      .eq('account_id', accountId)
-      .single();
+    const [board] = await this.db
+      .select({
+        installed_manifest: boardInstances.installedManifest,
+        settings_override: boardInstances.settingsOverride,
+      })
+      .from(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.id, boardId),
+          eq(boardInstances.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (error || !board) {
+    if (!board) {
       throw new NotFoundException(`Board with ID ${boardId} not found`);
     }
 
-    const definitions: any[] = board.installed_manifest?.integrations || [];
+    const manifest = (board.installed_manifest ?? {}) as Record<string, any>;
+    const settings = (board.settings_override ?? {}) as Record<string, any>;
+    const definitions: any[] = manifest.integrations || [];
     const integrationDef = definitions.find((i: any) => i.slug === slug);
     if (!integrationDef) {
       throw new NotFoundException(
@@ -706,7 +857,7 @@ export class BoardsService {
     }
 
     // Get existing runtime config for this integration
-    const existingRuntime = board.settings_override?.integrations?.[slug] || {};
+    const existingRuntime = settings.integrations?.[slug] || {};
 
     // Encrypt password fields, preserve masked values
     const encryptedConfig: Record<string, string> = {};
@@ -727,7 +878,7 @@ export class BoardsService {
     }
 
     // Merge into settings_override
-    const currentSettings = board.settings_override || {};
+    const currentSettings = settings;
     const currentIntegrations = currentSettings.integrations || {};
     currentIntegrations[slug] = {
       enabled: data.enabled,
@@ -736,22 +887,25 @@ export class BoardsService {
       test_status: 'untested',
     };
 
-    const { data: updated, error: updateError } = await client
-      .from('board_instances')
-      .update({
-        settings_override: {
-          ...currentSettings,
-          integrations: currentIntegrations,
-        },
-      })
-      .eq('id', boardId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (updateError) {
+    try {
+      await this.db
+        .update(boardInstances)
+        .set({
+          settingsOverride: {
+            ...currentSettings,
+            integrations: currentIntegrations,
+          },
+        })
+        .where(
+          and(
+            eq(boardInstances.id, boardId),
+            eq(boardInstances.accountId, accountId),
+          ),
+        )
+        .returning();
+    } catch (updateError: any) {
       throw new Error(
-        `Failed to update integration config: ${updateError.message}`,
+        `Failed to update integration config: ${updateError?.message}`,
       );
     }
 

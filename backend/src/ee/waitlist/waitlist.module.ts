@@ -4,11 +4,10 @@ import {
   WaitlistController,
   AdminWaitlistController,
 } from './waitlist.controller';
-import { SupabaseModule } from '../../supabase/supabase.module';
 import { CommonModule } from '../../common/common.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule],
+  imports: [ CommonModule],
   controllers: [WaitlistController, AdminWaitlistController],
   providers: [WaitlistService],
 })

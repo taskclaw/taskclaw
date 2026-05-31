@@ -6,8 +6,19 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, asc, desc, eq, gt, count } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  conversations,
+  messages,
+  tasks,
+  boardInstances,
+  boardSteps,
+  agents,
+  sources,
+  pods,
+  agentApprovalRequests,
+} from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { AiProviderService } from '../ai-provider/ai-provider.service';
 import { OpenClawService } from './openclaw.service';
@@ -27,14 +38,14 @@ import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { OrchestrationService } from '../orchestration/orchestration.service';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class ConversationsService {
   private readonly logger = new Logger(ConversationsService.name);
 
   constructor(
-    private readonly supabase: SupabaseService,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
     private readonly aiProviderService: AiProviderService,
     private readonly openClawService: OpenClawService,
@@ -54,6 +65,41 @@ export class ConversationsService {
   ) {}
 
   /**
+   * Drizzle's relational query returns joined rows under their relation names
+   * (e.g. `task`, `boardInstance`, `source`, `category_categoryId`). PostgREST
+   * returned them under the table/alias names callers depend on
+   * (`task`, `board`, `sources`, `categories`, `override_category`).
+   * These helpers re-key the relational shape back to the PostgREST shape so
+   * downstream code (`conversation.task.sources`, `conversation.task.categories`,
+   * `conversation.board`, etc.) keeps working unchanged.
+   */
+  private presentTask(task: any) {
+    if (!task) return task;
+    const {
+      source,
+      category_categoryId,
+      category_overrideCategoryId,
+      ...rest
+    } = task;
+    return {
+      ...snakeKeys(rest),
+      sources: source ?? null,
+      categories: category_categoryId ?? null,
+      override_category: category_overrideCategoryId ?? null,
+    };
+  }
+
+  private presentConversation(row: any) {
+    if (!row) return row;
+    const { task, boardInstance, ...rest } = row;
+    return {
+      ...snakeKeys(rest),
+      task: this.presentTask(task) ?? null,
+      board: boardInstance ?? null,
+    };
+  }
+
+  /**
    * Create a new conversation
    */
   async create(
@@ -62,21 +108,18 @@ export class ConversationsService {
     dto: CreateConversationDto,
     accessToken: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user has access
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     // Verify task exists if task_id provided
     if (dto.task_id) {
-      const { data: task, error: taskError } = await client
-        .from('tasks')
-        .select('id, title')
-        .eq('id', dto.task_id)
-        .eq('account_id', accountId)
-        .single();
+      const [task] = await this.db
+        .select({ id: tasks.id, title: tasks.title })
+        .from(tasks)
+        .where(and(eq(tasks.id, dto.task_id), eq(tasks.accountId, accountId)))
+        .limit(1);
 
-      if (taskError || !task) {
+      if (!task) {
         throw new NotFoundException(`Task with ID ${dto.task_id} not found`);
       }
 
@@ -88,14 +131,18 @@ export class ConversationsService {
 
     // Verify board exists if board_id provided
     if (dto.board_id) {
-      const { data: board, error: boardError } = await client
-        .from('board_instances')
-        .select('id, name')
-        .eq('id', dto.board_id)
-        .eq('account_id', accountId)
-        .single();
+      const [board] = await this.db
+        .select({ id: boardInstances.id, name: boardInstances.name })
+        .from(boardInstances)
+        .where(
+          and(
+            eq(boardInstances.id, dto.board_id),
+            eq(boardInstances.accountId, accountId),
+          ),
+        )
+        .limit(1);
 
-      if (boardError || !board) {
+      if (!board) {
         throw new NotFoundException(`Board with ID ${dto.board_id} not found`);
       }
 
@@ -113,14 +160,13 @@ export class ConversationsService {
 
     // F06: Verify agent exists if agent_id provided
     if (dto.agent_id) {
-      const { data: agent, error: agentError } = await client
-        .from('agents')
-        .select('id, name')
-        .eq('id', dto.agent_id)
-        .eq('account_id', accountId)
-        .single();
+      const [agent] = await this.db
+        .select({ id: agents.id, name: agents.name })
+        .from(agents)
+        .where(and(eq(agents.id, dto.agent_id), eq(agents.accountId, accountId)))
+        .limit(1);
 
-      if (agentError || !agent) {
+      if (!agent) {
         throw new NotFoundException(`Agent with ID ${dto.agent_id} not found`);
       }
 
@@ -129,23 +175,26 @@ export class ConversationsService {
       }
     }
 
-    const { data, error } = await client
-      .from('conversations')
-      .insert({
-        user_id: userId,
-        account_id: accountId,
-        task_id: dto.task_id,
-        board_id: dto.board_id || null,
-        pod_id: dto.pod_id || null,
-        agent_id: dto.agent_id || null,
-        title: dto.title || 'New Conversation',
-        metadata: Object.keys(metadata).length > 0 ? metadata : null,
-        ...(dto.backbone_connection_id ? { backbone_connection_id: dto.backbone_connection_id } : {}),
-      })
-      .select()
-      .single();
-
-    if (error) {
+    let data: typeof conversations.$inferSelect;
+    try {
+      const rows = await this.db
+        .insert(conversations)
+        .values({
+          userId,
+          accountId,
+          taskId: dto.task_id,
+          boardId: dto.board_id || null,
+          podId: dto.pod_id || null,
+          agentId: dto.agent_id || null,
+          title: dto.title || 'New Conversation',
+          metadata: Object.keys(metadata).length > 0 ? metadata : null,
+          ...(dto.backbone_connection_id
+            ? { backboneConnectionId: dto.backbone_connection_id }
+            : {}),
+        })
+        .returning();
+      data = rows[0];
+    } catch (error: any) {
       throw new Error(`Failed to create conversation: ${error.message}`);
     }
 
@@ -157,7 +206,7 @@ export class ConversationsService {
       conversation: data,
     });
 
-    return data;
+    return snakeKeys(data);
   }
 
   /**
@@ -174,46 +223,56 @@ export class ConversationsService {
     podId?: string,
     agentId?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user has access
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     const offset = (page - 1) * limit;
 
-    let query = client
-      .from('conversations')
-      .select('*, task:tasks(id, title)', { count: 'exact' })
-      .eq('user_id', userId)
-      .eq('account_id', accountId);
+    const filters = [
+      eq(conversations.userId, userId),
+      eq(conversations.accountId, accountId),
+    ];
 
     if (taskId) {
-      query = query.eq('task_id', taskId);
+      filters.push(eq(conversations.taskId, taskId));
     }
 
     if (boardId) {
-      query = query.eq('board_id', boardId);
+      filters.push(eq(conversations.boardId, boardId));
     }
 
     if (podId) {
-      query = query.eq('pod_id', podId);
+      filters.push(eq(conversations.podId, podId));
     }
 
     if (agentId) {
-      query = query.eq('agent_id', agentId);
+      filters.push(eq(conversations.agentId, agentId));
     }
 
-    const { data, error, count } = await query
-      .order('updated_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    const where = and(...filters);
 
-    if (error) {
-      throw new Error(`Failed to fetch conversations: ${error.message}`);
-    }
+    const rows = await this.db.query.conversations.findMany({
+      where,
+      orderBy: desc(conversations.updatedAt),
+      limit,
+      offset,
+      with: { task: { columns: { id: true, title: true } } },
+    });
+
+    const [{ value: total }] = await this.db
+      .select({ value: count() })
+      .from(conversations)
+      .where(where);
+
+    // Re-key the embedded `task` relation to the PostgREST `task` key (same name).
+    const data = rows.map((r: any) => {
+      const { task, ...rest } = r;
+      return { ...snakeKeys(rest), task: task ?? null };
+    });
 
     if (taskId) {
       this.logger.debug(
-        `findAll(task_id=${taskId}): found ${data?.length || 0} conversations (total: ${count})`,
+        `findAll(task_id=${taskId}): found ${data?.length || 0} conversations (total: ${total})`,
       );
     }
 
@@ -222,8 +281,8 @@ export class ConversationsService {
       pagination: {
         page,
         limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit),
+        total: total || 0,
+        totalPages: Math.ceil((total || 0) / limit),
       },
     };
   }
@@ -237,28 +296,63 @@ export class ConversationsService {
     conversationId: string,
     accessToken: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user has access
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await client
-      .from('conversations')
-      .select(
-        '*, task:tasks(id, title, status, priority, notes, external_id, external_url, metadata, card_data, source_id, category_id, current_step_id, board_instance_id, override_category_id, sources(id, provider), categories:categories!category_id(id, name, color, icon), override_category:categories!override_category_id(id, name, color, icon)), board:board_instances(id, name, description, default_category_id, orchestrator_category_id, settings_override)',
-      )
-      .eq('id', conversationId)
-      .eq('user_id', userId)
-      .eq('account_id', accountId)
-      .single();
+    const row = await this.db.query.conversations.findFirst({
+      where: and(
+        eq(conversations.id, conversationId),
+        eq(conversations.userId, userId),
+        eq(conversations.accountId, accountId),
+      ),
+      with: {
+        task: {
+          columns: {
+            id: true,
+            title: true,
+            status: true,
+            priority: true,
+            notes: true,
+            externalId: true,
+            externalUrl: true,
+            metadata: true,
+            cardData: true,
+            sourceId: true,
+            categoryId: true,
+            currentStepId: true,
+            boardInstanceId: true,
+            overrideCategoryId: true,
+          },
+          with: {
+            source: { columns: { id: true, provider: true } },
+            category_categoryId: {
+              columns: { id: true, name: true, color: true, icon: true },
+            },
+            category_overrideCategoryId: {
+              columns: { id: true, name: true, color: true, icon: true },
+            },
+          },
+        },
+        boardInstance: {
+          columns: {
+            id: true,
+            name: true,
+            description: true,
+            defaultCategoryId: true,
+            orchestratorCategoryId: true,
+            settingsOverride: true,
+          },
+        },
+      },
+    });
 
-    if (error || !data) {
+    if (!row) {
       throw new NotFoundException(
         `Conversation with ID ${conversationId} not found`,
       );
     }
 
-    return data;
+    return this.presentConversation(row);
   }
 
   /**
@@ -272,35 +366,35 @@ export class ConversationsService {
     page: number = 1,
     limit: number = 50,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify user owns this conversation
     await this.findOne(userId, accountId, conversationId, accessToken);
 
     const offset = (page - 1) * limit;
 
-    const { data, error, count } = await client
-      .from('messages')
-      .select('*', { count: 'exact' })
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true })
-      .range(offset, offset + limit - 1);
+    const data = await this.db
+      .select()
+      .from(messages)
+      .where(eq(messages.conversationId, conversationId))
+      .orderBy(asc(messages.createdAt))
+      .limit(limit)
+      .offset(offset);
 
-    if (error) {
-      throw new Error(`Failed to fetch messages: ${error.message}`);
-    }
+    const [{ value: total }] = await this.db
+      .select({ value: count() })
+      .from(messages)
+      .where(eq(messages.conversationId, conversationId));
 
     this.logger.debug(
-      `getMessages(conv=${conversationId.slice(0, 8)}): ${data?.length || 0} messages (total: ${count})`,
+      `getMessages(conv=${conversationId.slice(0, 8)}): ${data?.length || 0} messages (total: ${total})`,
     );
 
     return {
-      data,
+      data: data.map(snakeKeys),
       pagination: {
         page,
         limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit),
+        total: total || 0,
+        totalPages: Math.ceil((total || 0) / limit),
       },
     };
   }
@@ -317,8 +411,6 @@ export class ConversationsService {
     dto: SendMessageDto,
     accessToken: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify conversation exists and user owns it
     const conversation = await this.findOne(
       userId,
@@ -328,17 +420,18 @@ export class ConversationsService {
     );
 
     // Store user message
-    const { data: userMessage, error: userMsgError } = await client
-      .from('messages')
-      .insert({
-        conversation_id: conversationId,
-        role: 'user',
-        content: dto.content,
-      })
-      .select()
-      .single();
-
-    if (userMsgError) {
+    let userMessage: typeof messages.$inferSelect;
+    try {
+      const rows = await this.db
+        .insert(messages)
+        .values({
+          conversationId,
+          role: 'user',
+          content: dto.content,
+        })
+        .returning();
+      userMessage = rows[0];
+    } catch (userMsgError: any) {
       throw new Error(`Failed to store user message: ${userMsgError.message}`);
     }
 
@@ -505,19 +598,20 @@ export class ConversationsService {
         const sideRows = aiResponseSegments
           .filter((s) => s.kind !== 'text')
           .map((s) => ({
-            conversation_id: conversationId,
+            conversationId,
             role: 'assistant',
             kind: s.kind,
-            author_type: 'agent',
+            authorType: 'agent',
             content: s.content,
             metadata: { ...(s.metadata ?? {}), generated_with: aiResponseMetadata?.model },
             ...(backboneConnectionId
-              ? { backbone_connection_id: backboneConnectionId }
+              ? { backboneConnectionId }
               : {}),
           }));
         if (sideRows.length > 0) {
-          const { error: sideErr } = await client.from('messages').insert(sideRows);
-          if (sideErr) {
+          try {
+            await this.db.insert(messages).values(sideRows);
+          } catch (sideErr: any) {
             this.logger.warn(`Failed to store segment rows: ${sideErr.message}`);
           }
         }
@@ -525,33 +619,34 @@ export class ConversationsService {
 
       // Store AI response (F021: include backbone_connection_id)
       const assistantInsert: Record<string, any> = {
-        conversation_id: conversationId,
+        conversationId,
         role: 'assistant',
         kind: 'text',
-        author_type: 'agent',
+        authorType: 'agent',
         content: aiResponseText,
         metadata: aiResponseMetadata,
       };
       if (backboneConnectionId) {
-        assistantInsert.backbone_connection_id = backboneConnectionId;
+        assistantInsert.backboneConnectionId = backboneConnectionId;
       }
 
-      const { data: assistantMessage, error: aiMsgError } = await client
-        .from('messages')
-        .insert(assistantInsert)
-        .select()
-        .single();
-
-      if (aiMsgError) {
+      let assistantMessage: typeof messages.$inferSelect;
+      try {
+        const rows = await this.db
+          .insert(messages)
+          .values(assistantInsert as typeof messages.$inferInsert)
+          .returning();
+        assistantMessage = rows[0];
+      } catch (aiMsgError: any) {
         throw new Error(`Failed to store AI response: ${aiMsgError.message}`);
       }
 
       // F021: Store backbone_connection_id on conversation if resolved
       if (backboneConnectionId && !conversation.backbone_connection_id) {
-        await client
-          .from('conversations')
-          .update({ backbone_connection_id: backboneConnectionId })
-          .eq('id', conversationId);
+        await this.db
+          .update(conversations)
+          .set({ backboneConnectionId })
+          .where(eq(conversations.id, conversationId));
       }
 
       this.webhookEmitter.emit(accountId, 'message.created', {
@@ -582,11 +677,11 @@ export class ConversationsService {
       );
 
       // Store error message for user feedback
-      await client.from('messages').insert({
-        conversation_id: conversationId,
+      await this.db.insert(messages).values({
+        conversationId,
         role: 'system',
         kind: 'error',
-        author_type: 'system',
+        authorType: 'system',
         content: `Error: ${error.message}`,
         metadata: { error: true },
       });
@@ -609,8 +704,6 @@ export class ConversationsService {
     accessToken: string,
     pipelineDepth = 0,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify conversation exists and user owns it
     const conversation = await this.findOne(
       userId,
@@ -620,17 +713,18 @@ export class ConversationsService {
     );
 
     // Store user message immediately
-    const { data: userMessage, error: userMsgError } = await client
-      .from('messages')
-      .insert({
-        conversation_id: conversationId,
-        role: 'user',
-        content: dto.content,
-      })
-      .select()
-      .single();
-
-    if (userMsgError) {
+    let userMessage: typeof messages.$inferSelect;
+    try {
+      const rows = await this.db
+        .insert(messages)
+        .values({
+          conversationId,
+          role: 'user',
+          content: dto.content,
+        })
+        .returning();
+      userMessage = rows[0];
+    } catch (userMsgError: any) {
       throw new Error(`Failed to store user message: ${userMsgError.message}`);
     }
 
@@ -641,13 +735,17 @@ export class ConversationsService {
 
     // Move task to "AI Running" immediately
     if (conversation.task_id) {
-      const { error: runningError } = await client
-        .from('tasks')
-        .update({ status: 'AI Running' })
-        .eq('id', conversation.task_id)
-        .eq('account_id', accountId);
-
-      if (runningError) {
+      try {
+        await this.db
+          .update(tasks)
+          .set({ status: 'AI Running' })
+          .where(
+            and(
+              eq(tasks.id, conversation.task_id),
+              eq(tasks.accountId, accountId),
+            ),
+          );
+      } catch (runningError: any) {
         this.logger.error(
           `Failed to move task ${conversation.task_id} to "AI Running": ${runningError.message}`,
         );
@@ -690,8 +788,6 @@ export class ConversationsService {
     const logPrefix = `[BG-AI conv=${conversationId.slice(0, 8)} task=${taskId?.slice(0, 8) || 'none'}]`;
 
     (async () => {
-      const client = this.supabaseAdmin.getClient();
-
       // Create an execution log entry for workspace chat conversations (no task)
       let execLogId: string | null = null;
       if (!taskId) {
@@ -903,20 +999,20 @@ export class ConversationsService {
           `${logPrefix} Step 5/5: Storing response and updating task`,
         );
         const messageInsert: Record<string, any> = {
-          conversation_id: conversationId,
+          conversationId,
           role: 'assistant',
           content: aiResponseText,
           metadata: aiResponseMetadata,
         };
         if (backboneConnectionId) {
-          messageInsert.backbone_connection_id = backboneConnectionId;
+          messageInsert.backboneConnectionId = backboneConnectionId;
         }
 
-        const { error: insertError } = await client
-          .from('messages')
-          .insert(messageInsert);
-
-        if (insertError) {
+        try {
+          await this.db
+            .insert(messages)
+            .values(messageInsert as typeof messages.$inferInsert);
+        } catch (insertError: any) {
           this.logger.error(
             `${logPrefix} Failed to store AI response: ${insertError.message}`,
           );
@@ -924,10 +1020,10 @@ export class ConversationsService {
 
         // F021: Store backbone_connection_id on conversation if resolved
         if (backboneConnectionId && !conversation.backbone_connection_id) {
-          await client
-            .from('conversations')
-            .update({ backbone_connection_id: backboneConnectionId })
-            .eq('id', conversationId);
+          await this.db
+            .update(conversations)
+            .set({ backboneConnectionId })
+            .where(eq(conversations.id, conversationId));
         }
 
         // Auto-generate conversation title if needed
@@ -945,7 +1041,6 @@ export class ConversationsService {
         // Extract structured output from AI response and save to card_data
         if (taskId) {
           await this.extractAndSaveOutput(
-            client,
             taskId,
             accountId,
             aiResponseText,
@@ -956,7 +1051,6 @@ export class ConversationsService {
         // Route task based on board settings (Full AI mode or "In Review")
         if (taskId) {
           await this.handlePostAiRouting(
-            client,
             taskId,
             accountId,
             userId,
@@ -998,11 +1092,11 @@ export class ConversationsService {
 
         // Store error message for user feedback
         try {
-          await client.from('messages').insert({
-            conversation_id: conversationId,
+          await this.db.insert(messages).values({
+            conversationId,
             role: 'system',
             kind: 'error',
-            author_type: 'system',
+            authorType: 'system',
             content: `AI processing failed: ${errorMessage}`,
             metadata: { error: true, duration_ms: durationMs },
           });
@@ -1016,7 +1110,6 @@ export class ConversationsService {
         if (taskId) {
           try {
             await this.handlePostAiError(
-              client,
               taskId,
               accountId,
               conversation.task?.status || 'Idea',
@@ -1038,7 +1131,6 @@ export class ConversationsService {
    * Full AI OFF: move task to "In Review" for human approval.
    */
   private async handlePostAiRouting(
-    client: any,
     taskId: string,
     accountId: string,
     userId: string,
@@ -1047,19 +1139,22 @@ export class ConversationsService {
     pipelineDepth: number,
   ): Promise<void> {
     // 1. Fetch task with board + step info
-    const { data: task } = await client
-      .from('tasks')
-      .select('id, current_step_id, board_instance_id')
-      .eq('id', taskId)
-      .single();
+    const [task] = await this.db
+      .select({
+        id: tasks.id,
+        current_step_id: tasks.currentStepId,
+        board_instance_id: tasks.boardInstanceId,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
 
     if (!task?.board_instance_id || !task?.current_step_id) {
       // Not a board task — fall back to "In Review"
-      await client
-        .from('tasks')
-        .update({ status: 'In Review' })
-        .eq('id', taskId)
-        .eq('account_id', accountId);
+      await this.db
+        .update(tasks)
+        .set({ status: 'In Review' })
+        .where(and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)));
       this.logger.log(
         `${logPrefix} Task moved to "In Review" (non-board task)`,
       );
@@ -1067,31 +1162,30 @@ export class ConversationsService {
     }
 
     // 2. Fetch board settings_override to check full_ai flag
-    const { data: board } = await client
-      .from('board_instances')
-      .select('settings_override')
-      .eq('id', task.board_instance_id)
-      .single();
+    const [board] = await this.db
+      .select({ settings_override: boardInstances.settingsOverride })
+      .from(boardInstances)
+      .where(eq(boardInstances.id, task.board_instance_id))
+      .limit(1);
 
-    const fullAi = board?.settings_override?.full_ai === true;
+    const fullAi =
+      (board?.settings_override as Record<string, any>)?.full_ai === true;
 
     if (!fullAi) {
-      await client
-        .from('tasks')
-        .update({ status: 'In Review' })
-        .eq('id', taskId)
-        .eq('account_id', accountId);
+      await this.db
+        .update(tasks)
+        .set({ status: 'In Review' })
+        .where(and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)));
       this.logger.log(`${logPrefix} Task moved to "In Review" (Full AI off)`);
       return;
     }
 
     // 3. Pipeline depth guard
     if (pipelineDepth >= 10) {
-      await client
-        .from('tasks')
-        .update({ status: 'In Review' })
-        .eq('id', taskId)
-        .eq('account_id', accountId);
+      await this.db
+        .update(tasks)
+        .set({ status: 'In Review' })
+        .where(and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)));
       this.logger.warn(
         `${logPrefix} Pipeline depth limit reached (${pipelineDepth}). Task moved to "In Review".`,
       );
@@ -1099,20 +1193,24 @@ export class ConversationsService {
     }
 
     // 4. Fetch current step routing config
-    const { data: currentStep } = await client
-      .from('board_steps')
-      .select(
-        'id, step_key, name, on_success_step_id, position, board_instance_id',
-      )
-      .eq('id', task.current_step_id)
-      .single();
+    const [currentStep] = await this.db
+      .select({
+        id: boardSteps.id,
+        step_key: boardSteps.stepKey,
+        name: boardSteps.name,
+        on_success_step_id: boardSteps.onSuccessStepId,
+        position: boardSteps.position,
+        board_instance_id: boardSteps.boardInstanceId,
+      })
+      .from(boardSteps)
+      .where(eq(boardSteps.id, task.current_step_id))
+      .limit(1);
 
     if (!currentStep) {
-      await client
-        .from('tasks')
-        .update({ status: 'In Review' })
-        .eq('id', taskId)
-        .eq('account_id', accountId);
+      await this.db
+        .update(tasks)
+        .set({ status: 'In Review' })
+        .where(and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)));
       return;
     }
 
@@ -1120,46 +1218,61 @@ export class ConversationsService {
     let nextStep: any = null;
 
     if (currentStep.on_success_step_id) {
-      const { data } = await client
-        .from('board_steps')
-        .select(
-          'id, step_key, name, step_type, trigger_type, ai_first, linked_category_id, position',
-        )
-        .eq('id', currentStep.on_success_step_id)
-        .single();
-      nextStep = data;
+      const [data] = await this.db
+        .select({
+          id: boardSteps.id,
+          step_key: boardSteps.stepKey,
+          name: boardSteps.name,
+          step_type: boardSteps.stepType,
+          trigger_type: boardSteps.triggerType,
+          ai_first: boardSteps.aiFirst,
+          linked_category_id: boardSteps.linkedCategoryId,
+          position: boardSteps.position,
+        })
+        .from(boardSteps)
+        .where(eq(boardSteps.id, currentStep.on_success_step_id))
+        .limit(1);
+      nextStep = data ?? null;
     } else {
       // Fallback: next step by position
-      const { data } = await client
-        .from('board_steps')
-        .select(
-          'id, step_key, name, step_type, trigger_type, ai_first, linked_category_id, position',
+      const [data] = await this.db
+        .select({
+          id: boardSteps.id,
+          step_key: boardSteps.stepKey,
+          name: boardSteps.name,
+          step_type: boardSteps.stepType,
+          trigger_type: boardSteps.triggerType,
+          ai_first: boardSteps.aiFirst,
+          linked_category_id: boardSteps.linkedCategoryId,
+          position: boardSteps.position,
+        })
+        .from(boardSteps)
+        .where(
+          and(
+            eq(boardSteps.boardInstanceId, task.board_instance_id),
+            gt(boardSteps.position, currentStep.position),
+          ),
         )
-        .eq('board_instance_id', task.board_instance_id)
-        .gt('position', currentStep.position)
-        .order('position', { ascending: true })
-        .limit(1)
-        .single();
-      nextStep = data;
+        .orderBy(asc(boardSteps.position))
+        .limit(1);
+      nextStep = data ?? null;
     }
 
     if (!nextStep) {
       // No next step — mark task complete
-      await client
-        .from('tasks')
-        .update({ status: 'Done', completed: true })
-        .eq('id', taskId)
-        .eq('account_id', accountId);
+      await this.db
+        .update(tasks)
+        .set({ status: 'Done', completed: true })
+        .where(and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)));
       this.logger.log(`${logPrefix} Full AI: no next step — task marked Done`);
       return;
     }
 
     // 6. Move task to next step
-    await client
-      .from('tasks')
-      .update({ current_step_id: nextStep.id, status: nextStep.name })
-      .eq('id', taskId)
-      .eq('account_id', accountId);
+    await this.db
+      .update(tasks)
+      .set({ currentStepId: nextStep.id, status: nextStep.name })
+      .where(and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)));
 
     this.logger.log(
       `${logPrefix} Full AI: moved task to step "${nextStep.name}"`,
@@ -1198,24 +1311,26 @@ export class ConversationsService {
     pipelineDepth: number,
   ): Promise<void> {
     try {
-      const client = this.supabaseAdmin.getClient();
-
       // Fetch task title
-      const { data: task } = await client
-        .from('tasks')
-        .select('title, notes')
-        .eq('id', taskId)
-        .single();
+      const [task] = await this.db
+        .select({ title: tasks.title, notes: tasks.notes })
+        .from(tasks)
+        .where(eq(tasks.id, taskId))
+        .limit(1);
 
       if (!task) return;
 
       // Get existing conversation for this task
-      const { data: existingConvs } = await client
-        .from('conversations')
-        .select('id')
-        .eq('task_id', taskId)
-        .eq('account_id', accountId)
-        .order('created_at', { ascending: false })
+      const existingConvs = await this.db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.taskId, taskId),
+            eq(conversations.accountId, accountId),
+          ),
+        )
+        .orderBy(desc(conversations.createdAt))
         .limit(1);
 
       let conversationId: string;
@@ -1223,20 +1338,28 @@ export class ConversationsService {
       if (existingConvs?.length) {
         conversationId = existingConvs[0].id;
       } else {
-        const { data: newConv, error } = await client
-          .from('conversations')
-          .insert({
-            user_id: userId,
-            account_id: accountId,
-            task_id: taskId,
-            title: task.title,
-          })
-          .select()
-          .single();
-
-        if (error || !newConv) {
+        let newConv: typeof conversations.$inferSelect | undefined;
+        try {
+          const rows = await this.db
+            .insert(conversations)
+            .values({
+              userId,
+              accountId,
+              taskId,
+              title: task.title,
+            })
+            .returning();
+          newConv = rows[0];
+        } catch (error: any) {
           this.logger.error(
             `${logPrefix} Failed to create conversation for auto-trigger: ${error?.message}`,
+          );
+          return;
+        }
+
+        if (!newConv) {
+          this.logger.error(
+            `${logPrefix} Failed to create conversation for auto-trigger: unknown error`,
           );
           return;
         }
@@ -1270,49 +1393,54 @@ export class ConversationsService {
    * Otherwise, revert to previous status.
    */
   private async handlePostAiError(
-    client: any,
     taskId: string,
     accountId: string,
     previousStatus: string,
     logPrefix: string,
   ): Promise<void> {
     // Fetch task to check if it's a board task with Full AI
-    const { data: task } = await client
-      .from('tasks')
-      .select('id, current_step_id, board_instance_id')
-      .eq('id', taskId)
-      .single();
+    const [task] = await this.db
+      .select({
+        id: tasks.id,
+        current_step_id: tasks.currentStepId,
+        board_instance_id: tasks.boardInstanceId,
+      })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1);
 
     if (task?.board_instance_id && task?.current_step_id) {
-      const { data: board } = await client
-        .from('board_instances')
-        .select('settings_override')
-        .eq('id', task.board_instance_id)
-        .single();
+      const [board] = await this.db
+        .select({ settings_override: boardInstances.settingsOverride })
+        .from(boardInstances)
+        .where(eq(boardInstances.id, task.board_instance_id))
+        .limit(1);
 
-      const fullAi = board?.settings_override?.full_ai === true;
+      const fullAi =
+        (board?.settings_override as Record<string, any>)?.full_ai === true;
 
       if (fullAi) {
         // Check for error routing
-        const { data: currentStep } = await client
-          .from('board_steps')
-          .select('on_error_step_id')
-          .eq('id', task.current_step_id)
-          .single();
+        const [currentStep] = await this.db
+          .select({ on_error_step_id: boardSteps.onErrorStepId })
+          .from(boardSteps)
+          .where(eq(boardSteps.id, task.current_step_id))
+          .limit(1);
 
         if (currentStep?.on_error_step_id) {
-          const { data: errorStep } = await client
-            .from('board_steps')
-            .select('id, name')
-            .eq('id', currentStep.on_error_step_id)
-            .single();
+          const [errorStep] = await this.db
+            .select({ id: boardSteps.id, name: boardSteps.name })
+            .from(boardSteps)
+            .where(eq(boardSteps.id, currentStep.on_error_step_id))
+            .limit(1);
 
           if (errorStep) {
-            await client
-              .from('tasks')
-              .update({ current_step_id: errorStep.id, status: errorStep.name })
-              .eq('id', taskId)
-              .eq('account_id', accountId);
+            await this.db
+              .update(tasks)
+              .set({ currentStepId: errorStep.id, status: errorStep.name })
+              .where(
+                and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)),
+              );
             this.logger.log(
               `${logPrefix} Full AI error routing: task moved to "${errorStep.name}"`,
             );
@@ -1323,19 +1451,17 @@ export class ConversationsService {
     }
 
     // Default: revert to previous status
-    const { error: revertError } = await client
-      .from('tasks')
-      .update({ status: previousStatus })
-      .eq('id', taskId)
-      .eq('account_id', accountId);
-
-    if (revertError) {
-      this.logger.error(
-        `${logPrefix} Failed to revert task status: ${revertError.message}`,
-      );
-    } else {
+    try {
+      await this.db
+        .update(tasks)
+        .set({ status: previousStatus })
+        .where(and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)));
       this.logger.log(
         `${logPrefix} Task status reverted to "${previousStatus}"`,
+      );
+    } catch (revertError: any) {
+      this.logger.error(
+        `${logPrefix} Failed to revert task status: ${revertError.message}`,
       );
     }
   }
@@ -1345,7 +1471,6 @@ export class ConversationsService {
    * Looks for ```output_json blocks, parses them, and saves to card_data[step_key].
    */
   private async extractAndSaveOutput(
-    client: any,
     taskId: string,
     accountId: string,
     aiResponse: string,
@@ -1353,22 +1478,31 @@ export class ConversationsService {
   ): Promise<void> {
     try {
       // Fetch task to get current step
-      const { data: task } = await client
-        .from('tasks')
-        .select('id, current_step_id, board_instance_id, card_data')
-        .eq('id', taskId)
-        .single();
+      const [task] = await this.db
+        .select({
+          id: tasks.id,
+          current_step_id: tasks.currentStepId,
+          board_instance_id: tasks.boardInstanceId,
+          card_data: tasks.cardData,
+        })
+        .from(tasks)
+        .where(eq(tasks.id, taskId))
+        .limit(1);
 
       if (!task?.current_step_id) return;
 
       // Fetch step's output schema
-      const { data: step } = await client
-        .from('board_steps')
-        .select('step_key, output_schema')
-        .eq('id', task.current_step_id)
-        .single();
+      const [step] = await this.db
+        .select({
+          step_key: boardSteps.stepKey,
+          output_schema: boardSteps.outputSchema,
+        })
+        .from(boardSteps)
+        .where(eq(boardSteps.id, task.current_step_id))
+        .limit(1);
 
-      if (!step?.output_schema?.length) return;
+      const outputSchema = step?.output_schema as any[] | undefined;
+      if (!outputSchema?.length) return;
 
       // Try to extract ```output_json block from AI response
       const jsonMatch = aiResponse.match(/```output_json\s*\n([\s\S]*?)```/);
@@ -1388,7 +1522,7 @@ export class ConversationsService {
       }
 
       // Validate against output_schema — only keep declared keys
-      const validKeys = new Set(step.output_schema.map((f: any) => f.key));
+      const validKeys = new Set(outputSchema.map((f: any) => f.key));
       const validated: Record<string, any> = {};
       for (const [key, value] of Object.entries(extracted)) {
         if (
@@ -1397,7 +1531,7 @@ export class ConversationsService {
           value !== undefined &&
           value !== ''
         ) {
-          const fieldDef = step.output_schema.find((f: any) => f.key === key);
+          const fieldDef = outputSchema.find((f: any) => f.key === key);
           // Coerce types
           if (fieldDef?.type === 'boolean') {
             validated[key] = value === true || value === 'true';
@@ -1415,21 +1549,21 @@ export class ConversationsService {
       }
 
       // Merge into card_data[step_key]
-      const existingCardData = task.card_data || {};
-      const existingStepData = existingCardData[step.step_key] || {};
+      const existingCardData =
+        (task.card_data as Record<string, any>) || {};
+      const existingStepData = existingCardData[step!.step_key] || {};
       const updatedCardData = {
         ...existingCardData,
-        [step.step_key]: { ...existingStepData, ...validated },
+        [step!.step_key]: { ...existingStepData, ...validated },
       };
 
-      await client
-        .from('tasks')
-        .update({ card_data: updatedCardData })
-        .eq('id', taskId)
-        .eq('account_id', accountId);
+      await this.db
+        .update(tasks)
+        .set({ cardData: updatedCardData })
+        .where(and(eq(tasks.id, taskId), eq(tasks.accountId, accountId)));
 
       this.logger.log(
-        `${logPrefix} Extracted ${Object.keys(validated).length} output fields for step "${step.step_key}": ${JSON.stringify(validated)}`,
+        `${logPrefix} Extracted ${Object.keys(validated).length} output fields for step "${step!.step_key}": ${JSON.stringify(validated)}`,
       );
     } catch (err) {
       this.logger.warn(
@@ -1449,24 +1583,33 @@ export class ConversationsService {
     dto: UpdateConversationDto,
     accessToken: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify conversation exists and user owns it
     await this.findOne(userId, accountId, conversationId, accessToken);
 
-    const { data, error } = await client
-      .from('conversations')
-      .update(dto)
-      .eq('id', conversationId)
-      .eq('user_id', userId)
-      .select()
-      .single();
+    // Map the DTO field-by-field to camelCase columns (only defined fields).
+    const patch: Partial<typeof conversations.$inferInsert> = {};
+    if ((dto as any).title !== undefined) patch.title = (dto as any).title;
+    if ((dto as any).metadata !== undefined)
+      patch.metadata = (dto as any).metadata;
 
-    if (error) {
+    let data: typeof conversations.$inferSelect;
+    try {
+      const rows = await this.db
+        .update(conversations)
+        .set(patch)
+        .where(
+          and(
+            eq(conversations.id, conversationId),
+            eq(conversations.userId, userId),
+          ),
+        )
+        .returning();
+      data = rows[0];
+    } catch (error: any) {
       throw new Error(`Failed to update conversation: ${error.message}`);
     }
 
-    return data;
+    return snakeKeys(data);
   }
 
   /**
@@ -1478,18 +1621,19 @@ export class ConversationsService {
     conversationId: string,
     accessToken: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
     // Verify conversation exists and user owns it
     await this.findOne(userId, accountId, conversationId, accessToken);
 
-    const { error } = await client
-      .from('conversations')
-      .delete()
-      .eq('id', conversationId)
-      .eq('user_id', userId);
-
-    if (error) {
+    try {
+      await this.db
+        .delete(conversations)
+        .where(
+          and(
+            eq(conversations.id, conversationId),
+            eq(conversations.userId, userId),
+          ),
+        );
+    } catch (error: any) {
       throw new Error(`Failed to delete conversation: ${error.message}`);
     }
 
@@ -1506,23 +1650,21 @@ export class ConversationsService {
     accessToken: string,
     limit: number = 20,
   ): Promise<Array<{ role: string; content: string }>> {
-    const client = this.supabaseAdmin.getClient();
+    try {
+      const data = await this.db
+        .select({ role: messages.role, content: messages.content })
+        .from(messages)
+        .where(eq(messages.conversationId, conversationId))
+        .orderBy(asc(messages.createdAt))
+        .limit(limit);
 
-    const { data, error } = await client
-      .from('messages')
-      .select('role, content')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true })
-      .limit(limit);
-
-    if (error) {
+      return data || [];
+    } catch (error: any) {
       this.logger.warn(
         `Failed to fetch conversation history: ${error.message}`,
       );
       return [];
     }
-
-    return data || [];
   }
 
   /**
@@ -1546,12 +1688,11 @@ export class ConversationsService {
     // Tier 2: Column-level (step's linked category)
     if (task.current_step_id) {
       try {
-        const client = this.supabaseAdmin.getClient();
-        const { data: step } = await client
-          .from('board_steps')
-          .select('linked_category_id')
-          .eq('id', task.current_step_id)
-          .single();
+        const [step] = await this.db
+          .select({ linked_category_id: boardSteps.linkedCategoryId })
+          .from(boardSteps)
+          .where(eq(boardSteps.id, task.current_step_id))
+          .limit(1);
 
         if (step?.linked_category_id) {
           this.logger.debug(
@@ -1567,12 +1708,11 @@ export class ConversationsService {
     // Tier 3: Board-level default
     if (task.board_instance_id) {
       try {
-        const client = this.supabaseAdmin.getClient();
-        const { data: board } = await client
-          .from('board_instances')
-          .select('default_category_id')
-          .eq('id', task.board_instance_id)
-          .single();
+        const [board] = await this.db
+          .select({ default_category_id: boardInstances.defaultCategoryId })
+          .from(boardInstances)
+          .where(eq(boardInstances.id, task.board_instance_id))
+          .limit(1);
 
         if (board?.default_category_id) {
           this.logger.debug(
@@ -1879,7 +2019,7 @@ Current Context:
           if (masterDoc) {
             prompt += `\n\n=== KNOWLEDGE BASE ===\n`;
             prompt += `Master Document: "${masterDoc.title}"\n`;
-            prompt += `Category: ${conversation.task.category?.name || 'Unknown'}\n\n`;
+            prompt += `Category: ${conversation.task.categories?.name || 'Unknown'}\n\n`;
             prompt += `${masterDoc.content}\n\n`;
             prompt += `Use this knowledge to provide contextually relevant responses.\n`;
           }
@@ -1953,36 +2093,41 @@ Current Context:
       // Current step schema (if board task)
       if (conversation.task.current_step_id) {
         try {
-          const client = this.supabaseAdmin.getClient();
-          const { data: currentStep } = await client
-            .from('board_steps')
-            .select(
-              'step_key, name, input_schema, output_schema, system_prompt',
-            )
-            .eq('id', conversation.task.current_step_id)
-            .single();
+          const [currentStep] = await this.db
+            .select({
+              step_key: boardSteps.stepKey,
+              name: boardSteps.name,
+              input_schema: boardSteps.inputSchema,
+              output_schema: boardSteps.outputSchema,
+              system_prompt: boardSteps.systemPrompt,
+            })
+            .from(boardSteps)
+            .where(eq(boardSteps.id, conversation.task.current_step_id))
+            .limit(1);
 
           if (currentStep) {
             if (currentStep.system_prompt) {
               prompt += `\n=== STEP-LEVEL INSTRUCTIONS ===\n`;
               prompt += currentStep.system_prompt + `\n`;
             }
-            if (currentStep.input_schema?.length > 0) {
+            const inputSchema = (currentStep.input_schema as any[]) ?? [];
+            const outputSchema = (currentStep.output_schema as any[]) ?? [];
+            if (inputSchema.length > 0) {
               prompt += `\nCurrent step "${currentStep.name}" expects these input fields:\n`;
-              for (const f of currentStep.input_schema) {
+              for (const f of inputSchema) {
                 prompt += `  - ${f.key} (${f.type}${f.required ? ', required' : ''}): ${f.label}\n`;
               }
             }
-            if (currentStep.output_schema?.length > 0) {
+            if (outputSchema.length > 0) {
               prompt += `\nExpected output fields for step "${currentStep.name}":\n`;
-              for (const f of currentStep.output_schema) {
+              for (const f of outputSchema) {
                 prompt += `  - ${f.key} (${f.type}): ${f.label}\n`;
               }
               prompt += `\nIMPORTANT: At the end of your response, you MUST include a structured output block with the values for the expected output fields above. Use this exact format:\n`;
               prompt += '```output_json\n';
               prompt += JSON.stringify(
                 Object.fromEntries(
-                  currentStep.output_schema.map((f: any) => [
+                  outputSchema.map((f: any) => [
                     f.key,
                     f.type === 'boolean' ? false : f.type === 'number' ? 0 : '',
                   ]),
@@ -2051,16 +2196,19 @@ Current Context:
     accessToken: string,
     options?: { skipSkillInjection?: boolean },
   ): Promise<string> {
-    const client = this.supabaseAdmin.getClient();
-
     // Fetch board with full details
-    const { data: board } = await client
-      .from('board_instances')
-      .select(
-        'id, name, description, default_category_id, orchestrator_category_id, settings_override',
-      )
-      .eq('id', conversation.board_id)
-      .single();
+    const [board] = await this.db
+      .select({
+        id: boardInstances.id,
+        name: boardInstances.name,
+        description: boardInstances.description,
+        default_category_id: boardInstances.defaultCategoryId,
+        orchestrator_category_id: boardInstances.orchestratorCategoryId,
+        settings_override: boardInstances.settingsOverride,
+      })
+      .from(boardInstances)
+      .where(eq(boardInstances.id, conversation.board_id))
+      .limit(1);
 
     if (!board) {
       this.logger.warn(
@@ -2069,14 +2217,29 @@ Current Context:
       return this.buildSystemPrompt(conversation, accessToken);
     }
 
-    // Fetch steps with linked agent names
-    const { data: steps } = await client
-      .from('board_steps')
-      .select(
-        'step_key, name, step_type, position, input_schema, output_schema, linked_category:categories!linked_category_id(id, name)',
-      )
-      .eq('board_instance_id', board.id)
-      .order('position', { ascending: true });
+    // Fetch steps with linked agent names.
+    // Drizzle returns the linked category under the relation name `category`;
+    // PostgREST returned it under the alias `linked_category` — re-key to match.
+    const stepRows = await this.db.query.boardSteps.findMany({
+      where: eq(boardSteps.boardInstanceId, board.id),
+      orderBy: asc(boardSteps.position),
+      columns: {
+        stepKey: true,
+        name: true,
+        stepType: true,
+        position: true,
+        inputSchema: true,
+        outputSchema: true,
+      },
+      with: {
+        category: { columns: { id: true, name: true } },
+      },
+    });
+
+    const steps = stepRows.map((s: any) => {
+      const { category, ...rest } = s;
+      return { ...rest, linked_category: category ?? null };
+    });
 
     const firstStep = steps?.[0];
 
@@ -2094,16 +2257,16 @@ You help users create and manage tasks on this board through conversation.
 This board has the following steps (columns):
 ${(steps || [])
   .map((s, i) => {
-    let desc = `${i + 1}. "${s.name}" (${s.step_type})`;
+    let desc = `${i + 1}. "${s.name}" (${s.stepType})`;
     if ((s as any).linked_category?.name) {
       desc += ` — Agent: ${(s as any).linked_category.name}`;
     }
     if (
-      s.input_schema &&
-      Array.isArray(s.input_schema) &&
-      s.input_schema.length > 0
+      s.inputSchema &&
+      Array.isArray(s.inputSchema) &&
+      s.inputSchema.length > 0
     ) {
-      desc += `\n   Input fields: ${s.input_schema.map((f: any) => `${f.key} (${f.type}${f.required ? ', required' : ''}): ${f.label}`).join(', ')}`;
+      desc += `\n   Input fields: ${s.inputSchema.map((f: any) => `${f.key} (${f.type}${f.required ? ', required' : ''}): ${f.label}`).join(', ')}`;
     }
     return desc;
   })
@@ -2257,18 +2420,16 @@ Rules:
     firstMessage: string,
     accessToken: string,
   ): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
     // Generate simple title from first 60 characters
     let title = firstMessage.slice(0, 60);
     if (firstMessage.length > 60) {
       title += '...';
     }
 
-    await client
-      .from('conversations')
-      .update({ title })
-      .eq('id', conversationId);
+    await this.db
+      .update(conversations)
+      .set({ title })
+      .where(eq(conversations.id, conversationId));
 
     this.logger.log(`Auto-generated title for conversation ${conversationId}`);
   }
@@ -2302,16 +2463,15 @@ Rules:
     // Fetch source config (contains Notion API key) and post comments
     (async () => {
       try {
-        const client = this.supabaseAdmin.getClient();
-        const { data: source, error } = await client
-          .from('sources')
-          .select('config')
-          .eq('id', conversation.task.source_id)
-          .single();
+        const [source] = await this.db
+          .select({ config: sources.config })
+          .from(sources)
+          .where(eq(sources.id, conversation.task.source_id))
+          .limit(1);
 
-        if (error || !source?.config) {
+        if (!source?.config) {
           this.logger.warn(
-            `Failed to get source config for comment mirroring: ${error?.message}`,
+            `Failed to get source config for comment mirroring: not found`,
           );
           return;
         }
@@ -2720,14 +2880,17 @@ ${JSON.stringify(tools, null, 2)}
     let resolvedPodId: string = params.pod_id;
     let resolvedPodName: string | undefined;
     let resolvedPodSlug: string | undefined;
-    const client = this.supabaseAdmin.getClient();
     if (!uuidPattern.test(resolvedPodId)) {
-      const { data: podRow } = await client
-        .from('pods')
-        .select('id, name, slug')
-        .eq('account_id', accountId)
-        .eq('slug', resolvedPodId)
-        .single();
+      const [podRow] = await this.db
+        .select({ id: pods.id, name: pods.name, slug: pods.slug })
+        .from(pods)
+        .where(
+          and(
+            eq(pods.accountId, accountId),
+            eq(pods.slug, resolvedPodId),
+          ),
+        )
+        .limit(1);
       if (!podRow) {
         return { toolResult: JSON.stringify({ error: `Pod not found: ${resolvedPodId}` }) };
       }
@@ -2736,11 +2899,11 @@ ${JSON.stringify(tools, null, 2)}
       resolvedPodSlug = podRow.slug;
     } else {
       // UUID provided — fetch name and slug
-      const { data: podRow } = await client
-        .from('pods')
-        .select('name, slug')
-        .eq('id', resolvedPodId)
-        .single();
+      const [podRow] = await this.db
+        .select({ name: pods.name, slug: pods.slug })
+        .from(pods)
+        .where(eq(pods.id, resolvedPodId))
+        .limit(1);
       resolvedPodName = podRow?.name;
       resolvedPodSlug = podRow?.slug;
     }
@@ -2859,8 +3022,6 @@ ${JSON.stringify(tools, null, 2)}
     userId: string,
     orchestratedTaskId?: string,
   ): Promise<string> {
-    const client = this.supabaseAdmin.getClient();
-
     if (!params.board_id) {
       throw new Error('create_task: board_id is required');
     }
@@ -2874,12 +3035,20 @@ ${JSON.stringify(tools, null, 2)}
     let defaultAgentId: string | null = params.agent_id || null;
 
     if (stepId) {
-      const { data: step } = await client
-        .from('board_steps')
-        .select('id, name, default_agent_id')
-        .eq('id', stepId)
-        .eq('board_instance_id', params.board_id)
-        .single();
+      const [step] = await this.db
+        .select({
+          id: boardSteps.id,
+          name: boardSteps.name,
+          default_agent_id: boardSteps.defaultAgentId,
+        })
+        .from(boardSteps)
+        .where(
+          and(
+            eq(boardSteps.id, stepId),
+            eq(boardSteps.boardInstanceId, params.board_id),
+          ),
+        )
+        .limit(1);
 
       if (step) {
         status = step.name;
@@ -2889,13 +3058,16 @@ ${JSON.stringify(tools, null, 2)}
       }
     } else {
       // Use first step
-      const { data: firstStep } = await client
-        .from('board_steps')
-        .select('id, name, default_agent_id')
-        .eq('board_instance_id', params.board_id)
-        .order('position', { ascending: true })
-        .limit(1)
-        .single();
+      const [firstStep] = await this.db
+        .select({
+          id: boardSteps.id,
+          name: boardSteps.name,
+          default_agent_id: boardSteps.defaultAgentId,
+        })
+        .from(boardSteps)
+        .where(eq(boardSteps.boardInstanceId, params.board_id))
+        .orderBy(asc(boardSteps.position))
+        .limit(1);
 
       if (firstStep) {
         stepId = firstStep.id;
@@ -2906,27 +3078,32 @@ ${JSON.stringify(tools, null, 2)}
       }
     }
 
-    const { data: task, error } = await client
-      .from('tasks')
-      .insert({
-        account_id: accountId,
-        title: params.title,
-        notes: params.description || '',
-        priority: params.priority || 'Medium',
-        status,
-        board_instance_id: params.board_id,
-        current_step_id: stepId,
-        assignee_type: defaultAgentId ? 'agent' : 'none',
-        assignee_id: defaultAgentId,
-        completed: false,
-        card_data: {},
-        ...(orchestratedTaskId ? { metadata: { orchestration_id: orchestratedTaskId } } : {}),
-      })
-      .select('id')
-      .single();
-
-    if (error || !task) {
+    let task: { id: string } | undefined;
+    try {
+      const rows = await this.db
+        .insert(tasks)
+        .values({
+          accountId,
+          title: params.title,
+          notes: params.description || '',
+          priority: params.priority || 'Medium',
+          status,
+          boardInstanceId: params.board_id,
+          currentStepId: stepId,
+          assigneeType: defaultAgentId ? 'agent' : 'none',
+          assigneeId: defaultAgentId,
+          completed: false,
+          cardData: {},
+          ...(orchestratedTaskId ? { metadata: { orchestration_id: orchestratedTaskId } } : {}),
+        })
+        .returning({ id: tasks.id });
+      task = rows[0];
+    } catch (error: any) {
       throw new Error(`Failed to create task: ${error?.message || 'unknown error'}`);
+    }
+
+    if (!task) {
+      throw new Error(`Failed to create task: unknown error`);
     }
 
     this.webhookEmitter.emit(accountId, 'task.created', { task });
@@ -2943,8 +3120,6 @@ ${JSON.stringify(tools, null, 2)}
     conversation: any,
     accountId: string,
   ): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
     if (!params.reason) {
       throw new Error('request_human_approval: reason is required');
     }
@@ -2952,11 +3127,11 @@ ${JSON.stringify(tools, null, 2)}
     // Fetch pod name for the event payload
     let podName = conversation.pod_id || 'Unknown Pod';
     try {
-      const { data: pod } = await client
-        .from('pods')
-        .select('name')
-        .eq('id', conversation.pod_id)
-        .single();
+      const [pod] = await this.db
+        .select({ name: pods.name })
+        .from(pods)
+        .where(eq(pods.id, conversation.pod_id))
+        .limit(1);
       if (pod?.name) podName = pod.name;
     } catch {
       // Non-fatal
@@ -2972,24 +3147,16 @@ ${JSON.stringify(tools, null, 2)}
     // back gracefully if the schema doesn't support it yet.
     let approvalRequestId: string | null = null;
     try {
-      const { data: approvalRequest, error } = await client
-        .from('agent_approval_requests')
-        .insert({
+      const rows = await this.db
+        .insert(agentApprovalRequests)
+        .values({
           reason: params.reason,
           status: 'pending',
           // orchestrated_task_id is required by the current schema — this will
           // fail gracefully if not available, and we still emit the webhook event.
-        })
-        .select('id')
-        .single();
-
-      if (error) {
-        this.logger.debug(
-          `[PodTools] agent_approval_requests insert skipped (schema mismatch): ${error.message}`,
-        );
-      } else {
-        approvalRequestId = approvalRequest?.id ?? null;
-      }
+        } as typeof agentApprovalRequests.$inferInsert)
+        .returning({ id: agentApprovalRequests.id });
+      approvalRequestId = rows[0]?.id ?? null;
     } catch (insertErr: any) {
       this.logger.debug(
         `[PodTools] agent_approval_requests insert failed (non-fatal): ${insertErr.message}`,

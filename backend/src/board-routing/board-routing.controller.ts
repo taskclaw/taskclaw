@@ -10,6 +10,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Inject,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { AuthGuard } from '../common/guards/auth.guard';
@@ -17,7 +18,9 @@ import { BoardRoutingService } from './board-routing.service';
 import { CoordinatorService } from './coordinator.service';
 import { CreateBoardRouteDto } from './dto/create-board-route.dto';
 import { UpdateBoardRouteDto } from './dto/update-board-route.dto';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { taskDags, tasks, taskDependencies } from '../db/schema';
 
 @ApiTags('Board Routing')
 @Controller('accounts/:accountId/board-routing')
@@ -26,7 +29,7 @@ export class BoardRoutingController {
   constructor(
     private readonly routingService: BoardRoutingService,
     private readonly coordinatorService: CoordinatorService,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
   ) {}
 
   @Get('routes')
@@ -94,23 +97,19 @@ export class BoardRoutingController {
     @Param('accountId') accountId: string,
     @Query('status') status?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    let query = client
-      .from('task_dags')
-      .select('*, tasks(id, title, status, completed)')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
+    const where = status
+      ? and(eq(taskDags.accountId, accountId), eq(taskDags.status, status))
+      : eq(taskDags.accountId, accountId);
 
-    if (status) {
-      query = query.eq('status', status);
-    }
-
-    const { data, error } = await query;
-    if (error) {
-      throw new Error(`Failed to fetch DAGs: ${error.message}`);
-    }
-
-    return data;
+    return this.db.query.taskDags.findMany({
+      where,
+      orderBy: desc(taskDags.createdAt),
+      with: {
+        tasks: {
+          columns: { id: true, title: true, status: true, completed: true },
+        },
+      },
+    });
   }
 
   @Get('dags/:dagId')
@@ -119,29 +118,26 @@ export class BoardRoutingController {
     @Param('accountId') accountId: string,
     @Param('dagId') dagId: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
+    const [dag] = await this.db
+      .select()
+      .from(taskDags)
+      .where(and(eq(taskDags.id, dagId), eq(taskDags.accountId, accountId)))
+      .limit(1);
 
-    const { data: dag, error: dagError } = await client
-      .from('task_dags')
-      .select('*')
-      .eq('id', dagId)
-      .eq('account_id', accountId)
-      .single();
-
-    if (dagError || !dag) {
+    if (!dag) {
       throw new Error(`DAG ${dagId} not found`);
     }
 
-    const { data: tasks } = await client
-      .from('tasks')
-      .select('*')
-      .eq('dag_id', dagId);
+    const dagTasks = await this.db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.dagId, dagId));
 
-    const { data: deps } = await client
-      .from('task_dependencies')
-      .select('*')
-      .eq('dag_id', dagId);
+    const deps = await this.db
+      .select()
+      .from(taskDependencies)
+      .where(eq(taskDependencies.dagId, dagId));
 
-    return { ...dag, tasks: tasks ?? [], dependencies: deps ?? [] };
+    return { ...dag, tasks: dagTasks, dependencies: deps };
   }
 }

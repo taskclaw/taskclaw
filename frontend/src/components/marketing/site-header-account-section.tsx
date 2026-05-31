@@ -3,7 +3,8 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 
-import type { User } from '@supabase/supabase-js';
+// Local minimal user shape (was the GoTrue User type).
+type User = { id?: string; email?: string; user_metadata?: Record<string, unknown>; [k: string]: unknown };
 
 import { Button } from '@kit/ui/button';
 import { If } from '@kit/ui/if';

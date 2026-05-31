@@ -1,5 +1,15 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, desc, eq, inArray, isNull, sql, count } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  pilotConfigs,
+  boardInstances,
+  tasks,
+  pods,
+  conversations,
+  aiMessages,
+  accountUsers,
+} from '../db/schema';
 import { BackboneRouterService } from '../backbone/backbone-router.service';
 import { TasksService } from '../tasks/tasks.service';
 import { CoordinatorService } from '../board-routing/coordinator.service';
@@ -21,7 +31,7 @@ export class PilotService {
   private readonly logger = new Logger(PilotService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly backboneRouter: BackboneRouterService,
     @Inject(forwardRef(() => TasksService))
     private readonly tasksService: TasksService,
@@ -39,16 +49,14 @@ export class PilotService {
     accountId: string,
     podId: string,
   ): Promise<PilotRunResult | null> {
-    const client = this.supabaseAdmin.getClient();
-
     // Fetch active pilot config for this pod
-    const { data: config } = await client
-      .from('pilot_configs')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('pod_id', podId)
-      .eq('is_active', true)
-      .maybeSingle();
+    const config = await this.db.query.pilotConfigs.findFirst({
+      where: and(
+        eq(pilotConfigs.accountId, accountId),
+        eq(pilotConfigs.podId, podId),
+        eq(pilotConfigs.isActive, true),
+      ),
+    });
 
     if (!config) {
       this.logger.debug(`No active pilot config for pod ${podId} — skipping`);
@@ -65,33 +73,62 @@ export class PilotService {
     });
 
     try {
-      // Fetch all boards in pod with steps + pending tasks (limit 20)
-      const { data: boards } = await client
-        .from('board_instances')
-        .select('id, name, board_steps(id, name, step_type, position)')
-        .eq('account_id', accountId)
-        .eq('pod_id', podId);
+      // Fetch all boards in pod with steps + pending tasks (limit 20).
+      // Drizzle's relational query returns the joined rows under the relation
+      // name (`boardSteps`); PostgREST returned them under the table name
+      // (`board_steps`). Re-key to `board_steps` to preserve response shape.
+      const boardRows = await this.db.query.boardInstances.findMany({
+        where: and(
+          eq(boardInstances.accountId, accountId),
+          eq(boardInstances.podId, podId),
+        ),
+        columns: { id: true, name: true },
+        with: {
+          boardSteps: {
+            columns: { id: true, name: true, stepType: true, position: true },
+          },
+        },
+      });
 
-      const boardIds = (boards ?? []).map((b: any) => b.id);
+      const boards = boardRows.map((b) => ({
+        id: b.id,
+        name: b.name,
+        board_steps: b.boardSteps.map((s) => ({
+          id: s.id,
+          name: s.name,
+          step_type: s.stepType,
+          position: s.position,
+        })),
+      }));
+
+      const boardIds = boards.map((b: any) => b.id);
 
       let pendingTasks: any[] = [];
       if (boardIds.length > 0) {
-        const { data: tasks } = await client
-          .from('tasks')
-          .select(
-            'id, title, status, priority, notes, board_instance_id, current_step_id',
+        pendingTasks = await this.db
+          .select({
+            id: tasks.id,
+            title: tasks.title,
+            status: tasks.status,
+            priority: tasks.priority,
+            notes: tasks.notes,
+            board_instance_id: tasks.boardInstanceId,
+            current_step_id: tasks.currentStepId,
+          })
+          .from(tasks)
+          .where(
+            and(
+              inArray(tasks.boardInstanceId, boardIds),
+              eq(tasks.completed, false),
+            ),
           )
-          .in('board_instance_id', boardIds)
-          .eq('completed', false)
-          .order('created_at', { ascending: false })
-          .limit(config.max_tasks_per_cycle ?? 20);
-
-        pendingTasks = tasks ?? [];
+          .orderBy(desc(tasks.createdAt))
+          .limit(config.maxTasksPerCycle ?? 20);
       }
 
       // Build org context markdown
       const boardsMarkdown =
-        (boards ?? [])
+        boards
           .map((b: any) => {
             const steps = (b.board_steps ?? [])
               .sort((a: any, b: any) => a.position - b.position)
@@ -111,9 +148,9 @@ export class PilotService {
       const result = await this.backboneRouter.send({
         accountId,
         podId,
-        ...(config.backbone_connection_id ? {} : {}),
+        ...(config.backboneConnectionId ? {} : {}),
         sendOptions: {
-          systemPrompt: config.system_prompt,
+          systemPrompt: config.systemPrompt,
           message: contextBlock,
         },
       });
@@ -128,14 +165,14 @@ export class PilotService {
       );
 
       // Update config last_run
-      await client
-        .from('pilot_configs')
-        .update({
-          last_run_at: new Date().toISOString(),
-          last_run_summary: summary.slice(0, 1000),
-          updated_at: new Date().toISOString(),
+      await this.db
+        .update(pilotConfigs)
+        .set({
+          lastRunAt: new Date().toISOString(),
+          lastRunSummary: summary.slice(0, 1000),
+          updatedAt: new Date().toISOString(),
         })
-        .eq('id', config.id);
+        .where(eq(pilotConfigs.id, config.id));
 
       if (logEntry) {
         await this.executionLog.complete(logEntry.id, {
@@ -172,16 +209,14 @@ export class PilotService {
    * Run the workspace-level pilot agent (pod_id IS NULL config).
    */
   async runWorkspacePilot(accountId: string): Promise<PilotRunResult | null> {
-    const client = this.supabaseAdmin.getClient();
-
     // Fetch workspace-level config (pod_id IS NULL)
-    const { data: config } = await client
-      .from('pilot_configs')
-      .select('*')
-      .eq('account_id', accountId)
-      .is('pod_id', null)
-      .eq('is_active', true)
-      .maybeSingle();
+    const config = await this.db.query.pilotConfigs.findFirst({
+      where: and(
+        eq(pilotConfigs.accountId, accountId),
+        isNull(pilotConfigs.podId),
+        eq(pilotConfigs.isActive, true),
+      ),
+    });
 
     if (!config) {
       this.logger.debug(
@@ -200,31 +235,39 @@ export class PilotService {
 
     try {
       // Fetch all pods with their boards + task counts
-      const { data: pods } = await client
-        .from('pods')
-        .select('id, name, description')
-        .eq('account_id', accountId);
+      const podList = await this.db
+        .select({ id: pods.id, name: pods.name, description: pods.description })
+        .from(pods)
+        .where(eq(pods.accountId, accountId));
 
       const podSummaries: string[] = [];
 
-      for (const pod of pods ?? []) {
-        const { data: boards } = await client
-          .from('board_instances')
-          .select('id, name')
-          .eq('account_id', accountId)
-          .eq('pod_id', pod.id);
+      for (const pod of podList ?? []) {
+        const boards = await this.db
+          .select({ id: boardInstances.id, name: boardInstances.name })
+          .from(boardInstances)
+          .where(
+            and(
+              eq(boardInstances.accountId, accountId),
+              eq(boardInstances.podId, pod.id),
+            ),
+          );
 
         const boardIds = (boards ?? []).map((b: any) => b.id);
         let taskCount = 0;
 
         if (boardIds.length > 0) {
-          const { count } = await client
-            .from('tasks')
-            .select('id', { count: 'exact', head: true })
-            .in('board_instance_id', boardIds)
-            .eq('completed', false);
+          const [{ value }] = await this.db
+            .select({ value: count() })
+            .from(tasks)
+            .where(
+              and(
+                inArray(tasks.boardInstanceId, boardIds),
+                eq(tasks.completed, false),
+              ),
+            );
 
-          taskCount = count ?? 0;
+          taskCount = value ?? 0;
         }
 
         const boardNames = (boards ?? [])
@@ -239,7 +282,7 @@ export class PilotService {
       const contextBlock =
         `## Workspace Overview\nAccount: ${accountId}\n\n` +
         (podSummaries.join('\n\n') || 'No pods configured.') +
-        `\n\nTotal pods: ${pods?.length ?? 0}`;
+        `\n\nTotal pods: ${podList?.length ?? 0}`;
 
       // Find or create the workspace conversation so history is browsable
       const conversationId = await this.findOrCreateWorkspaceConversation(
@@ -249,8 +292,8 @@ export class PilotService {
 
       // Save user context message
       if (conversationId) {
-        await client.from('ai_messages').insert({
-          conversation_id: conversationId,
+        await this.db.insert(aiMessages).values({
+          conversationId,
           role: 'user',
           content: contextBlock,
         });
@@ -260,7 +303,7 @@ export class PilotService {
       const result = await this.backboneRouter.send({
         accountId,
         sendOptions: {
-          systemPrompt: config.system_prompt,
+          systemPrompt: config.systemPrompt,
           message: contextBlock,
         },
       });
@@ -269,19 +312,19 @@ export class PilotService {
 
       // Save AI response to conversation
       if (conversationId) {
-        await client.from('ai_messages').insert({
-          conversation_id: conversationId,
+        await this.db.insert(aiMessages).values({
+          conversationId,
           role: 'assistant',
           content: summary,
         });
         // Touch conversation updated_at
-        await client
-          .from('conversations')
-          .update({
-            updated_at: new Date().toISOString(),
+        await this.db
+          .update(conversations)
+          .set({
+            updatedAt: new Date().toISOString(),
             title: `Workspace Pilot · ${new Date().toLocaleDateString()}`,
           })
-          .eq('id', conversationId);
+          .where(eq(conversations.id, conversationId));
       }
 
       // Parse and execute actions (no specific pod — actions target any board)
@@ -292,14 +335,14 @@ export class PilotService {
       );
 
       // Update config last_run
-      await client
-        .from('pilot_configs')
-        .update({
-          last_run_at: new Date().toISOString(),
-          last_run_summary: summary.slice(0, 1000),
-          updated_at: new Date().toISOString(),
+      await this.db
+        .update(pilotConfigs)
+        .set({
+          lastRunAt: new Date().toISOString(),
+          lastRunSummary: summary.slice(0, 1000),
+          updatedAt: new Date().toISOString(),
         })
-        .eq('id', config.id);
+        .where(eq(pilotConfigs.id, config.id));
 
       if (logEntry) {
         await this.executionLog.complete(logEntry.id, {
@@ -347,8 +390,6 @@ export class PilotService {
       error?: string;
     }>;
   }> {
-    const client = this.supabaseAdmin.getClient();
-
     // Run workspace pilot first
     let workspaceResult: PilotRunResult | null = null;
     try {
@@ -360,12 +401,16 @@ export class PilotService {
     }
 
     // Find all active pod configs
-    const { data: podConfigs } = await client
-      .from('pilot_configs')
-      .select('pod_id')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .not('pod_id', 'is', null);
+    const podConfigs = await this.db
+      .select({ pod_id: pilotConfigs.podId })
+      .from(pilotConfigs)
+      .where(
+        and(
+          eq(pilotConfigs.accountId, accountId),
+          eq(pilotConfigs.isActive, true),
+          sql`${pilotConfigs.podId} is not null`,
+        ),
+      );
 
     const podResults: Array<{
       podId: string;
@@ -375,11 +420,11 @@ export class PilotService {
 
     for (const cfg of podConfigs ?? []) {
       try {
-        const result = await this.runPodPilot(accountId, cfg.pod_id);
-        podResults.push({ podId: cfg.pod_id, result });
+        const result = await this.runPodPilot(accountId, cfg.pod_id as string);
+        podResults.push({ podId: cfg.pod_id as string, result });
       } catch (err) {
         podResults.push({
-          podId: cfg.pod_id,
+          podId: cfg.pod_id as string,
           result: null,
           error: (err as Error).message,
         });
@@ -399,44 +444,43 @@ export class PilotService {
     accountId: string,
     logId?: string | null,
   ): Promise<string | null> {
-    const client = this.supabaseAdmin.getClient();
-
     try {
       // Reuse the most recently updated workspace conversation
-      const { data: existing } = await client
-        .from('conversations')
-        .select('id')
-        .eq('account_id', accountId)
-        .is('task_id', null)
-        .is('board_id', null)
-        .is('pod_id', null)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const existing = await this.db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.accountId, accountId),
+            isNull(conversations.taskId),
+            isNull(conversations.boardId),
+            isNull(conversations.podId),
+          ),
+        )
+        .orderBy(desc(conversations.updatedAt))
+        .limit(1);
 
-      if (existing?.id) return existing.id;
+      if (existing[0]?.id) return existing[0].id;
 
       // Get the account owner (first member) as user_id — required by conversations table
-      const { data: member } = await client
-        .from('account_members')
-        .select('user_id')
-        .eq('account_id', accountId)
-        .limit(1)
-        .maybeSingle();
+      const member = await this.db
+        .select({ user_id: accountUsers.userId })
+        .from(accountUsers)
+        .where(eq(accountUsers.accountId, accountId))
+        .limit(1);
 
-      if (!member?.user_id) return null;
+      if (!member[0]?.user_id) return null;
 
-      const { data: conv } = await client
-        .from('conversations')
-        .insert({
-          account_id: accountId,
-          user_id: member.user_id,
+      const conv = await this.db
+        .insert(conversations)
+        .values({
+          accountId,
+          userId: member[0].user_id,
           title: 'Workspace Pilot',
         })
-        .select('id')
-        .single();
+        .returning({ id: conversations.id });
 
-      return conv?.id ?? null;
+      return conv[0]?.id ?? null;
     } catch (err) {
       this.logger.warn(
         `findOrCreateWorkspaceConversation failed: ${(err as Error).message}`,

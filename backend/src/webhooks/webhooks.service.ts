@@ -1,43 +1,37 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { and, eq, desc } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { webhooks, webhookDeliveries } from '../db/schema';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class WebhooksService {
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
-
-  private getClient() {
-    return this.supabaseAdmin.getClient();
-  }
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   async findAll(accountId: string) {
-    const { data, error } = await this.getClient()
-      .from('webhooks')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw new Error(`Failed to list webhooks: ${error.message}`);
-    return data;
+    const rows = await this.db
+      .select()
+      .from(webhooks)
+      .where(eq(webhooks.accountId, accountId))
+      .orderBy(desc(webhooks.createdAt));
+    return rows.map(snakeKeys);
   }
 
   async create(
     accountId: string,
     body: { url: string; secret: string; events: string[]; active?: boolean },
   ) {
-    const { data, error } = await this.getClient()
-      .from('webhooks')
-      .insert({
-        account_id: accountId,
+    const [row] = await this.db
+      .insert(webhooks)
+      .values({
+        accountId,
         url: body.url,
         secret: body.secret,
         events: body.events,
         active: body.active ?? true,
       })
-      .select()
-      .single();
-
-    if (error) throw new Error(`Failed to create webhook: ${error.message}`);
-    return data;
+      .returning();
+    return snakeKeys(row);
   }
 
   async update(
@@ -50,48 +44,38 @@ export class WebhooksService {
       active?: boolean;
     },
   ) {
-    const { data, error } = await this.getClient()
-      .from('webhooks')
-      .update(body)
-      .eq('id', webhookId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) throw new NotFoundException('Webhook not found');
-    return data;
+    const [row] = await this.db
+      .update(webhooks)
+      .set(body)
+      .where(and(eq(webhooks.id, webhookId), eq(webhooks.accountId, accountId)))
+      .returning();
+    if (!row) throw new NotFoundException('Webhook not found');
+    return snakeKeys(row);
   }
 
   async remove(accountId: string, webhookId: string) {
-    const { error } = await this.getClient()
-      .from('webhooks')
-      .delete()
-      .eq('id', webhookId)
-      .eq('account_id', accountId);
-
-    if (error) throw new NotFoundException('Webhook not found');
+    await this.db
+      .delete(webhooks)
+      .where(and(eq(webhooks.id, webhookId), eq(webhooks.accountId, accountId)));
     return { success: true };
   }
 
   async getDeliveries(accountId: string, webhookId: string) {
     // Verify the webhook belongs to the account
-    const { data: webhook, error: whError } = await this.getClient()
-      .from('webhooks')
-      .select('id')
-      .eq('id', webhookId)
-      .eq('account_id', accountId)
-      .single();
+    const [webhook] = await this.db
+      .select({ id: webhooks.id })
+      .from(webhooks)
+      .where(and(eq(webhooks.id, webhookId), eq(webhooks.accountId, accountId)))
+      .limit(1);
 
-    if (whError || !webhook) throw new NotFoundException('Webhook not found');
+    if (!webhook) throw new NotFoundException('Webhook not found');
 
-    const { data, error } = await this.getClient()
-      .from('webhook_deliveries')
-      .select('*')
-      .eq('webhook_id', webhookId)
-      .order('created_at', { ascending: false })
+    const rows = await this.db
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.webhookId, webhookId))
+      .orderBy(desc(webhookDeliveries.createdAt))
       .limit(50);
-
-    if (error) throw new Error(`Failed to list deliveries: ${error.message}`);
-    return data;
+    return rows.map(snakeKeys);
   }
 }

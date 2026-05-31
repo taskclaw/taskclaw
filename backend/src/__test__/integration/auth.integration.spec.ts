@@ -1,20 +1,19 @@
 /**
  * Auth Integration Test
  *
- * Wires AuthGuard + CacheService together using real implementations.
- * Supabase's auth.getUser() and admin DB calls are mocked.
- *
- * Tests the full auth path including real cache TTL behavior.
+ * Wires the (local-JWT) AuthGuard + the real CacheService together. JwtService and
+ * the Drizzle DB status lookup are mocked. Tests the full auth path including real
+ * cache TTL behavior.
  */
 import { Test, TestingModule } from '@nestjs/testing';
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { CacheService } from '../../common/cache.service';
-import { SupabaseService } from '../../supabase/supabase.service';
 import { ApiKeysService } from '../../auth/api-keys/api-keys.service';
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
+import { DB } from '../../db';
+import { createDrizzleMock } from '../mocks/drizzle.mock';
 
 function buildContext(headers: Record<string, string>): ExecutionContext {
   const request = {
@@ -27,41 +26,31 @@ function buildContext(headers: Record<string, string>): ExecutionContext {
   } as unknown as ExecutionContext;
 }
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
-
 describe('[Integration] AuthGuard + CacheService', () => {
   let module: TestingModule;
   let guard: AuthGuard;
   let cacheService: CacheService;
+  let dbMock: ReturnType<typeof createDrizzleMock>;
 
   const mockUser = { id: 'user-integration-test', email: 'test@example.com' };
 
-  const mockSupabaseService = {
-    getClient: jest.fn(),
-    getAdminClient: jest.fn(),
-  };
+  const mockJwt = { verifyAsync: jest.fn() };
+  const mockApiKeysService = { validate: jest.fn() };
 
-  const mockApiKeysService = {
-    validate: jest.fn(),
-  };
+  /** Configure the users.status lookup to return a given status. */
+  const setStatus = (status: string) =>
+    dbMock.select.mockReturnValue(dbMock.makeBuilder([{ status }]));
 
   beforeEach(async () => {
+    dbMock = createDrizzleMock();
     module = await Test.createTestingModule({
       providers: [
         AuthGuard,
         CacheService, // real cache service — tests actual TTL behavior
-        {
-          provide: SupabaseService,
-          useValue: mockSupabaseService,
-        },
-        {
-          provide: ConfigService,
-          useValue: { get: jest.fn() },
-        },
-        {
-          provide: ApiKeysService,
-          useValue: mockApiKeysService,
-        },
+        { provide: JwtService, useValue: mockJwt },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue('secret') } },
+        { provide: ApiKeysService, useValue: mockApiKeysService },
+        { provide: DB, useValue: dbMock.db },
       ],
     }).compile();
 
@@ -71,73 +60,34 @@ describe('[Integration] AuthGuard + CacheService', () => {
 
   afterEach(async () => {
     await module?.close();
+    jest.clearAllMocks();
   });
-
-  // ── JWT path: cache warms on first request, hits on second ──
 
   describe('User status caching with real CacheService', () => {
     it('queries DB on first request, uses cache on second request', async () => {
-      const authClient = {
-        getUser: jest
-          .fn()
-          .mockResolvedValue({ data: { user: mockUser }, error: null }),
-      };
-      const adminDb = {
-        from: jest.fn().mockReturnValue({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          single: jest
-            .fn()
-            .mockResolvedValue({ data: { status: 'active' }, error: null }),
-        }),
-      };
-      mockSupabaseService.getClient.mockReturnValue({ auth: authClient });
-      mockSupabaseService.getAdminClient.mockReturnValue(adminDb);
+      mockJwt.verifyAsync.mockResolvedValue({ sub: mockUser.id, email: mockUser.email });
+      setStatus('active');
 
-      const context1 = buildContext({ authorization: 'Bearer jwt-token' });
-      const context2 = buildContext({ authorization: 'Bearer jwt-token' });
+      await guard.canActivate(buildContext({ authorization: 'Bearer jwt-token' }));
+      expect(dbMock.select).toHaveBeenCalledTimes(1);
 
-      // First request — should query DB
-      await guard.canActivate(context1);
-      expect(adminDb.from).toHaveBeenCalledTimes(1);
-
-      // Second request — should use cache (no second DB call)
-      await guard.canActivate(context2);
-      expect(adminDb.from).toHaveBeenCalledTimes(1); // still 1 — cache hit
+      await guard.canActivate(buildContext({ authorization: 'Bearer jwt-token' }));
+      expect(dbMock.select).toHaveBeenCalledTimes(1); // cache hit — no 2nd query
     });
 
     it('re-queries DB if cache entry is manually cleared', async () => {
-      const authClient = {
-        getUser: jest
-          .fn()
-          .mockResolvedValue({ data: { user: mockUser }, error: null }),
-      };
-      const adminDb = {
-        from: jest.fn().mockReturnValue({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          single: jest
-            .fn()
-            .mockResolvedValue({ data: { status: 'active' }, error: null }),
-        }),
-      };
-      mockSupabaseService.getClient.mockReturnValue({ auth: authClient });
-      mockSupabaseService.getAdminClient.mockReturnValue(adminDb);
+      mockJwt.verifyAsync.mockResolvedValue({ sub: mockUser.id });
+      setStatus('active');
 
-      const context = buildContext({ authorization: 'Bearer jwt-token' });
+      await guard.canActivate(buildContext({ authorization: 'Bearer jwt-token' }));
+      expect(dbMock.select).toHaveBeenCalledTimes(1);
 
-      await guard.canActivate(context);
-      expect(adminDb.from).toHaveBeenCalledTimes(1);
-
-      // Simulate cache invalidation (e.g., admin updates user status)
       cacheService.delete(`user:${mockUser.id}:status`);
 
-      await guard.canActivate(context);
-      expect(adminDb.from).toHaveBeenCalledTimes(2); // DB queried again
+      await guard.canActivate(buildContext({ authorization: 'Bearer jwt-token' }));
+      expect(dbMock.select).toHaveBeenCalledTimes(2);
     });
   });
-
-  // ── API key path ─────────────────────────────────────────────
 
   describe('API key path with real cache (no caching for API key auth)', () => {
     it('validates API key and does not set a cache entry', async () => {
@@ -147,45 +97,21 @@ describe('[Integration] AuthGuard + CacheService', () => {
         scopes: ['read', 'write'],
       });
 
-      const context = buildContext({ 'x-api-key': 'tc_live_testkey123' });
-      await guard.canActivate(context);
-
-      // No cache entry should have been set for API key auth
+      await guard.canActivate(buildContext({ 'x-api-key': 'tc_live_testkey123' }));
       expect(cacheService.get('user:api-user:status')).toBeUndefined();
     });
   });
 
-  // ── Suspended user cached then changed ──────────────────────
-
   describe('suspended user scenario', () => {
-    it('blocks request immediately when status is suspended', async () => {
-      const suspendedUser = { id: 'suspended-user' };
-      const authClient = {
-        getUser: jest
-          .fn()
-          .mockResolvedValue({ data: { user: suspendedUser }, error: null }),
-      };
-      const adminDb = {
-        from: jest.fn().mockReturnValue({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          single: jest
-            .fn()
-            .mockResolvedValue({ data: { status: 'suspended' }, error: null }),
-        }),
-      };
-      mockSupabaseService.getClient.mockReturnValue({ auth: authClient });
-      mockSupabaseService.getAdminClient.mockReturnValue(adminDb);
+    it('blocks request when status is suspended and caches the status', async () => {
+      mockJwt.verifyAsync.mockResolvedValue({ sub: 'suspended-user' });
+      setStatus('suspended');
 
-      const context = buildContext({ authorization: 'Bearer jwt' });
-      await expect(guard.canActivate(context)).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(
+        guard.canActivate(buildContext({ authorization: 'Bearer jwt' })),
+      ).rejects.toThrow(UnauthorizedException);
 
-      // Status was cached even for suspended (so subsequent requests are fast)
-      expect(cacheService.get(`user:${suspendedUser.id}:status`)).toBe(
-        'suspended',
-      );
+      expect(cacheService.get('user:suspended-user:status')).toBe('suspended');
     });
   });
 });

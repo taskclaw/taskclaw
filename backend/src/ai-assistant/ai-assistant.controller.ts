@@ -8,12 +8,15 @@ import {
   Param,
   Delete,
   Patch,
+  Inject,
 } from '@nestjs/common';
+import { and, eq, isNull, isNotNull, sql } from 'drizzle-orm';
 import { AiAssistantService } from './ai-assistant.service';
 import { EmbeddingService } from './services/embedding.service';
-import { SupabaseService } from '../supabase/supabase.service';
 import { AuthGuard } from '../common/guards/auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
+import { DB, type Db } from '../db';
+import { projects, users, aiMessages } from '../db/schema';
 
 @Controller('ai-assistant')
 // Use the custom AuthGuard which checks Supabase auth
@@ -22,7 +25,7 @@ export class AiAssistantController {
   constructor(
     private readonly aiAssistantService: AiAssistantService,
     private readonly embeddingService: EmbeddingService,
-    private readonly supabaseService: SupabaseService,
+    @Inject(DB) private readonly db: Db,
   ) {}
 
   @Post('chat')
@@ -127,7 +130,6 @@ export class AiAssistantController {
       };
     }
 
-    const supabase = this.supabaseService.getAdminClient();
     let processed = 0;
     let failed = 0;
     let skipped = 0;
@@ -135,20 +137,19 @@ export class AiAssistantController {
     try {
       if (entity_type === 'projects') {
         // Fetch projects without embeddings (or all if force_regenerate)
-        const query = supabase.from('projects').select('id, description');
+        const projectRows = await this.db
+          .select({ id: projects.id, description: projects.description })
+          .from(projects)
+          .where(
+            force_regenerate
+              ? isNotNull(projects.description)
+              : and(
+                  isNull(projects.descriptionEmbedding),
+                  isNotNull(projects.description),
+                ),
+          );
 
-        if (!force_regenerate) {
-          query.is('description_embedding', null);
-        }
-
-        const { data: projects, error } = await query.not(
-          'description',
-          'is',
-          null,
-        );
-
-        if (error) throw new Error(error.message);
-        if (!projects || projects.length === 0) {
+        if (!projectRows || projectRows.length === 0) {
           return {
             success: true,
             message: 'No projects to process',
@@ -157,8 +158,8 @@ export class AiAssistantController {
         }
 
         // Process in batches
-        for (let i = 0; i < projects.length; i += batch_size) {
-          const batch = projects.slice(i, i + batch_size);
+        for (let i = 0; i < projectRows.length; i += batch_size) {
+          const batch = projectRows.slice(i, i + batch_size);
 
           for (const project of batch) {
             if (!project.description) {
@@ -170,10 +171,10 @@ export class AiAssistantController {
               const embedding = await this.embeddingService.generateEmbedding(
                 project.description,
               );
-              await supabase
-                .from('projects')
-                .update({ description_embedding: JSON.stringify(embedding) })
-                .eq('id', project.id);
+              await this.db
+                .update(projects)
+                .set({ descriptionEmbedding: embedding })
+                .where(eq(projects.id, project.id));
               processed++;
             } catch (error) {
               failed++;
@@ -185,22 +186,18 @@ export class AiAssistantController {
           }
 
           // Rate limiting delay between batches
-          if (i + batch_size < projects.length) {
+          if (i + batch_size < projectRows.length) {
             await new Promise((resolve) => setTimeout(resolve, 1000));
           }
         }
       } else if (entity_type === 'users') {
         // Fetch users without embeddings
-        const query = supabase.from('users').select('id, name, email');
+        const userRows = await this.db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(force_regenerate ? undefined : isNull(users.profileEmbedding));
 
-        if (!force_regenerate) {
-          query.is('profile_embedding', null);
-        }
-
-        const { data: users, error } = await query;
-
-        if (error) throw new Error(error.message);
-        if (!users || users.length === 0) {
+        if (!userRows || userRows.length === 0) {
           return {
             success: true,
             message: 'No users to process',
@@ -208,8 +205,8 @@ export class AiAssistantController {
           };
         }
 
-        for (let i = 0; i < users.length; i += batch_size) {
-          const batch = users.slice(i, i + batch_size);
+        for (let i = 0; i < userRows.length; i += batch_size) {
+          const batch = userRows.slice(i, i + batch_size);
 
           for (const user of batch) {
             // Composite profile text from name and email
@@ -218,10 +215,10 @@ export class AiAssistantController {
             try {
               const embedding =
                 await this.embeddingService.generateEmbedding(profileText);
-              await supabase
-                .from('users')
-                .update({ profile_embedding: JSON.stringify(embedding) })
-                .eq('id', user.id);
+              await this.db
+                .update(users)
+                .set({ profileEmbedding: embedding })
+                .where(eq(users.id, user.id));
               processed++;
             } catch (error) {
               failed++;
@@ -232,29 +229,26 @@ export class AiAssistantController {
             }
           }
 
-          if (i + batch_size < users.length) {
+          if (i + batch_size < userRows.length) {
             await new Promise((resolve) => setTimeout(resolve, 1000));
           }
         }
       } else if (entity_type === 'messages') {
-        // Fetch messages without embeddings
-        const query = supabase
-          .from('ai_messages')
-          .select('id, content')
-          .eq('role', 'user'); // Only embed user messages
+        // Fetch messages without embeddings (only user messages)
+        const messageRows = await this.db
+          .select({ id: aiMessages.id, content: aiMessages.content })
+          .from(aiMessages)
+          .where(
+            force_regenerate
+              ? and(eq(aiMessages.role, 'user'), isNotNull(aiMessages.content))
+              : and(
+                  eq(aiMessages.role, 'user'),
+                  isNull(aiMessages.contentEmbedding),
+                  isNotNull(aiMessages.content),
+                ),
+          );
 
-        if (!force_regenerate) {
-          query.is('content_embedding', null);
-        }
-
-        const { data: messages, error } = await query.not(
-          'content',
-          'is',
-          null,
-        );
-
-        if (error) throw new Error(error.message);
-        if (!messages || messages.length === 0) {
+        if (!messageRows || messageRows.length === 0) {
           return {
             success: true,
             message: 'No messages to process',
@@ -262,8 +256,8 @@ export class AiAssistantController {
           };
         }
 
-        for (let i = 0; i < messages.length; i += batch_size) {
-          const batch = messages.slice(i, i + batch_size);
+        for (let i = 0; i < messageRows.length; i += batch_size) {
+          const batch = messageRows.slice(i, i + batch_size);
 
           for (const message of batch) {
             if (!message.content) {
@@ -275,10 +269,10 @@ export class AiAssistantController {
               const embedding = await this.embeddingService.generateEmbedding(
                 message.content,
               );
-              await supabase
-                .from('ai_messages')
-                .update({ content_embedding: JSON.stringify(embedding) })
-                .eq('id', message.id);
+              await this.db
+                .update(aiMessages)
+                .set({ contentEmbedding: embedding })
+                .where(eq(aiMessages.id, message.id));
               processed++;
             } catch (error) {
               failed++;
@@ -289,7 +283,7 @@ export class AiAssistantController {
             }
           }
 
-          if (i + batch_size < messages.length) {
+          if (i + batch_size < messageRows.length) {
             await new Promise((resolve) => setTimeout(resolve, 1000));
           }
         }
@@ -329,17 +323,15 @@ export class AiAssistantController {
   @Get('admin/embedding-status')
   @UseGuards(AdminGuard)
   async getEmbeddingStatus() {
-    const supabase = this.supabaseService.getAdminClient();
-
     try {
-      const { data, error } = await supabase.rpc('check_embeddings_status');
-
-      if (error) throw new Error(error.message);
+      const result = await this.db.execute(
+        sql`select * from check_embeddings_status()`,
+      );
 
       return {
         success: true,
         config: this.embeddingService.getConfig(),
-        stats: data,
+        stats: result.rows,
       };
     } catch (error: any) {
       return {

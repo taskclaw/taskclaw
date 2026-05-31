@@ -7,8 +7,10 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { knowledgeDocs } from '../db/schema';
+import { StorageService } from '../storage/storage.service';
 import { CreateKnowledgeDocDto } from './dto/create-knowledge-doc.dto';
 import { UpdateKnowledgeDocDto } from './dto/update-knowledge-doc.dto';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
@@ -46,36 +48,52 @@ export class KnowledgeService {
   private readonly logger = new Logger(KnowledgeService.name);
 
   constructor(
-    private readonly supabase: SupabaseService,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
+    private readonly storage: StorageService,
     @Inject(forwardRef(() => AgentSyncService))
     private readonly agentSyncService: AgentSyncService,
   ) {}
+
+  /**
+   * Drizzle returns camelCase columns; PostgREST returned snake_case. Re-key to
+   * the snake_case response shape callers depend on (`is_master`, `category_id`,
+   * `file_attachments`, etc.).
+   */
+  private present(row: typeof knowledgeDocs.$inferSelect) {
+    return {
+      id: row.id,
+      account_id: row.accountId,
+      category_id: row.categoryId,
+      title: row.title,
+      content: row.content,
+      is_master: row.isMaster,
+      file_attachments: row.fileAttachments,
+      created_by: row.createdBy,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
+      agent_id: row.agentId,
+    };
+  }
 
   /**
    * List all knowledge docs for an account (optionally filter by category)
    */
   async findAll(accessToken: string, accountId: string, categoryId?: string) {
     try {
-      const client = this.supabaseAdmin.getClient();
-      let query = client
-        .from('knowledge_docs')
-        .select('*')
-        .eq('account_id', accountId)
-        .order('updated_at', { ascending: false });
+      const where = categoryId
+        ? and(
+            eq(knowledgeDocs.accountId, accountId),
+            eq(knowledgeDocs.categoryId, categoryId),
+          )
+        : eq(knowledgeDocs.accountId, accountId);
 
-      if (categoryId) {
-        query = query.eq('category_id', categoryId);
-      }
+      const rows = await this.db
+        .select()
+        .from(knowledgeDocs)
+        .where(where)
+        .orderBy(desc(knowledgeDocs.updatedAt));
 
-      const { data, error } = await query;
-
-      if (error) {
-        this.logger.error(`Failed to fetch knowledge docs: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      return data || [];
+      return rows.map((r) => this.present(r));
     } catch (error) {
       this.logger.error('Error fetching knowledge docs:', error);
       throw error;
@@ -87,19 +105,22 @@ export class KnowledgeService {
    */
   async findOne(accessToken: string, accountId: string, id: string) {
     try {
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('knowledge_docs')
-        .select('*')
-        .eq('id', id)
-        .eq('account_id', accountId)
-        .single();
+      const [row] = await this.db
+        .select()
+        .from(knowledgeDocs)
+        .where(
+          and(
+            eq(knowledgeDocs.id, id),
+            eq(knowledgeDocs.accountId, accountId),
+          ),
+        )
+        .limit(1);
 
-      if (error || !data) {
+      if (!row) {
         throw new NotFoundException('Knowledge doc not found');
       }
 
-      return data;
+      return this.present(row);
     } catch (error) {
       this.logger.error('Error fetching knowledge doc:', error);
       throw error;
@@ -115,22 +136,19 @@ export class KnowledgeService {
     categoryId: string,
   ) {
     try {
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('knowledge_docs')
-        .select('*')
-        .eq('account_id', accountId)
-        .eq('category_id', categoryId)
-        .eq('is_master', true)
-        .single();
+      const [row] = await this.db
+        .select()
+        .from(knowledgeDocs)
+        .where(
+          and(
+            eq(knowledgeDocs.accountId, accountId),
+            eq(knowledgeDocs.categoryId, categoryId),
+            eq(knowledgeDocs.isMaster, true),
+          ),
+        )
+        .limit(1);
 
-      if (error && error.code !== 'PGRST116') {
-        // PGRST116 = no rows returned (expected if no master)
-        this.logger.error(`Failed to fetch master doc: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      return data || null;
+      return row ? this.present(row) : null;
     } catch (error) {
       this.logger.error('Error fetching master doc:', error);
       throw error;
@@ -146,21 +164,19 @@ export class KnowledgeService {
     agentId: string,
   ) {
     try {
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('knowledge_docs')
-        .select('*')
-        .eq('account_id', accountId)
-        .eq('agent_id', agentId)
-        .eq('is_master', true)
-        .single();
+      const [row] = await this.db
+        .select()
+        .from(knowledgeDocs)
+        .where(
+          and(
+            eq(knowledgeDocs.accountId, accountId),
+            eq(knowledgeDocs.agentId, agentId),
+            eq(knowledgeDocs.isMaster, true),
+          ),
+        )
+        .limit(1);
 
-      if (error && error.code !== 'PGRST116') {
-        this.logger.error(`Failed to fetch agent master doc: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      return data || null;
+      return row ? this.present(row) : null;
     } catch (error) {
       this.logger.error('Error fetching agent master doc:', error);
       throw error;
@@ -191,27 +207,19 @@ export class KnowledgeService {
         }
       }
 
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('knowledge_docs')
-        .insert([
-          {
-            account_id: accountId,
-            created_by: userId,
-            title: createDto.title,
-            content: createDto.content,
-            category_id: createDto.category_id || null,
-            is_master: createDto.is_master || false,
-            file_attachments: createDto.file_attachments || [],
-          },
-        ])
-        .select()
-        .single();
-
-      if (error) {
-        this.logger.error(`Failed to create knowledge doc: ${error.message}`);
-        throw new Error(error.message);
-      }
+      const rows = await this.db
+        .insert(knowledgeDocs)
+        .values({
+          accountId,
+          createdBy: userId,
+          title: createDto.title,
+          content: createDto.content,
+          categoryId: createDto.category_id || null,
+          isMaster: createDto.is_master || false,
+          fileAttachments: createDto.file_attachments || [],
+        })
+        .returning();
+      const data = this.present(rows[0]);
 
       // Trigger sync if this is a master doc with a category
       if (data.is_master && data.category_id) {
@@ -242,7 +250,7 @@ export class KnowledgeService {
       if (updateDto.is_master) {
         const doc = await this.findOne(accessToken, accountId, id);
         if (doc.category_id || updateDto.category_id) {
-          const categoryId = updateDto.category_id || doc.category_id;
+          const categoryId = (updateDto.category_id || doc.category_id)!;
           const existingMaster = await this.findMasterForCategory(
             accessToken,
             accountId,
@@ -256,33 +264,27 @@ export class KnowledgeService {
         }
       }
 
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('knowledge_docs')
-        .update({
-          ...(updateDto.title !== undefined && { title: updateDto.title }),
-          ...(updateDto.content !== undefined && {
-            content: updateDto.content,
-          }),
-          ...(updateDto.category_id !== undefined && {
-            category_id: updateDto.category_id,
-          }),
-          ...(updateDto.is_master !== undefined && {
-            is_master: updateDto.is_master,
-          }),
-          ...(updateDto.file_attachments !== undefined && {
-            file_attachments: updateDto.file_attachments,
-          }),
-        })
-        .eq('id', id)
-        .eq('account_id', accountId)
-        .select()
-        .single();
+      const patch: Partial<typeof knowledgeDocs.$inferInsert> = {};
+      if (updateDto.title !== undefined) patch.title = updateDto.title;
+      if (updateDto.content !== undefined) patch.content = updateDto.content;
+      if (updateDto.category_id !== undefined)
+        patch.categoryId = updateDto.category_id;
+      if (updateDto.is_master !== undefined)
+        patch.isMaster = updateDto.is_master;
+      if (updateDto.file_attachments !== undefined)
+        patch.fileAttachments = updateDto.file_attachments;
 
-      if (error) {
-        this.logger.error(`Failed to update knowledge doc: ${error.message}`);
-        throw new Error(error.message);
-      }
+      const rows = await this.db
+        .update(knowledgeDocs)
+        .set(patch)
+        .where(
+          and(
+            eq(knowledgeDocs.id, id),
+            eq(knowledgeDocs.accountId, accountId),
+          ),
+        )
+        .returning();
+      const data = this.present(rows[0]);
 
       // Trigger sync if this is a master doc with a category
       if (data.is_master && data.category_id) {
@@ -323,17 +325,14 @@ export class KnowledgeService {
       // Check doc exists and get category info BEFORE deleting
       const doc = await this.findOne(accessToken, accountId, id);
 
-      const client = this.supabaseAdmin.getClient();
-      const { error } = await client
-        .from('knowledge_docs')
-        .delete()
-        .eq('id', id)
-        .eq('account_id', accountId);
-
-      if (error) {
-        this.logger.error(`Failed to delete knowledge doc: ${error.message}`);
-        throw new Error(error.message);
-      }
+      await this.db
+        .delete(knowledgeDocs)
+        .where(
+          and(
+            eq(knowledgeDocs.id, id),
+            eq(knowledgeDocs.accountId, accountId),
+          ),
+        );
 
       // Trigger sync if this was a master doc with a category
       if (doc.is_master && doc.category_id) {
@@ -386,59 +385,47 @@ export class KnowledgeService {
       // Verify doc exists and belongs to account
       const doc = await this.findOne(accessToken, accountId, docId);
 
-      // Upload to Supabase Storage
+      // Upload to object storage (throws on error)
       const storagePath = `${accountId}/${docId}/${file.originalname}`;
-      const adminClient = this.supabase.getAdminClient();
-
-      const { error: uploadError } = await adminClient.storage
-        .from(STORAGE_BUCKET)
-        .upload(storagePath, file.buffer, {
-          contentType: file.mimetype,
-          upsert: true,
-        });
-
-      if (uploadError) {
-        this.logger.error(`Failed to upload file: ${uploadError.message}`);
-        throw new Error(`Storage upload failed: ${uploadError.message}`);
-      }
+      await this.storage.upload(
+        STORAGE_BUCKET,
+        storagePath,
+        file.buffer,
+        file.mimetype,
+      );
 
       // Get the public URL
-      const { data: urlData } = adminClient.storage
-        .from(STORAGE_BUCKET)
-        .getPublicUrl(storagePath);
+      const publicUrl = this.storage.getPublicUrl(STORAGE_BUCKET, storagePath);
 
       // Build the attachment metadata
       const attachment = {
         name: file.originalname,
-        url: urlData.publicUrl,
+        url: publicUrl,
         size: file.size,
         type: file.mimetype,
         uploaded_at: new Date().toISOString(),
       };
 
       // Update the doc's file_attachments array
-      const existingAttachments = doc.file_attachments || [];
+      const existingAttachments = (doc.file_attachments as any[]) || [];
       // Remove any existing attachment with the same name (upsert behavior)
       const filteredAttachments = existingAttachments.filter(
         (a: any) => a.name !== file.originalname,
       );
       const updatedAttachments = [...filteredAttachments, attachment];
 
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('knowledge_docs')
-        .update({ file_attachments: updatedAttachments })
-        .eq('id', docId)
-        .eq('account_id', accountId)
-        .select()
-        .single();
+      const rows = await this.db
+        .update(knowledgeDocs)
+        .set({ fileAttachments: updatedAttachments })
+        .where(
+          and(
+            eq(knowledgeDocs.id, docId),
+            eq(knowledgeDocs.accountId, accountId),
+          ),
+        )
+        .returning();
 
-      if (error) {
-        this.logger.error(`Failed to update doc attachments: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      return data;
+      return this.present(rows[0]);
     } catch (error) {
       this.logger.error('Error uploading attachment:', error);
       throw error;
@@ -458,7 +445,7 @@ export class KnowledgeService {
       // Verify doc exists and belongs to account
       const doc = await this.findOne(accessToken, accountId, docId);
 
-      const existingAttachments = doc.file_attachments || [];
+      const existingAttachments = (doc.file_attachments as any[]) || [];
       const attachment = existingAttachments.find(
         (a: any) => a.name === filename,
       );
@@ -467,41 +454,27 @@ export class KnowledgeService {
         throw new NotFoundException(`Attachment "${filename}" not found`);
       }
 
-      // Delete from Supabase Storage
+      // Delete from object storage (throws on error)
       const storagePath = `${accountId}/${docId}/${filename}`;
-      const adminClient = this.supabase.getAdminClient();
-
-      const { error: deleteError } = await adminClient.storage
-        .from(STORAGE_BUCKET)
-        .remove([storagePath]);
-
-      if (deleteError) {
-        this.logger.error(
-          `Failed to delete file from storage: ${deleteError.message}`,
-        );
-        throw new Error(`Storage delete failed: ${deleteError.message}`);
-      }
+      await this.storage.remove(STORAGE_BUCKET, [storagePath]);
 
       // Update the doc's file_attachments array
       const updatedAttachments = existingAttachments.filter(
         (a: any) => a.name !== filename,
       );
 
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('knowledge_docs')
-        .update({ file_attachments: updatedAttachments })
-        .eq('id', docId)
-        .eq('account_id', accountId)
-        .select()
-        .single();
+      const rows = await this.db
+        .update(knowledgeDocs)
+        .set({ fileAttachments: updatedAttachments })
+        .where(
+          and(
+            eq(knowledgeDocs.id, docId),
+            eq(knowledgeDocs.accountId, accountId),
+          ),
+        )
+        .returning();
 
-      if (error) {
-        this.logger.error(`Failed to update doc attachments: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      return data;
+      return this.present(rows[0]);
     } catch (error) {
       this.logger.error('Error removing attachment:', error);
       throw error;
@@ -521,7 +494,7 @@ export class KnowledgeService {
       // Verify doc exists and belongs to account
       const doc = await this.findOne(accessToken, accountId, docId);
 
-      const existingAttachments = doc.file_attachments || [];
+      const existingAttachments = (doc.file_attachments as any[]) || [];
       const attachment = existingAttachments.find(
         (a: any) => a.name === filename,
       );
@@ -529,20 +502,11 @@ export class KnowledgeService {
         throw new NotFoundException(`Attachment "${filename}" not found`);
       }
 
-      // Download from storage
+      // Download from storage (returns a Buffer)
       const storagePath = `${accountId}/${docId}/${filename}`;
-      const adminClient = this.supabase.getAdminClient();
+      const data = await this.storage.download(STORAGE_BUCKET, storagePath);
 
-      const { data, error } = await adminClient.storage
-        .from(STORAGE_BUCKET)
-        .download(storagePath);
-
-      if (error || !data) {
-        this.logger.error(`Failed to read file content: ${error?.message}`);
-        throw new Error(`Failed to read file content: ${error?.message}`);
-      }
-
-      const content = await data.text();
+      const content = data.toString('utf-8');
       return { content, filename };
     } catch (error) {
       this.logger.error('Error fetching attachment content:', error);

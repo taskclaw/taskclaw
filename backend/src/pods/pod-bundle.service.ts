@@ -1,11 +1,25 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { and, eq, inArray } from 'drizzle-orm';
 import { ZodError } from 'zod';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { DB, type Db } from '../db';
+import {
+  agents,
+  agentSkills,
+  backboneConnections,
+  boardInstances,
+  boardIntegrationRefs,
+  boardSteps,
+  integrationConnections,
+  knowledgeDocs,
+  pods,
+  skills,
+} from '../db/schema';
 import {
   ImportReport,
   POD_BUNDLE_VERSION,
@@ -34,9 +48,9 @@ interface SkillResolution {
  * databases.
  *
  * Import: Zod-parses the bundle FIRST, then runs all writes inside a logical
- * transaction (best-effort on the JS side — Supabase doesn't expose multi-
- * statement transactions to PostgREST clients). On failure we surface the
- * partial write to the caller; v1.1 will move this to a server-side RPC.
+ * transaction (best-effort on the JS side — we don't wrap the import in a
+ * single DB transaction yet). On failure we surface the partial write to the
+ * caller; v1.1 will move this to a server-side RPC.
  *
  * Per PRD §6.1, integration secrets are NEVER exported; the importer surfaces
  * a `missing_integrations` list the user can wire up post-install.
@@ -45,53 +59,55 @@ interface SkillResolution {
 export class PodBundleService {
   private readonly logger = new Logger(PodBundleService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   // ============================================================
   // EXPORT
   // ============================================================
 
   async export(accountId: string, podId: string): Promise<PodBundle> {
-    const client = this.supabaseAdmin.getClient();
-
-    const { data: pod, error: podErr } = await client
-      .from('pods')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('id', podId)
-      .single();
-    if (podErr || !pod) throw new NotFoundException('Pod not found');
+    const [pod] = await this.db
+      .select()
+      .from(pods)
+      .where(and(eq(pods.accountId, accountId), eq(pods.id, podId)))
+      .limit(1);
+    if (!pod) throw new NotFoundException('Pod not found');
 
     // Load boards in this pod (board_instances pinned to pod_id) + steps.
-    const { data: boardRows, error: boardErr } = await client
-      .from('board_instances')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('pod_id', podId)
-      .order('display_order', { ascending: true });
-    if (boardErr) throw new Error(boardErr.message);
+    const boardRows = await this.db
+      .select()
+      .from(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.accountId, accountId),
+          eq(boardInstances.podId, podId),
+        ),
+      )
+      .orderBy(boardInstances.displayOrder);
 
-    const boardIds = (boardRows ?? []).map((b: any) => b.id);
-    const { data: stepRows } = boardIds.length
-      ? await client.from('board_steps').select('*').in('board_instance_id', boardIds)
-      : { data: [] as any[] };
+    const boardIds = boardRows.map((b) => b.id);
+    const stepRows = boardIds.length
+      ? await this.db
+          .select()
+          .from(boardSteps)
+          .where(inArray(boardSteps.boardInstanceId, boardIds))
+      : [];
 
     // Backbone connection slug for the pod's default + per-agent.
     const backboneSlugCache = new Map<string, string>();
+    const db = this.db;
     async function resolveBackboneSlug(
       backboneId: string | null | undefined,
     ): Promise<string | null> {
       if (!backboneId) return null;
-      if (backboneSlugCache.has(backboneId)) return backboneSlugCache.get(backboneId)!;
-      const { data } = await client
-        .from('backbone_connections')
-        .select('id, name, backbone_definition_id, backbone_definitions(slug)')
-        .eq('id', backboneId)
-        .maybeSingle();
-      const slug =
-        (data?.backbone_definitions as any)?.slug ??
-        (data?.name as string | undefined) ??
-        null;
+      if (backboneSlugCache.has(backboneId))
+        return backboneSlugCache.get(backboneId)!;
+      const [data] = await db
+        .select({ id: backboneConnections.id, name: backboneConnections.name })
+        .from(backboneConnections)
+        .where(eq(backboneConnections.id, backboneId))
+        .limit(1);
+      const slug = (data?.name as string | undefined) ?? null;
       if (slug) backboneSlugCache.set(backboneId, slug);
       return slug ?? null;
     }
@@ -102,38 +118,51 @@ export class PodBundleService {
     // export the pilot agent (if any) plus every agent referenced by any
     // column on any board in this pod.
     const stepAgentIds = new Set<string>();
-    if (pod.pilot_agent_id) stepAgentIds.add(pod.pilot_agent_id);
+    if (pod.pilotAgentId) stepAgentIds.add(pod.pilotAgentId);
     // Future: per-step agent assignment column. For now, agents come along
     // by virtue of being the pod's pilot.
 
     const agentRows: any[] = [];
     if (stepAgentIds.size > 0) {
-      const { data } = await client
-        .from('agents')
-        .select('*')
-        .eq('account_id', accountId)
-        .in('id', [...stepAgentIds]);
-      if (data) agentRows.push(...data);
+      const data = await this.db
+        .select()
+        .from(agents)
+        .where(
+          and(
+            eq(agents.accountId, accountId),
+            inArray(agents.id, [...stepAgentIds]),
+          ),
+        );
+      agentRows.push(...data);
     }
 
     // Agent skills (id->skill_id map)
     const agentSkillMap = new Map<string, string[]>();
     if (agentRows.length > 0) {
-      const { data: agentSkillRows } = await client
-        .from('agent_skills')
-        .select('agent_id, skill_id, is_active')
-        .in('agent_id', agentRows.map((a) => a.id));
+      const agentSkillRows = await this.db
+        .select({
+          agentId: agentSkills.agentId,
+          skillId: agentSkills.skillId,
+          isActive: agentSkills.isActive,
+        })
+        .from(agentSkills)
+        .where(
+          inArray(
+            agentSkills.agentId,
+            agentRows.map((a) => a.id),
+          ),
+        );
       for (const row of agentSkillRows ?? []) {
-        if (!row.is_active) continue;
-        if (!agentSkillMap.has(row.agent_id)) agentSkillMap.set(row.agent_id, []);
-        agentSkillMap.get(row.agent_id)!.push(row.skill_id);
+        if (!row.isActive) continue;
+        if (!agentSkillMap.has(row.agentId)) agentSkillMap.set(row.agentId, []);
+        agentSkillMap.get(row.agentId)!.push(row.skillId);
       }
     }
 
     // Skills referenced by columns + by exported agents.
     const skillIds = new Set<string>();
     for (const step of stepRows ?? []) {
-      for (const sid of (step.skill_ids ?? []) as string[]) skillIds.add(sid);
+      for (const sid of (step.skillIds ?? []) as string[]) skillIds.add(sid);
     }
     for (const skillList of agentSkillMap.values()) {
       for (const sid of skillList) skillIds.add(sid);
@@ -141,30 +170,52 @@ export class PodBundleService {
 
     const skillRows: any[] = [];
     if (skillIds.size > 0) {
-      const { data } = await client
-        .from('skills')
-        .select('id, name, description, instructions, source_type, source_uri, source_version, skill_type')
-        .eq('account_id', accountId)
-        .in('id', [...skillIds]);
-      if (data) skillRows.push(...data);
+      const data = await this.db
+        .select({
+          id: skills.id,
+          name: skills.name,
+          description: skills.description,
+          instructions: skills.instructions,
+          source_type: skills.sourceType,
+          source_uri: skills.sourceUri,
+          source_version: skills.sourceVersion,
+          skill_type: skills.skillType,
+        })
+        .from(skills)
+        .where(
+          and(eq(skills.accountId, accountId), inArray(skills.id, [...skillIds])),
+        );
+      skillRows.push(...data);
     }
     const skillIdToName = new Map(skillRows.map((s: any) => [s.id, s.name]));
 
     // Knowledge referenced by columns.
     const knowledgeIds = new Set<string>();
     for (const step of stepRows ?? []) {
-      for (const kid of (step.knowledge_base_ids ?? []) as string[]) knowledgeIds.add(kid);
+      for (const kid of (step.knowledgeBaseIds ?? []) as string[])
+        knowledgeIds.add(kid);
     }
     const knowledgeRows: any[] = [];
     if (knowledgeIds.size > 0) {
-      const { data } = await client
-        .from('knowledge_docs')
-        .select('id, title, content, is_master')
-        .eq('account_id', accountId)
-        .in('id', [...knowledgeIds]);
-      if (data) knowledgeRows.push(...data);
+      const data = await this.db
+        .select({
+          id: knowledgeDocs.id,
+          title: knowledgeDocs.title,
+          content: knowledgeDocs.content,
+          is_master: knowledgeDocs.isMaster,
+        })
+        .from(knowledgeDocs)
+        .where(
+          and(
+            eq(knowledgeDocs.accountId, accountId),
+            inArray(knowledgeDocs.id, [...knowledgeIds]),
+          ),
+        );
+      knowledgeRows.push(...data);
     }
-    const knowledgeIdToTitle = new Map(knowledgeRows.map((k: any) => [k.id, k.title]));
+    const knowledgeIdToTitle = new Map(
+      knowledgeRows.map((k: any) => [k.id, k.title]),
+    );
 
     // Build the bundle — references resolved to names where possible.
     const bundledBoards: BundledBoard[] = (boardRows ?? []).map((b: any) => ({
@@ -173,35 +224,37 @@ export class PodBundleService {
       icon: b.icon ?? 'layout-grid',
       color: b.color ?? '#6366f1',
       tags: Array.isArray(b.tags) ? b.tags : [],
-      display_order: b.display_order ?? 0,
+      display_order: b.displayOrder ?? 0,
       columns: (stepRows ?? [])
-        .filter((s: any) => s.board_instance_id === b.id)
+        .filter((s: any) => s.boardInstanceId === b.id)
         .sort((a: any, c: any) => a.position - c.position)
         .map((s: any) => ({
-          step_key: s.step_key,
+          step_key: s.stepKey,
           name: s.name,
-          step_type: s.step_type,
+          step_type: s.stepType,
           position: s.position,
           color: s.color ?? null,
-          ai_enabled: !!s.ai_enabled,
-          ai_first: !!s.ai_first,
-          system_prompt: s.system_prompt ?? null,
-          model_override: s.model_override ?? null,
+          ai_enabled: !!s.aiEnabled,
+          ai_first: !!s.aiFirst,
+          system_prompt: s.systemPrompt ?? null,
+          model_override: s.modelOverride ?? null,
           temperature: s.temperature ?? null,
-          max_retries: s.max_retries ?? 2,
-          timeout_seconds: s.timeout_seconds ?? 120,
-          skill_names: ((s.skill_ids ?? []) as string[])
+          max_retries: s.maxRetries ?? 2,
+          timeout_seconds: s.timeoutSeconds ?? 120,
+          skill_names: ((s.skillIds ?? []) as string[])
             .map((id) => skillIdToName.get(id))
             .filter((n): n is string => !!n),
-          knowledge_titles: ((s.knowledge_base_ids ?? []) as string[])
+          knowledge_titles: ((s.knowledgeBaseIds ?? []) as string[])
             .map((id) => knowledgeIdToTitle.get(id))
             .filter((t): t is string => !!t),
-          required_tool_ids: Array.isArray(s.required_tool_ids) ? s.required_tool_ids : [],
-          input_fields: Array.isArray(s.input_fields) ? s.input_fields : [],
-          output_fields: Array.isArray(s.output_fields) ? s.output_fields : [],
-          trigger_type: s.trigger_type ?? 'manual',
-          trigger_config: s.trigger_config ?? {},
-          on_complete_step_key: s.on_complete_step_key ?? null,
+          required_tool_ids: Array.isArray(s.requiredToolIds)
+            ? s.requiredToolIds
+            : [],
+          input_fields: Array.isArray(s.inputFields) ? s.inputFields : [],
+          output_fields: Array.isArray(s.outputFields) ? s.outputFields : [],
+          trigger_type: s.triggerType ?? 'manual',
+          trigger_config: s.triggerConfig ?? {},
+          on_complete_step_key: s.onCompleteStepKey ?? null,
         })),
     }));
 
@@ -211,11 +264,11 @@ export class PodBundleService {
         slug: a.slug,
         description: a.description ?? null,
         persona: a.persona ?? null,
-        agent_type: a.agent_type ?? 'worker',
+        agent_type: a.agentType ?? 'worker',
         color: a.color ?? null,
-        max_concurrent_tasks: a.max_concurrent_tasks ?? 3,
-        backbone_slug: await resolveBackboneSlug(a.backbone_connection_id),
-        model_override: a.model_override ?? null,
+        max_concurrent_tasks: a.maxConcurrentTasks ?? 3,
+        backbone_slug: await resolveBackboneSlug(a.backboneConnectionId),
+        model_override: a.modelOverride ?? null,
         skill_names: (agentSkillMap.get(a.id) ?? [])
           .map((sid) => skillIdToName.get(sid))
           .filter((n): n is string => !!n),
@@ -239,29 +292,33 @@ export class PodBundleService {
       skill_type: (s.skill_type ?? 'general') as BundledSkill['skill_type'],
     }));
 
-    const bundledKnowledge: BundledKnowledge[] = knowledgeRows.map((k: any) => ({
-      title: k.title,
-      content: k.content ?? '',
-      is_master: !!k.is_master,
-    }));
+    const bundledKnowledge: BundledKnowledge[] = knowledgeRows.map(
+      (k: any) => ({
+        title: k.title,
+        content: k.content ?? '',
+        is_master: !!k.is_master,
+      }),
+    );
 
     // Integrations required: derive from board_integration_refs for the pod's boards.
     const integrationsRequired: BundledIntegrationRequirement[] = [];
     if (boardIds.length > 0) {
-      const { data: refs } = await client
-        .from('board_integration_refs')
-        .select(
-          'connection_id, integration_connections(integration_definition_id, integration_definitions(slug, display_name))',
-        )
-        .in('board_instance_id', boardIds);
+      const refs = await this.db.query.boardIntegrationRefs.findMany({
+        where: inArray(boardIntegrationRefs.boardId, boardIds),
+        with: {
+          integrationConnection: {
+            with: { integrationDefinition: true },
+          },
+        },
+      });
       const seen = new Set<string>();
       for (const r of refs ?? []) {
-        const def = (r.integration_connections as any)?.integration_definitions;
+        const def = (r.integrationConnection as any)?.integrationDefinition;
         if (!def?.slug || seen.has(def.slug)) continue;
         seen.add(def.slug);
         integrationsRequired.push({
           slug: def.slug,
-          display_name: def.display_name ?? def.slug,
+          display_name: def.name ?? def.slug,
           optional: false,
           config_hint: {},
         });
@@ -284,11 +341,11 @@ export class PodBundleService {
         description: pod.description ?? null,
         icon: pod.icon ?? 'layers',
         color: pod.color ?? '#6366f1',
-        autonomy_level: pod.autonomy_level ?? 1,
+        autonomy_level: pod.autonomyLevel ?? 1,
         pilot_agent_slug:
-          agentRows.find((a: any) => a.id === pod.pilot_agent_id)?.slug ?? null,
-        backbone_slug: await resolveBackboneSlug(pod.backbone_connection_id),
-        agent_config: pod.agent_config ?? {},
+          agentRows.find((a: any) => a.id === pod.pilotAgentId)?.slug ?? null,
+        backbone_slug: await resolveBackboneSlug(pod.backboneConnectionId),
+        agent_config: (pod.agentConfig as Record<string, unknown>) ?? {},
       },
       boards: bundledBoards,
       agents: bundledAgents,
@@ -325,7 +382,6 @@ export class PodBundleService {
       );
     }
 
-    const client = this.supabaseAdmin.getClient();
     const report: ImportReport = {
       pod_id: '',
       created: { boards: 0, columns: 0, agents: 0, skills: 0, knowledge: 0 },
@@ -346,24 +402,31 @@ export class PodBundleService {
         report.matched.skills += 1;
         continue;
       }
-      const { data, error } = await client
-        .from('skills')
-        .insert({
-          account_id: accountId,
-          name: s.name,
-          description: s.description ?? null,
-          instructions: s.instructions ?? '',
-          source_type: s.source_type,
-          source_uri: s.source_uri ?? null,
-          source_version: s.source_version ?? null,
-          skill_type: s.skill_type,
-          is_active: true,
-        })
-        .select('id, name')
-        .single();
-      if (error || !data) {
+      let data: { id: string; name: string } | undefined;
+      try {
+        const rows = await this.db
+          .insert(skills)
+          .values({
+            accountId,
+            name: s.name,
+            description: s.description ?? null,
+            instructions: s.instructions ?? '',
+            sourceType: s.source_type,
+            sourceUri: s.source_uri ?? null,
+            sourceVersion: s.source_version ?? null,
+            skillType: s.skill_type,
+            isActive: true,
+          })
+          .returning({ id: skills.id, name: skills.name });
+        data = rows[0];
+      } catch (error: any) {
         throw new BadRequestException(
           `Failed to create skill "${s.name}": ${error?.message ?? 'unknown error'}`,
+        );
+      }
+      if (!data) {
+        throw new BadRequestException(
+          `Failed to create skill "${s.name}": unknown error`,
         );
       }
       skillBundleNameToId.set(s.name, data.id);
@@ -378,7 +441,10 @@ export class PodBundleService {
         ...bundle.agents.map((a) => a.backbone_slug ?? null),
       ].filter((s): s is string => !!s),
     );
-    if (bundle.pod.backbone_slug && backboneSlugToId.has(bundle.pod.backbone_slug)) {
+    if (
+      bundle.pod.backbone_slug &&
+      backboneSlugToId.has(bundle.pod.backbone_slug)
+    ) {
       report.matched.backbones += 1;
     }
 
@@ -395,31 +461,39 @@ export class PodBundleService {
         report.matched.agents += 1;
         continue;
       }
-      const { data, error } = await client
-        .from('agents')
-        .insert({
-          account_id: accountId,
-          name: a.name,
-          slug: a.slug,
-          description: a.description ?? null,
-          persona: a.persona ?? null,
-          agent_type: a.agent_type,
-          color: a.color ?? null,
-          max_concurrent_tasks: a.max_concurrent_tasks,
-          backbone_connection_id: a.backbone_slug
-            ? backboneSlugToId.get(a.backbone_slug) ?? null
-            : null,
-          model_override: a.model_override ?? null,
-          is_active: true,
-        })
-        .select('id, slug')
-        .single();
-      if (error || !data) {
+      let data: { id: string; slug: string } | undefined;
+      try {
+        const rows = await this.db
+          .insert(agents)
+          .values({
+            accountId,
+            name: a.name,
+            slug: a.slug,
+            description: a.description ?? null,
+            persona: a.persona ?? null,
+            agentType: a.agent_type,
+            color: a.color ?? null,
+            maxConcurrentTasks: a.max_concurrent_tasks,
+            backboneConnectionId: a.backbone_slug
+              ? backboneSlugToId.get(a.backbone_slug) ?? null
+              : null,
+            modelOverride: a.model_override ?? null,
+            isActive: true,
+          })
+          .returning({ id: agents.id, slug: agents.slug });
+        data = rows[0];
+      } catch (error: any) {
         throw new BadRequestException(
           `Failed to create agent "${a.slug}": ${error?.message ?? 'unknown error'}`,
         );
       }
-      agentSlugToId.set(a.slug, data.id);
+      if (!data) {
+        throw new BadRequestException(
+          `Failed to create agent "${a.slug}": unknown error`,
+        );
+      }
+      const createdAgent = data;
+      agentSlugToId.set(a.slug, createdAgent.id);
       report.created.agents += 1;
 
       // Wire skills onto the agent.
@@ -427,16 +501,17 @@ export class PodBundleService {
         .map((sn) => skillBundleNameToId.get(sn) ?? existingSkillsByName.get(sn)?.id)
         .filter((id): id is string => !!id);
       if (links.length > 0) {
-        const { error: linkErr } = await client.from('agent_skills').insert(
-          links.map((sid) => ({
-            agent_id: data.id,
-            skill_id: sid,
-            is_active: true,
-          })),
-        );
-        if (linkErr) {
+        try {
+          await this.db.insert(agentSkills).values(
+            links.map((sid) => ({
+              agentId: createdAgent.id,
+              skillId: sid,
+              isActive: true,
+            })),
+          );
+        } catch (linkErr: any) {
           this.logger.warn(
-            `agent_skills link failed for ${a.slug}: ${linkErr.message}`,
+            `agent_skills link failed for ${a.slug}: ${linkErr?.message}`,
           );
         }
       }
@@ -452,56 +527,73 @@ export class PodBundleService {
     const podBackboneId = bundle.pod.backbone_slug
       ? backboneSlugToId.get(bundle.pod.backbone_slug) ?? null
       : null;
-    const { data: podRow, error: podErr } = await client
-      .from('pods')
-      .insert({
-        account_id: accountId,
-        name: bundle.pod.name,
-        slug: finalSlug,
-        description: bundle.pod.description ?? null,
-        icon: bundle.pod.icon,
-        color: bundle.pod.color,
-        autonomy_level: bundle.pod.autonomy_level,
-        pilot_agent_id: pilotAgentId,
-        backbone_connection_id: podBackboneId,
-        agent_config: bundle.pod.agent_config,
-      })
-      .select('id, slug')
-      .single();
-    if (podErr || !podRow) {
+    let podRow: { id: string; slug: string } | undefined;
+    try {
+      const rows = await this.db
+        .insert(pods)
+        .values({
+          accountId,
+          name: bundle.pod.name,
+          slug: finalSlug,
+          description: bundle.pod.description ?? null,
+          icon: bundle.pod.icon,
+          color: bundle.pod.color,
+          autonomyLevel: bundle.pod.autonomy_level,
+          pilotAgentId: pilotAgentId,
+          backboneConnectionId: podBackboneId,
+          agentConfig: bundle.pod.agent_config,
+        })
+        .returning({ id: pods.id, slug: pods.slug });
+      podRow = rows[0];
+    } catch (error: any) {
       throw new BadRequestException(
-        `Failed to create pod: ${podErr?.message ?? 'unknown error'}`,
+        `Failed to create pod: ${error?.message ?? 'unknown error'}`,
       );
     }
-    report.pod_id = podRow.id;
+    if (!podRow) {
+      throw new BadRequestException(`Failed to create pod: unknown error`);
+    }
+    const createdPod = podRow;
+    report.pod_id = createdPod.id;
 
     // 5. Knowledge — create directly on account (not pod-scoped today).
     const knowledgeTitleToId = new Map<string, string>();
     for (const k of bundle.knowledge) {
       // Skip knowledge titles that already exist for this account to avoid
       // bloating the master-doc constraint.
-      const { data: existing } = await client
-        .from('knowledge_docs')
-        .select('id')
-        .eq('account_id', accountId)
-        .eq('title', k.title)
-        .maybeSingle();
+      const [existing] = await this.db
+        .select({ id: knowledgeDocs.id })
+        .from(knowledgeDocs)
+        .where(
+          and(
+            eq(knowledgeDocs.accountId, accountId),
+            eq(knowledgeDocs.title, k.title),
+          ),
+        )
+        .limit(1);
       if (existing) {
         knowledgeTitleToId.set(k.title, existing.id);
         continue;
       }
-      const { data, error } = await client
-        .from('knowledge_docs')
-        .insert({
-          account_id: accountId,
-          title: k.title,
-          content: k.content,
-          is_master: false, // imported docs default to non-master to avoid unique-master conflicts
-        })
-        .select('id, title')
-        .single();
-      if (error || !data) {
-        this.logger.warn(`Knowledge import skipped "${k.title}": ${error?.message}`);
+      let data: { id: string; title: string } | undefined;
+      try {
+        const rows = await this.db
+          .insert(knowledgeDocs)
+          .values({
+            accountId,
+            title: k.title,
+            content: k.content,
+            isMaster: false, // imported docs default to non-master to avoid unique-master conflicts
+          })
+          .returning({ id: knowledgeDocs.id, title: knowledgeDocs.title });
+        data = rows[0];
+      } catch (error: any) {
+        this.logger.warn(
+          `Knowledge import skipped "${k.title}": ${error?.message}`,
+        );
+        continue;
+      }
+      if (!data) {
         continue;
       }
       knowledgeTitleToId.set(k.title, data.id);
@@ -510,25 +602,33 @@ export class PodBundleService {
 
     // 6. Boards + columns.
     for (const b of bundle.boards) {
-      const { data: boardRow, error: boardErr } = await client
-        .from('board_instances')
-        .insert({
-          account_id: accountId,
-          name: b.name,
-          description: b.description ?? null,
-          icon: b.icon,
-          color: b.color,
-          tags: b.tags,
-          display_order: b.display_order,
-          pod_id: podRow.id,
-        })
-        .select('id')
-        .single();
-      if (boardErr || !boardRow) {
+      let boardRow: { id: string } | undefined;
+      try {
+        const rows = await this.db
+          .insert(boardInstances)
+          .values({
+            accountId,
+            name: b.name,
+            description: b.description ?? null,
+            icon: b.icon,
+            color: b.color,
+            tags: b.tags,
+            displayOrder: b.display_order,
+            podId: createdPod.id,
+          })
+          .returning({ id: boardInstances.id });
+        boardRow = rows[0];
+      } catch (error: any) {
         throw new BadRequestException(
-          `Failed to create board "${b.name}": ${boardErr?.message ?? 'unknown error'}`,
+          `Failed to create board "${b.name}": ${error?.message ?? 'unknown error'}`,
         );
       }
+      if (!boardRow) {
+        throw new BadRequestException(
+          `Failed to create board "${b.name}": unknown error`,
+        );
+      }
+      const createdBoard = boardRow;
       report.created.boards += 1;
 
       for (const c of b.columns) {
@@ -538,32 +638,33 @@ export class PodBundleService {
         const knowledgeIds = c.knowledge_titles
           .map((kt) => knowledgeTitleToId.get(kt))
           .filter((id): id is string => !!id);
-        const { error: stepErr } = await client.from('board_steps').insert({
-          board_instance_id: boardRow.id,
-          step_key: c.step_key,
-          name: c.name,
-          step_type: c.step_type,
-          position: c.position,
-          color: c.color ?? null,
-          ai_enabled: c.ai_enabled,
-          ai_first: c.ai_first,
-          system_prompt: c.system_prompt ?? null,
-          model_override: c.model_override ?? null,
-          temperature: c.temperature ?? null,
-          max_retries: c.max_retries,
-          timeout_seconds: c.timeout_seconds,
-          skill_ids: skillIds,
-          knowledge_base_ids: knowledgeIds,
-          required_tool_ids: c.required_tool_ids,
-          input_fields: c.input_fields,
-          output_fields: c.output_fields,
-          trigger_type: c.trigger_type,
-          trigger_config: c.trigger_config,
-          on_complete_step_key: c.on_complete_step_key ?? null,
-        });
-        if (stepErr) {
+        try {
+          await this.db.insert(boardSteps).values({
+            boardInstanceId: createdBoard.id,
+            stepKey: c.step_key,
+            name: c.name,
+            stepType: c.step_type,
+            position: c.position,
+            color: c.color ?? null,
+            aiEnabled: c.ai_enabled,
+            aiFirst: c.ai_first,
+            systemPrompt: c.system_prompt ?? null,
+            modelOverride: c.model_override ?? null,
+            temperature: c.temperature ?? null,
+            maxRetries: c.max_retries,
+            timeoutSeconds: c.timeout_seconds,
+            skillIds: skillIds,
+            knowledgeBaseIds: knowledgeIds,
+            requiredToolIds: c.required_tool_ids,
+            inputFields: c.input_fields,
+            outputFields: c.output_fields,
+            triggerType: c.trigger_type,
+            triggerConfig: c.trigger_config,
+            onCompleteStepKey: c.on_complete_step_key ?? null,
+          });
+        } catch (stepErr: any) {
           throw new BadRequestException(
-            `Failed to create column "${c.step_key}" on board "${b.name}": ${stepErr.message}`,
+            `Failed to create column "${c.step_key}" on board "${b.name}": ${stepErr?.message}`,
           );
         }
         report.created.columns += 1;
@@ -572,14 +673,15 @@ export class PodBundleService {
 
     // 7. Surface integrations the user must configure.
     if (bundle.integrations_required.length > 0) {
-      const slugs = bundle.integrations_required.map((i) => i.slug);
-      const { data: existingConns } = await client
-        .from('integration_connections')
-        .select('integration_definitions(slug)')
-        .eq('account_id', accountId);
+      const existingConns = await this.db.query.integrationConnections.findMany({
+        where: eq(integrationConnections.accountId, accountId),
+        with: {
+          integrationDefinition: { columns: { slug: true } },
+        },
+      });
       const have = new Set(
         (existingConns ?? [])
-          .map((row: any) => (row.integration_definitions as any)?.slug)
+          .map((row: any) => (row.integrationDefinition as any)?.slug)
           .filter(Boolean),
       );
       report.missing_integrations = bundle.integrations_required.filter(
@@ -599,13 +701,13 @@ export class PodBundleService {
     names: string[],
   ): Promise<Map<string, { id: string; name: string }>> {
     if (names.length === 0) return new Map();
-    const client = this.supabaseAdmin.getClient();
-    const { data } = await client
-      .from('skills')
-      .select('id, name')
-      .eq('account_id', accountId)
-      .in('name', names);
-    return new Map((data ?? []).map((s: any) => [s.name, { id: s.id, name: s.name }]));
+    const data = await this.db
+      .select({ id: skills.id, name: skills.name })
+      .from(skills)
+      .where(and(eq(skills.accountId, accountId), inArray(skills.name, names)));
+    return new Map(
+      (data ?? []).map((s: any) => [s.name, { id: s.id, name: s.name }]),
+    );
   }
 
   private async fetchAgentsBySlug(
@@ -613,13 +715,13 @@ export class PodBundleService {
     slugs: string[],
   ): Promise<Map<string, { id: string; slug: string }>> {
     if (slugs.length === 0) return new Map();
-    const client = this.supabaseAdmin.getClient();
-    const { data } = await client
-      .from('agents')
-      .select('id, slug')
-      .eq('account_id', accountId)
-      .in('slug', slugs);
-    return new Map((data ?? []).map((a: any) => [a.slug, { id: a.id, slug: a.slug }]));
+    const data = await this.db
+      .select({ id: agents.id, slug: agents.slug })
+      .from(agents)
+      .where(and(eq(agents.accountId, accountId), inArray(agents.slug, slugs)));
+    return new Map(
+      (data ?? []).map((a: any) => [a.slug, { id: a.id, slug: a.slug }]),
+    );
   }
 
   private async fetchBackbonesBySlug(
@@ -627,30 +729,30 @@ export class PodBundleService {
     slugs: string[],
   ): Promise<Map<string, string>> {
     if (slugs.length === 0) return new Map();
-    const client = this.supabaseAdmin.getClient();
-    const { data } = await client
-      .from('backbone_connections')
-      .select('id, name, backbone_definitions(slug)')
-      .eq('account_id', accountId);
+    const data = await this.db
+      .select({ id: backboneConnections.id, name: backboneConnections.name })
+      .from(backboneConnections)
+      .where(eq(backboneConnections.accountId, accountId));
     const map = new Map<string, string>();
     for (const conn of data ?? []) {
-      const slug = (conn.backbone_definitions as any)?.slug ?? conn.name;
+      const slug = conn.name;
       if (slug && slugs.includes(slug)) map.set(slug, conn.id);
     }
     return map;
   }
 
-  private async uniqueSlug(accountId: string, candidate: string): Promise<string> {
-    const client = this.supabaseAdmin.getClient();
+  private async uniqueSlug(
+    accountId: string,
+    candidate: string,
+  ): Promise<string> {
     let attempt = candidate;
     let suffix = 1;
     while (true) {
-      const { data } = await client
-        .from('pods')
-        .select('id')
-        .eq('account_id', accountId)
-        .eq('slug', attempt)
-        .maybeSingle();
+      const [data] = await this.db
+        .select({ id: pods.id })
+        .from(pods)
+        .where(and(eq(pods.accountId, accountId), eq(pods.slug, attempt)))
+        .limit(1);
       if (!data) return attempt;
       suffix += 1;
       attempt = `${candidate}-${suffix}`;

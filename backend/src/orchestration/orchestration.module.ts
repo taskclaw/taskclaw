@@ -2,7 +2,6 @@ import { Module, forwardRef, OnModuleInit, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { Queue } from 'bullmq';
 import { getQueueToken } from '@nestjs/bullmq';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { HeartbeatModule } from '../heartbeat/heartbeat.module';
 import { BackboneModule } from '../backbone/backbone.module';
@@ -16,7 +15,6 @@ import { BACKBONE_DISPATCH_QUEUE_NAME } from '../backbone/backbone-dispatch-queu
 
 @Module({
   imports: [
-    SupabaseModule,
     CommonModule,
     HeartbeatModule,
     forwardRef(() => BackboneModule),

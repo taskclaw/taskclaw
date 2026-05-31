@@ -2,23 +2,32 @@ import {
   Injectable,
   ForbiddenException,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { and, eq } from 'drizzle-orm';
 import { CacheService } from '../cache.service';
+import { DB, type Db } from '../../db';
+import { accountUsers, projects } from '../../db/schema';
 
 // Cache account membership role for 5 minutes
 const ACCOUNT_ROLE_TTL_SECONDS = 300;
 
+/**
+ * Account/project access checks (Epic 2 — migrated to Drizzle).
+ *
+ * The legacy `supabase` first parameter is kept so the ~dozens of existing callers
+ * compile unchanged during the data-layer migration; it is ignored. Drop it in the
+ * Epic 2 cleanup pass once every caller has been converted.
+ */
 @Injectable()
 export class AccessControlHelper {
-  constructor(private readonly cacheService: CacheService) {}
+  constructor(
+    private readonly cacheService: CacheService,
+    @Inject(DB) private readonly db: Db,
+  ) {}
 
-  /**
-   * Verify user belongs to account with optional role check.
-   * Caches the role lookup for ACCOUNT_ROLE_TTL_SECONDS to avoid repeated DB queries.
-   */
   async verifyAccountAccess(
-    supabase: SupabaseClient,
+    _supabase: unknown,
     accountId: string,
     userId: string,
     requiredRoles?: string[],
@@ -30,14 +39,18 @@ export class AccessControlHelper {
     if (cached) {
       role = cached;
     } else {
-      const { data: membership, error } = await supabase
-        .from('account_users')
-        .select('role')
-        .eq('account_id', accountId)
-        .eq('user_id', userId)
-        .single();
+      const [membership] = await this.db
+        .select({ role: accountUsers.role })
+        .from(accountUsers)
+        .where(
+          and(
+            eq(accountUsers.accountId, accountId),
+            eq(accountUsers.userId, userId),
+          ),
+        )
+        .limit(1);
 
-      if (error || !membership) {
+      if (!membership) {
         throw new ForbiddenException('Access denied to this account');
       }
 
@@ -54,34 +67,29 @@ export class AccessControlHelper {
     return { role };
   }
 
-  /**
-   * Verify user has access to project
-   */
   async verifyProjectAccess(
-    supabase: SupabaseClient,
+    _supabase: unknown,
     projectId: string,
     userId: string,
   ): Promise<{ accountId: string; role: string }> {
-    // Get project's account
-    const { data: project, error: projectError } = await supabase
-      .from('projects')
-      .select('account_id')
-      .eq('id', projectId)
-      .single();
+    const [project] = await this.db
+      .select({ accountId: projects.accountId })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
 
-    if (projectError || !project) {
+    if (!project || !project.accountId) {
       throw new NotFoundException('Project not found');
     }
 
-    // Verify account access
     const membership = await this.verifyAccountAccess(
-      supabase,
-      project.account_id,
+      null,
+      project.accountId,
       userId,
     );
 
     return {
-      accountId: project.account_id,
+      accountId: project.accountId,
       role: membership.role,
     };
   }

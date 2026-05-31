@@ -1,10 +1,13 @@
 import {
   Injectable,
+  Inject,
   Logger,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SupabaseService } from '../../supabase/supabase.service';
+import { eq } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import { plans, subscriptions } from '../../db/schema';
 import Stripe from 'stripe';
 
 @Injectable()
@@ -15,7 +18,7 @@ export class StripeService {
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly supabaseService: SupabaseService,
+    @Inject(DB) private readonly db: Db,
   ) {
     const secretKey = this.configService.get<string>('STRIPE_SECRET_KEY');
     this.webhookSecret = this.configService.get<string>(
@@ -52,20 +55,19 @@ export class StripeService {
     cancelUrl: string,
   ): Promise<{ sessionId: string; url: string }> {
     const stripe = this.ensureStripe();
-    const supabase = this.supabaseService.getAdminClient();
 
     // Look up the plan to get its stripe_price_id
-    const { data: plan, error: planError } = await supabase
-      .from('plans')
-      .select('*')
-      .eq('id', planId)
-      .single();
+    const [plan] = await this.db
+      .select()
+      .from(plans)
+      .where(eq(plans.id, planId))
+      .limit(1);
 
-    if (planError || !plan) {
+    if (!plan) {
       throw new InternalServerErrorException('Plan not found');
     }
 
-    const stripePriceId = plan.stripe_price_id;
+    const stripePriceId = plan.stripePriceId;
     if (!stripePriceId) {
       throw new InternalServerErrorException(
         `Plan "${plan.name}" does not have a Stripe price ID configured. ` +
@@ -74,11 +76,11 @@ export class StripeService {
     }
 
     // Check if the account already has a Stripe customer ID
-    const { data: subscription } = await supabase
-      .from('subscriptions')
-      .select('stripe_customer_id')
-      .eq('account_id', accountId)
-      .maybeSingle();
+    const [subscription] = await this.db
+      .select({ stripeCustomerId: subscriptions.stripeCustomerId })
+      .from(subscriptions)
+      .where(eq(subscriptions.accountId, accountId))
+      .limit(1);
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'subscription',
@@ -98,8 +100,8 @@ export class StripeService {
     };
 
     // Attach existing customer if we have one
-    if (subscription?.stripe_customer_id) {
-      sessionParams.customer = subscription.stripe_customer_id;
+    if (subscription?.stripeCustomerId) {
+      sessionParams.customer = subscription.stripeCustomerId;
     }
 
     const session = await stripe.checkout.sessions.create(sessionParams);
@@ -219,26 +221,33 @@ export class StripeService {
       await stripe.subscriptions.retrieve(stripeSubscriptionId);
     const { periodStart, periodEnd } = this.getPeriodDates(stripeSubscription);
 
-    const supabase = this.supabaseService.getAdminClient();
-
     // Upsert the subscription record
-    const { error } = await supabase.from('subscriptions').upsert(
-      {
-        account_id: accountId,
-        plan_id: planId,
-        status: stripeSubscription.status,
-        stripe_customer_id: stripeCustomerId,
-        stripe_subscription_id: stripeSubscriptionId,
-        current_period_start: periodStart,
-        current_period_end: periodEnd,
-      },
-      { onConflict: 'account_id' },
-    );
-
-    if (error) {
-      this.logger.error(`Failed to upsert subscription: ${error.message}`);
-    } else {
+    try {
+      await this.db
+        .insert(subscriptions)
+        .values({
+          accountId,
+          planId,
+          status: stripeSubscription.status,
+          stripeCustomerId,
+          stripeSubscriptionId,
+          currentPeriodStart: periodStart,
+          currentPeriodEnd: periodEnd,
+        })
+        .onConflictDoUpdate({
+          target: subscriptions.accountId,
+          set: {
+            planId,
+            status: stripeSubscription.status,
+            stripeCustomerId,
+            stripeSubscriptionId,
+            currentPeriodStart: periodStart,
+            currentPeriodEnd: periodEnd,
+          },
+        });
       this.logger.log(`Subscription created/updated for account ${accountId}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to upsert subscription: ${error.message}`);
     }
   }
 
@@ -246,24 +255,22 @@ export class StripeService {
    * When a subscription is updated (e.g. plan change, renewal), update the record.
    */
   private async handleSubscriptionUpdated(subscription: Stripe.Subscription) {
-    const supabase = this.supabaseService.getAdminClient();
     const { periodStart, periodEnd } = this.getPeriodDates(subscription);
 
-    const { error } = await supabase
-      .from('subscriptions')
-      .update({
-        status: subscription.status,
-        current_period_start: periodStart,
-        current_period_end: periodEnd,
-      })
-      .eq('stripe_subscription_id', subscription.id);
-
-    if (error) {
-      this.logger.error(`Failed to update subscription: ${error.message}`);
-    } else {
+    try {
+      await this.db
+        .update(subscriptions)
+        .set({
+          status: subscription.status,
+          currentPeriodStart: periodStart,
+          currentPeriodEnd: periodEnd,
+        })
+        .where(eq(subscriptions.stripeSubscriptionId, subscription.id));
       this.logger.log(
         `Subscription ${subscription.id} updated to status: ${subscription.status}`,
       );
+    } catch (error: any) {
+      this.logger.error(`Failed to update subscription: ${error.message}`);
     }
   }
 
@@ -271,23 +278,21 @@ export class StripeService {
    * When a subscription is deleted/canceled, update the record.
    */
   private async handleSubscriptionDeleted(subscription: Stripe.Subscription) {
-    const supabase = this.supabaseService.getAdminClient();
     const { periodEnd } = this.getPeriodDates(subscription);
 
-    const { error } = await supabase
-      .from('subscriptions')
-      .update({
-        status: 'canceled',
-        current_period_end: periodEnd,
-      })
-      .eq('stripe_subscription_id', subscription.id);
-
-    if (error) {
+    try {
+      await this.db
+        .update(subscriptions)
+        .set({
+          status: 'canceled',
+          currentPeriodEnd: periodEnd,
+        })
+        .where(eq(subscriptions.stripeSubscriptionId, subscription.id));
+      this.logger.log(`Subscription ${subscription.id} marked as canceled`);
+    } catch (error: any) {
       this.logger.error(
         `Failed to update canceled subscription: ${error.message}`,
       );
-    } else {
-      this.logger.log(`Subscription ${subscription.id} marked as canceled`);
     }
   }
 

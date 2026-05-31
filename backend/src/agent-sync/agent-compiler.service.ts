@@ -1,6 +1,8 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
-import { SupabaseService } from '../supabase/supabase.service';
+import { and, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { agents, categories } from '../db/schema';
+import { StorageService } from '../storage/storage.service';
 import { SkillsService } from '../skills/skills.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import * as crypto from 'crypto';
@@ -24,8 +26,8 @@ export class AgentCompilerService {
   private readonly logger = new Logger(AgentCompilerService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
-    private readonly supabase: SupabaseService,
+    @Inject(DB) private readonly db: Db,
+    private readonly storage: StorageService,
     @Inject(forwardRef(() => SkillsService))
     private readonly skillsService: SkillsService,
     @Inject(forwardRef(() => KnowledgeService))
@@ -40,17 +42,16 @@ export class AgentCompilerService {
     accountId: string,
     categoryId: string,
   ): Promise<CompiledAgent | null> {
-    const client = this.supabaseAdmin.getClient();
-
     // 1. Fetch category details
-    const { data: category, error: catError } = await client
-      .from('categories')
-      .select('id, name')
-      .eq('id', categoryId)
-      .eq('account_id', accountId)
-      .single();
+    const [category] = await this.db
+      .select({ id: categories.id, name: categories.name })
+      .from(categories)
+      .where(
+        and(eq(categories.id, categoryId), eq(categories.accountId, accountId)),
+      )
+      .limit(1);
 
-    if (catError || !category) {
+    if (!category) {
       this.logger.warn(
         `Category ${categoryId} not found for account ${accountId}`,
       );
@@ -115,17 +116,19 @@ export class AgentCompilerService {
     accountId: string,
     agentId: string,
   ): Promise<CompiledAgent | null> {
-    const client = this.supabaseAdmin.getClient();
-
     // 1. Fetch agent details
-    const { data: agent, error: agentError } = await client
-      .from('agents')
-      .select('id, name, slug, persona')
-      .eq('id', agentId)
-      .eq('account_id', accountId)
-      .single();
+    const [agent] = await this.db
+      .select({
+        id: agents.id,
+        name: agents.name,
+        slug: agents.slug,
+        persona: agents.persona,
+      })
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.accountId, accountId)))
+      .limit(1);
 
-    if (agentError || !agent) {
+    if (!agent) {
       this.logger.warn(`Agent ${agentId} not found for account ${accountId}`);
       return null;
     }
@@ -339,19 +342,9 @@ export class AgentCompilerService {
   ): Promise<string | null> {
     try {
       const storagePath = `${accountId}/${skillId}/${filename}`;
-      const adminClient = this.supabase.getAdminClient();
-      const { data, error } = await adminClient.storage
-        .from('skill-attachments')
-        .download(storagePath);
+      const buf = await this.storage.download('skill-attachments', storagePath);
 
-      if (error || !data) {
-        this.logger.warn(
-          `Failed to download attachment ${storagePath}: ${error?.message}`,
-        );
-        return null;
-      }
-
-      return await data.text();
+      return buf.toString('utf-8');
     } catch (err: any) {
       this.logger.warn(`Error fetching attachment content: ${err.message}`);
       return null;

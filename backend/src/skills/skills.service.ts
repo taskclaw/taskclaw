@@ -7,8 +7,32 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import {
+  and,
+  asc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  ne,
+  or,
+  type SQL,
+} from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  skills,
+  categorySkills,
+  agentSkills,
+  categories,
+  providerAgents,
+  tasks,
+  boardInstances,
+  boardSteps,
+  conversations,
+} from '../db/schema';
+import { StorageService } from '../storage/storage.service';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
@@ -52,8 +76,8 @@ export class SkillsService {
   private readonly logger = new Logger(SkillsService.name);
 
   constructor(
-    private readonly supabase: SupabaseService,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
+    private readonly storage: StorageService,
     @Inject(forwardRef(() => AgentSyncService))
     private readonly agentSyncService: AgentSyncService,
   ) {}
@@ -87,35 +111,34 @@ export class SkillsService {
     includeSystem?: boolean,
   ) {
     try {
-      const client = this.supabaseAdmin.getClient();
-      let query = client
-        .from('skills')
-        .select('*')
-        .order('name', { ascending: true });
+      const conditions: SQL[] = [];
 
       if (includeSystem) {
         // Return both account-owned and system-wide skills
-        query = query.or(`account_id.eq.${accountId},account_id.is.null`);
+        const ownership = or(
+          eq(skills.accountId, accountId),
+          isNull(skills.accountId),
+        );
+        if (ownership) conditions.push(ownership);
       } else {
-        query = query.eq('account_id', accountId);
+        conditions.push(eq(skills.accountId, accountId));
       }
 
       if (activeOnly) {
-        query = query.eq('is_active', true);
+        conditions.push(eq(skills.isActive, true));
       }
 
       if (skillType) {
-        query = query.eq('skill_type', skillType);
+        conditions.push(eq(skills.skillType, skillType));
       }
 
-      const { data, error } = await query;
+      const data = await this.db
+        .select()
+        .from(skills)
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(asc(skills.name));
 
-      if (error) {
-        this.logger.error(`Failed to fetch skills: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      return data || [];
+      return (data || []).map(snakeKeys);
     } catch (error) {
       this.logger.error('Error fetching skills:', error);
       throw error;
@@ -127,23 +150,35 @@ export class SkillsService {
    */
   async findOne(accessToken: string, accountId: string, id: string) {
     try {
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('skills')
-        .select('*')
-        .eq('id', id)
-        .eq('account_id', accountId)
-        .single();
+      const [data] = await this.db
+        .select()
+        .from(skills)
+        .where(and(eq(skills.id, id), eq(skills.accountId, accountId)))
+        .limit(1);
 
-      if (error || !data) {
+      if (!data) {
         throw new NotFoundException('Skill not found');
       }
 
+      // NOTE: returns the RAW camelCase row on purpose — internal callers
+      // (update/uploadAttachment/removeAttachment/getAttachmentContent) read
+      // `skill.fileAttachments`. The HTTP GET :id route re-keys via
+      // `getOne()` below; do not snake_key here.
       return data;
     } catch (error) {
       this.logger.error('Error fetching skill:', error);
       throw error;
     }
+  }
+
+  /**
+   * HTTP-facing single-skill fetch — same as `findOne` but re-keyed to the
+   * snake_case shape the frontend reads (`skill_type`, `is_active`,
+   * `file_attachments`, `created_at`, …). Kept separate from `findOne` because
+   * that method is also consumed internally with camelCase keys.
+   */
+  async getOne(accessToken: string, accountId: string, id: string) {
+    return snakeKeys(await this.findOne(accessToken, accountId, id));
   }
 
   /**
@@ -155,18 +190,16 @@ export class SkillsService {
         return [];
       }
 
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('skills')
-        .select('*')
-        .eq('account_id', accountId)
-        .in('id', skillIds)
-        .eq('is_active', true);
-
-      if (error) {
-        this.logger.error(`Failed to fetch skills by IDs: ${error.message}`);
-        throw new Error(error.message);
-      }
+      const data = await this.db
+        .select()
+        .from(skills)
+        .where(
+          and(
+            eq(skills.accountId, accountId),
+            inArray(skills.id, skillIds),
+            eq(skills.isActive, true),
+          ),
+        );
 
       return data || [];
     } catch (error) {
@@ -189,43 +222,66 @@ export class SkillsService {
   ) {
     const includeLocal = opts.include_local ?? true;
     const includeMarket = opts.include_market ?? false;
-    const client = this.supabaseAdmin.getClient();
 
     const q = (prefix ?? '').trim();
-    const buildBaseQuery = () =>
-      client
-        .from('skills')
-        .select('id, name, description, source_type, source_uri, source_version, locally_available, is_active')
-        .eq('account_id', accountId)
-        .eq('is_active', true)
-        .order('name', { ascending: true })
-        .limit(30);
 
-    const availableQuery =
-      q.length > 0
-        ? buildBaseQuery().ilike('name', `%${q}%`)
-        : buildBaseQuery();
+    const availableColumns = {
+      id: skills.id,
+      name: skills.name,
+      description: skills.description,
+      source_type: skills.sourceType,
+      source_uri: skills.sourceUri,
+      source_version: skills.sourceVersion,
+      locally_available: skills.locallyAvailable,
+      is_active: skills.isActive,
+    };
+
+    const availableConditions = [
+      eq(skills.accountId, accountId),
+      eq(skills.isActive, true),
+    ];
+    if (q.length > 0) {
+      availableConditions.push(ilike(skills.name, `%${q}%`));
+    }
+
     // Available = imported and ready to use. Disk-scan rows that haven't been
     // adopted into an agent are surfaced separately under `local`.
-    const { data: availableRaw, error: availableErr } = await availableQuery;
-    if (availableErr) throw new Error(availableErr.message);
+    const availableRaw = await this.db
+      .select(availableColumns)
+      .from(skills)
+      .where(and(...availableConditions))
+      .orderBy(asc(skills.name))
+      .limit(30);
 
     const available = (availableRaw ?? []).filter(
-      (row: any) => row.source_type !== 'disk-scan' || row.locally_available === false,
+      (row: any) =>
+        row.source_type !== 'disk-scan' || row.locally_available === false,
     );
 
     let local: any[] = [];
     if (includeLocal) {
-      const localBase = client
-        .from('skills')
-        .select('id, name, description, source_type, source_uri, source_version, locally_available')
-        .eq('account_id', accountId)
-        .eq('source_type', 'disk-scan')
-        .eq('locally_available', true)
-        .order('name', { ascending: true })
+      const localConditions = [
+        eq(skills.accountId, accountId),
+        eq(skills.sourceType, 'disk-scan'),
+        eq(skills.locallyAvailable, true),
+      ];
+      if (q.length > 0) {
+        localConditions.push(ilike(skills.name, `%${q}%`));
+      }
+      const data = await this.db
+        .select({
+          id: skills.id,
+          name: skills.name,
+          description: skills.description,
+          source_type: skills.sourceType,
+          source_uri: skills.sourceUri,
+          source_version: skills.sourceVersion,
+          locally_available: skills.locallyAvailable,
+        })
+        .from(skills)
+        .where(and(...localConditions))
+        .orderBy(asc(skills.name))
         .limit(30);
-      const { data, error } = q.length > 0 ? await localBase.ilike('name', `%${q}%`) : await localBase;
-      if (error) throw new Error(error.message);
       local = data ?? [];
     }
 
@@ -242,22 +298,24 @@ export class SkillsService {
    * existing row.
    */
   async importFromDisk(accountId: string, sourceUri: string) {
-    const client = this.supabaseAdmin.getClient();
-    const { data: source, error: srcErr } = await client
-      .from('skills')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('source_type', 'disk-scan')
-      .eq('source_uri', sourceUri)
-      .maybeSingle();
+    const [source] = await this.db
+      .select()
+      .from(skills)
+      .where(
+        and(
+          eq(skills.accountId, accountId),
+          eq(skills.sourceType, 'disk-scan'),
+          eq(skills.sourceUri, sourceUri),
+        ),
+      )
+      .limit(1);
 
-    if (srcErr) throw new Error(srcErr.message);
     if (!source) throw new NotFoundException('Disk skill not found');
 
     // Already imported? source_type='disk-scan' rows ARE the import. We just
     // mark them eligible for normal use by linking to the agent context. So
     // for v1, "import" returns the disk-scan row itself.
-    return source;
+    return snakeKeys(source);
   }
 
   /**
@@ -266,39 +324,30 @@ export class SkillsService {
    */
   async getCategorySkillsMap(accessToken: string, accountId: string) {
     try {
-      const client = this.supabaseAdmin.getClient();
-
-      const { data, error } = await client.from('category_skills').select(
-        `
-          category_id,
-          skills (
-            id,
-            account_id,
-            name,
-            description,
-            is_active
-          )
-        `,
-      );
-
-      if (error) {
-        this.logger.error(
-          `Failed to fetch category skills map: ${error.message}`,
-        );
-        throw new Error(error.message);
-      }
+      const data = await this.db.query.categorySkills.findMany({
+        with: {
+          skill: {
+            columns: {
+              id: true,
+              accountId: true,
+              name: true,
+              description: true,
+              isActive: true,
+            },
+          },
+        },
+      });
 
       const map: Record<string, any[]> = {};
       for (const row of data || []) {
-        const skill = (row as any).skills;
-        if (!skill || !skill.is_active || skill.account_id !== accountId)
-          continue;
-        if (!map[row.category_id]) map[row.category_id] = [];
-        map[row.category_id].push({
+        const skill = (row as any).skill;
+        if (!skill || !skill.isActive || skill.accountId !== accountId) continue;
+        if (!map[row.categoryId]) map[row.categoryId] = [];
+        map[row.categoryId].push({
           id: skill.id,
           name: skill.name,
           description: skill.description,
-          is_active: skill.is_active,
+          is_active: skill.isActive,
         });
       }
       return map;
@@ -317,41 +366,43 @@ export class SkillsService {
     categoryId: string,
   ) {
     try {
-      const client = this.supabaseAdmin.getClient();
-
       // Join category_skills with skills
-      const { data, error } = await client
-        .from('category_skills')
-        .select(
-          `
-          skill_id,
-          skills (
-            id,
-            account_id,
-            name,
-            description,
-            instructions,
-            is_active,
-            file_attachments
-          )
-        `,
-        )
-        .eq('category_id', categoryId);
+      const data = await this.db.query.categorySkills.findMany({
+        where: eq(categorySkills.categoryId, categoryId),
+        with: {
+          skill: {
+            columns: {
+              id: true,
+              accountId: true,
+              name: true,
+              description: true,
+              instructions: true,
+              isActive: true,
+              fileAttachments: true,
+            },
+          },
+        },
+      });
 
-      if (error) {
-        this.logger.error(`Failed to fetch category skills: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      // Filter and flatten
-      const skills = (data || [])
-        .map((cs: any) => cs.skills)
+      // Filter and flatten — re-key the relational `skill` and restore the
+      // snake_case response shape callers depend on.
+      const skillsList = (data || [])
+        .map((cs: any) => cs.skill)
         .filter(
           (skill: any) =>
-            skill && skill.is_active && skill.account_id === accountId,
-        );
+            skill && skill.isActive && skill.accountId === accountId,
+        )
+        .map((skill: any) => ({
+          id: skill.id,
+          account_id: skill.accountId,
+          name: skill.name,
+          description: skill.description,
+          instructions: skill.instructions,
+          is_active: skill.isActive,
+          file_attachments: skill.fileAttachments,
+        }));
 
-      return skills;
+      return skillsList;
     } catch (error) {
       this.logger.error('Error fetching category skills:', error);
       throw error;
@@ -367,41 +418,43 @@ export class SkillsService {
     agentId: string,
   ) {
     try {
-      const client = this.supabaseAdmin.getClient();
+      const data = await this.db.query.agentSkills.findMany({
+        where: and(
+          eq(agentSkills.agentId, agentId),
+          eq(agentSkills.isActive, true),
+        ),
+        with: {
+          skill: {
+            columns: {
+              id: true,
+              accountId: true,
+              name: true,
+              description: true,
+              instructions: true,
+              isActive: true,
+              fileAttachments: true,
+            },
+          },
+        },
+      });
 
-      const { data, error } = await client
-        .from('agent_skills')
-        .select(
-          `
-          skill_id,
-          is_active,
-          skills (
-            id,
-            account_id,
-            name,
-            description,
-            instructions,
-            is_active,
-            file_attachments
-          )
-        `,
-        )
-        .eq('agent_id', agentId)
-        .eq('is_active', true);
-
-      if (error) {
-        this.logger.error(`Failed to fetch agent skills: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      const skills = (data || [])
-        .map((as: any) => as.skills)
+      const skillsList = (data || [])
+        .map((as: any) => as.skill)
         .filter(
           (skill: any) =>
-            skill && skill.is_active && skill.account_id === accountId,
-        );
+            skill && skill.isActive && skill.accountId === accountId,
+        )
+        .map((skill: any) => ({
+          id: skill.id,
+          account_id: skill.accountId,
+          name: skill.name,
+          description: skill.description,
+          instructions: skill.instructions,
+          is_active: skill.isActive,
+          file_attachments: skill.fileAttachments,
+        }));
 
-      return skills;
+      return skillsList;
     } catch (error) {
       this.logger.error('Error fetching agent skills:', error);
       throw error;
@@ -418,15 +471,17 @@ export class SkillsService {
     createDto: CreateSkillDto,
   ) {
     try {
-      const client = this.supabaseAdmin.getClient();
-
       // Check for duplicate name
-      const { data: existing } = await client
-        .from('skills')
-        .select('id')
-        .eq('account_id', accountId)
-        .eq('name', createDto.name)
-        .single();
+      const [existing] = await this.db
+        .select({ id: skills.id })
+        .from(skills)
+        .where(
+          and(
+            eq(skills.accountId, accountId),
+            eq(skills.name, createDto.name),
+          ),
+        )
+        .limit(1);
 
       if (existing) {
         throw new ConflictException(
@@ -434,29 +489,21 @@ export class SkillsService {
         );
       }
 
-      const { data, error } = await client
-        .from('skills')
-        .insert([
-          {
-            account_id: accountId,
-            created_by: userId,
-            name: createDto.name,
-            description: createDto.description || '',
-            instructions: createDto.instructions,
-            is_active:
-              createDto.is_active !== undefined ? createDto.is_active : true,
-            skill_type: createDto.skill_type || 'general',
-          },
-        ])
-        .select()
-        .single();
+      const rows = await this.db
+        .insert(skills)
+        .values({
+          accountId,
+          createdBy: userId,
+          name: createDto.name,
+          description: createDto.description || '',
+          instructions: createDto.instructions,
+          isActive:
+            createDto.is_active !== undefined ? createDto.is_active : true,
+          skillType: createDto.skill_type || 'general',
+        })
+        .returning();
 
-      if (error) {
-        this.logger.error(`Failed to create skill: ${error.message}`);
-        throw new Error(error.message);
-      }
-
-      return data;
+      return snakeKeys(rows[0]);
     } catch (error) {
       this.logger.error('Error creating skill:', error);
       throw error;
@@ -478,14 +525,17 @@ export class SkillsService {
 
       // Check for duplicate name if changing name
       if (updateDto.name) {
-        const client = this.supabaseAdmin.getClient();
-        const { data: existing } = await client
-          .from('skills')
-          .select('id')
-          .eq('account_id', accountId)
-          .eq('name', updateDto.name)
-          .neq('id', id)
-          .single();
+        const [existing] = await this.db
+          .select({ id: skills.id })
+          .from(skills)
+          .where(
+            and(
+              eq(skills.accountId, accountId),
+              eq(skills.name, updateDto.name),
+              ne(skills.id, id),
+            ),
+          )
+          .limit(1);
 
         if (existing) {
           throw new ConflictException(
@@ -494,38 +544,28 @@ export class SkillsService {
         }
       }
 
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('skills')
-        .update({
-          ...(updateDto.name !== undefined && { name: updateDto.name }),
-          ...(updateDto.description !== undefined && {
-            description: updateDto.description,
-          }),
-          ...(updateDto.instructions !== undefined && {
-            instructions: updateDto.instructions,
-          }),
-          ...(updateDto.is_active !== undefined && {
-            is_active: updateDto.is_active,
-          }),
-          ...(updateDto.skill_type !== undefined && {
-            skill_type: updateDto.skill_type,
-          }),
-        })
-        .eq('id', id)
-        .eq('account_id', accountId)
-        .select()
-        .single();
+      const patch: Partial<typeof skills.$inferInsert> = {};
+      if (updateDto.name !== undefined) patch.name = updateDto.name;
+      if (updateDto.description !== undefined)
+        patch.description = updateDto.description;
+      if (updateDto.instructions !== undefined)
+        patch.instructions = updateDto.instructions;
+      if (updateDto.is_active !== undefined) patch.isActive = updateDto.is_active;
+      if (updateDto.skill_type !== undefined)
+        patch.skillType = updateDto.skill_type;
 
-      if (error) {
-        this.logger.error(`Failed to update skill: ${error.message}`);
-        throw new Error(error.message);
-      }
+      const rows = await this.db
+        .update(skills)
+        .set(patch)
+        .where(and(eq(skills.id, id), eq(skills.accountId, accountId)))
+        .returning();
+
+      const data = rows[0];
 
       // Trigger sync for all linked categories
       await this.syncLinkedCategories(accountId, id);
 
-      return data;
+      return snakeKeys(data);
     } catch (error) {
       this.logger.error('Error updating skill:', error);
       throw error;
@@ -545,34 +585,39 @@ export class SkillsService {
       // Verify skill and category belong to account
       await this.findOne(accessToken, accountId, skillId);
 
-      const client = this.supabaseAdmin.getClient();
-
       // Verify category exists and belongs to account
-      const { data: category } = await client
-        .from('categories')
-        .select('id')
-        .eq('id', categoryId)
-        .eq('account_id', accountId)
-        .single();
+      const [category] = await this.db
+        .select({ id: categories.id })
+        .from(categories)
+        .where(
+          and(
+            eq(categories.id, categoryId),
+            eq(categories.accountId, accountId),
+          ),
+        )
+        .limit(1);
 
       if (!category) {
         throw new NotFoundException('Agent not found');
       }
 
       // Insert association
-      const { data, error } = await client
-        .from('category_skills')
-        .insert([{ category_id: categoryId, skill_id: skillId }])
-        .select()
-        .single();
-
-      if (error) {
-        if (error.code === '23505') {
+      let data;
+      try {
+        const rows = await this.db
+          .insert(categorySkills)
+          .values({ categoryId, skillId })
+          .returning();
+        data = rows[0];
+      } catch (error: any) {
+        if (error?.code === '23505') {
           // Unique violation
           throw new ConflictException('Skill already linked to this agent');
         }
-        this.logger.error(`Failed to link skill to category: ${error.message}`);
-        throw new Error(error.message);
+        this.logger.error(
+          `Failed to link skill to category: ${error?.message}`,
+        );
+        throw new Error(error?.message);
       }
 
       // Trigger sync for the linked category
@@ -602,19 +647,14 @@ export class SkillsService {
       // Verify ownership
       await this.findOne(accessToken, accountId, skillId);
 
-      const client = this.supabaseAdmin.getClient();
-      const { error } = await client
-        .from('category_skills')
-        .delete()
-        .eq('category_id', categoryId)
-        .eq('skill_id', skillId);
-
-      if (error) {
-        this.logger.error(
-          `Failed to unlink skill from category: ${error.message}`,
+      await this.db
+        .delete(categorySkills)
+        .where(
+          and(
+            eq(categorySkills.categoryId, categoryId),
+            eq(categorySkills.skillId, skillId),
+          ),
         );
-        throw new Error(error.message);
-      }
 
       // Trigger sync for the unlinked category
       this.agentSyncService.markStale(accountId, categoryId).catch((err) => {
@@ -639,22 +679,14 @@ export class SkillsService {
       await this.findOne(accessToken, accountId, id);
 
       // Get linked categories BEFORE deleting (cascade will remove category_skills rows)
-      const client = this.supabaseAdmin.getClient();
-      const { data: linkedCategories } = await client
-        .from('category_skills')
-        .select('category_id')
-        .eq('skill_id', id);
+      const linkedCategories = await this.db
+        .select({ category_id: categorySkills.categoryId })
+        .from(categorySkills)
+        .where(eq(categorySkills.skillId, id));
 
-      const { error } = await client
-        .from('skills')
-        .delete()
-        .eq('id', id)
-        .eq('account_id', accountId);
-
-      if (error) {
-        this.logger.error(`Failed to delete skill: ${error.message}`);
-        throw new Error(error.message);
-      }
+      await this.db
+        .delete(skills)
+        .where(and(eq(skills.id, id), eq(skills.accountId, accountId)));
 
       // Trigger sync for all previously linked categories
       for (const link of linkedCategories || []) {
@@ -700,62 +732,46 @@ export class SkillsService {
       // Verify skill exists and belongs to account
       const skill = await this.findOne(accessToken, accountId, skillId);
 
-      // Upload to Supabase Storage
+      // Upload to object storage
       const storagePath = `${accountId}/${skillId}/${file.originalname}`;
-      const adminClient = this.supabase.getAdminClient();
 
-      const { error: uploadError } = await adminClient.storage
-        .from(STORAGE_BUCKET)
-        .upload(storagePath, file.buffer, {
-          contentType: file.mimetype,
-          upsert: true,
-        });
-
-      if (uploadError) {
-        this.logger.error(`Failed to upload file: ${uploadError.message}`);
-        throw new Error(`Storage upload failed: ${uploadError.message}`);
-      }
+      await this.storage.upload(
+        STORAGE_BUCKET,
+        storagePath,
+        file.buffer,
+        file.mimetype,
+      );
 
       // Get the public URL
-      const { data: urlData } = adminClient.storage
-        .from(STORAGE_BUCKET)
-        .getPublicUrl(storagePath);
+      const publicUrl = this.storage.getPublicUrl(STORAGE_BUCKET, storagePath);
 
       const attachment = {
         name: file.originalname,
-        url: urlData.publicUrl,
+        url: publicUrl,
         size: file.size,
         type: file.mimetype,
         uploaded_at: new Date().toISOString(),
       };
 
       // Update the skill's file_attachments array
-      const existingAttachments = skill.file_attachments || [];
+      const existingAttachments = (skill.fileAttachments as any[]) || [];
       const filteredAttachments = existingAttachments.filter(
         (a: any) => a.name !== file.originalname,
       );
       const updatedAttachments = [...filteredAttachments, attachment];
 
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('skills')
-        .update({ file_attachments: updatedAttachments })
-        .eq('id', skillId)
-        .eq('account_id', accountId)
-        .select()
-        .single();
+      const rows = await this.db
+        .update(skills)
+        .set({ fileAttachments: updatedAttachments })
+        .where(and(eq(skills.id, skillId), eq(skills.accountId, accountId)))
+        .returning();
 
-      if (error) {
-        this.logger.error(
-          `Failed to update skill attachments: ${error.message}`,
-        );
-        throw new Error(error.message);
-      }
+      const data = rows[0];
 
       // Trigger sync for linked categories
       await this.syncLinkedCategories(accountId, skillId);
 
-      return data;
+      return snakeKeys(data);
     } catch (error) {
       this.logger.error('Error uploading skill attachment:', error);
       throw error;
@@ -763,7 +779,7 @@ export class SkillsService {
   }
 
   /**
-   * Read text content of a file attachment from Supabase Storage
+   * Read text content of a file attachment from object storage
    */
   async getAttachmentContent(
     accessToken: string,
@@ -773,7 +789,7 @@ export class SkillsService {
   ): Promise<{ content: string; filename: string }> {
     const skill = await this.findOne(accessToken, accountId, skillId);
 
-    const existingAttachments = skill.file_attachments || [];
+    const existingAttachments = (skill.fileAttachments as any[]) || [];
     const attachment = existingAttachments.find(
       (a: any) => a.name === filename,
     );
@@ -782,19 +798,17 @@ export class SkillsService {
     }
 
     const storagePath = `${accountId}/${skillId}/${filename}`;
-    const adminClient = this.supabase.getAdminClient();
-    const { data, error } = await adminClient.storage
-      .from(STORAGE_BUCKET)
-      .download(storagePath);
-
-    if (error || !data) {
+    let buffer: Buffer;
+    try {
+      buffer = await this.storage.download(STORAGE_BUCKET, storagePath);
+    } catch (error: any) {
       this.logger.error(
         `Failed to download attachment ${storagePath}: ${error?.message}`,
       );
       throw new Error(`Failed to read file content: ${error?.message}`);
     }
 
-    const content = await data.text();
+    const content = buffer.toString('utf-8');
     return { content, filename };
   }
 
@@ -810,7 +824,7 @@ export class SkillsService {
     try {
       const skill = await this.findOne(accessToken, accountId, skillId);
 
-      const existingAttachments = skill.file_attachments || [];
+      const existingAttachments = (skill.fileAttachments as any[]) || [];
       const attachment = existingAttachments.find(
         (a: any) => a.name === filename,
       );
@@ -819,45 +833,34 @@ export class SkillsService {
         throw new NotFoundException(`Attachment "${filename}" not found`);
       }
 
-      // Delete from Supabase Storage
+      // Delete from object storage
       const storagePath = `${accountId}/${skillId}/${filename}`;
-      const adminClient = this.supabase.getAdminClient();
 
-      const { error: deleteError } = await adminClient.storage
-        .from(STORAGE_BUCKET)
-        .remove([storagePath]);
-
-      if (deleteError) {
+      try {
+        await this.storage.remove(STORAGE_BUCKET, [storagePath]);
+      } catch (error: any) {
         this.logger.error(
-          `Failed to delete file from storage: ${deleteError.message}`,
+          `Failed to delete file from storage: ${error?.message}`,
         );
-        throw new Error(`Storage delete failed: ${deleteError.message}`);
+        throw new Error(`Storage delete failed: ${error?.message}`);
       }
 
       const updatedAttachments = existingAttachments.filter(
         (a: any) => a.name !== filename,
       );
 
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('skills')
-        .update({ file_attachments: updatedAttachments })
-        .eq('id', skillId)
-        .eq('account_id', accountId)
-        .select()
-        .single();
+      const rows = await this.db
+        .update(skills)
+        .set({ fileAttachments: updatedAttachments })
+        .where(and(eq(skills.id, skillId), eq(skills.accountId, accountId)))
+        .returning();
 
-      if (error) {
-        this.logger.error(
-          `Failed to update skill attachments: ${error.message}`,
-        );
-        throw new Error(error.message);
-      }
+      const data = rows[0];
 
       // Trigger sync for linked categories
       await this.syncLinkedCategories(accountId, skillId);
 
-      return data;
+      return snakeKeys(data);
     } catch (error) {
       this.logger.error('Error removing skill attachment:', error);
       throw error;
@@ -872,11 +875,10 @@ export class SkillsService {
     skillId: string,
   ): Promise<void> {
     try {
-      const client = this.supabaseAdmin.getClient();
-      const { data: linkedCategories } = await client
-        .from('category_skills')
-        .select('category_id')
-        .eq('skill_id', skillId);
+      const linkedCategories = await this.db
+        .select({ category_id: categorySkills.categoryId })
+        .from(categorySkills)
+        .where(eq(categorySkills.skillId, skillId));
 
       for (const link of linkedCategories || []) {
         this.agentSyncService
@@ -897,62 +899,88 @@ export class SkillsService {
    * with skill count, sync status, task counts, and board assignments.
    */
   async getAgentsDashboard(accessToken: string, accountId: string) {
-    const client = this.supabaseAdmin.getClient();
-
     // 1. Get all categories that have at least one linked skill
-    const { data: categorySkills, error: csError } = await client
-      .from('category_skills')
-      .select('category_id, skill:skills(id, name, is_active, account_id)');
-
-    if (csError) {
-      this.logger.error(`Failed to fetch category skills: ${csError.message}`);
+    let categorySkillsRows;
+    try {
+      categorySkillsRows = await this.db.query.categorySkills.findMany({
+        columns: { categoryId: true },
+        with: {
+          skill: {
+            columns: {
+              id: true,
+              name: true,
+              isActive: true,
+              accountId: true,
+            },
+          },
+        },
+      });
+    } catch (error: any) {
+      this.logger.error(`Failed to fetch category skills: ${error?.message}`);
       return [];
     }
 
-    // Group skills by category (filter by account_id in JS — PostgREST can't filter nested relations)
+    // Group skills by category (filter by account_id in JS)
     const categorySkillMap: Record<
       string,
       { skillCount: number; skillNames: string[] }
     > = {};
-    for (const cs of categorySkills || []) {
+    for (const cs of categorySkillsRows || []) {
       const skill = (cs as any).skill;
-      if (!skill || !skill.is_active || skill.account_id !== accountId)
-        continue;
-      if (!categorySkillMap[cs.category_id]) {
-        categorySkillMap[cs.category_id] = { skillCount: 0, skillNames: [] };
+      if (!skill || !skill.isActive || skill.accountId !== accountId) continue;
+      if (!categorySkillMap[cs.categoryId]) {
+        categorySkillMap[cs.categoryId] = { skillCount: 0, skillNames: [] };
       }
-      categorySkillMap[cs.category_id].skillCount++;
-      categorySkillMap[cs.category_id].skillNames.push(skill.name);
+      categorySkillMap[cs.categoryId].skillCount++;
+      categorySkillMap[cs.categoryId].skillNames.push(skill.name);
     }
 
     const categoryIds = Object.keys(categorySkillMap);
     if (categoryIds.length === 0) return [];
 
     // 2. Get category details
-    const { data: categories, error: catError } = await client
-      .from('categories')
-      .select('id, name, color, icon')
-      .eq('account_id', accountId)
-      .in('id', categoryIds);
-
-    if (catError) {
+    let categoryRows: any[] = [];
+    try {
+      categoryRows = await this.db
+        .select({
+          id: categories.id,
+          name: categories.name,
+          color: categories.color,
+          icon: categories.icon,
+        })
+        .from(categories)
+        .where(
+          and(
+            eq(categories.accountId, accountId),
+            inArray(categories.id, categoryIds),
+          ),
+        );
+    } catch (error: any) {
       this.logger.error(
-        `[AgentsDashboard] categories query failed: ${catError.message}`,
+        `[AgentsDashboard] categories query failed: ${error?.message}`,
       );
     }
 
     // 3. Get provider_agents sync status
-    const { data: providerAgents } = await client
-      .from('provider_agents')
-      .select('category_id, sync_status, last_synced_at')
-      .eq('account_id', accountId)
-      .in('category_id', categoryIds);
+    const providerAgentRows = await this.db
+      .select({
+        category_id: providerAgents.categoryId,
+        sync_status: providerAgents.syncStatus,
+        last_synced_at: providerAgents.lastSyncedAt,
+      })
+      .from(providerAgents)
+      .where(
+        and(
+          eq(providerAgents.accountId, accountId),
+          inArray(providerAgents.categoryId, categoryIds),
+        ),
+      );
 
     const syncMap: Record<
       string,
       { sync_status: string; last_synced_at: string | null }
     > = {};
-    for (const pa of providerAgents || []) {
+    for (const pa of providerAgentRows || []) {
       syncMap[pa.category_id] = {
         sync_status: pa.sync_status,
         last_synced_at: pa.last_synced_at,
@@ -961,20 +989,28 @@ export class SkillsService {
 
     // 4. Count active tasks per agent category
     // Tasks where override_category_id = this category
-    const { data: overrideTasks } = await client
-      .from('tasks')
-      .select('override_category_id')
-      .eq('account_id', accountId)
-      .eq('completed', false)
-      .in('override_category_id', categoryIds);
+    const overrideTasks = await this.db
+      .select({ override_category_id: tasks.overrideCategoryId })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.accountId, accountId),
+          eq(tasks.completed, false),
+          inArray(tasks.overrideCategoryId, categoryIds),
+        ),
+      );
 
     // Tasks where category_id = this category (legacy/direct)
-    const { data: directTasks } = await client
-      .from('tasks')
-      .select('category_id')
-      .eq('account_id', accountId)
-      .eq('completed', false)
-      .in('category_id', categoryIds);
+    const directTasks = await this.db
+      .select({ category_id: tasks.categoryId })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.accountId, accountId),
+          eq(tasks.completed, false),
+          inArray(tasks.categoryId, categoryIds),
+        ),
+      );
 
     const taskCountMap: Record<string, number> = {};
     for (const t of overrideTasks || []) {
@@ -991,20 +1027,34 @@ export class SkillsService {
 
     // 5. Get board assignments for each category
     // Board-level defaults
-    const { data: boardDefaults } = await client
-      .from('board_instances')
-      .select('id, name, default_category_id')
-      .eq('account_id', accountId)
-      .eq('is_archived', false)
-      .in('default_category_id', categoryIds);
+    const boardDefaults = await this.db
+      .select({
+        id: boardInstances.id,
+        name: boardInstances.name,
+        default_category_id: boardInstances.defaultCategoryId,
+      })
+      .from(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.accountId, accountId),
+          eq(boardInstances.isArchived, false),
+          inArray(boardInstances.defaultCategoryId, categoryIds),
+        ),
+      );
 
     // Step-level links
-    const { data: stepLinks } = await client
-      .from('board_steps')
-      .select(
-        'linked_category_id, board_instance_id, board:board_instances!board_instance_id(id, name)',
-      )
-      .in('linked_category_id', categoryIds);
+    const stepLinks = await this.db.query.boardSteps.findMany({
+      where: inArray(boardSteps.linkedCategoryId, categoryIds),
+      columns: {
+        linkedCategoryId: true,
+        boardInstanceId: true,
+      },
+      with: {
+        boardInstance: {
+          columns: { id: true, name: true },
+        },
+      },
+    });
 
     const boardAssignmentMap: Record<string, string[]> = {};
     for (const b of boardDefaults || []) {
@@ -1017,36 +1067,47 @@ export class SkillsService {
       }
     }
     for (const s of stepLinks || []) {
-      const board = (s as any).board;
-      if (s.linked_category_id && board?.name) {
-        if (!boardAssignmentMap[s.linked_category_id])
-          boardAssignmentMap[s.linked_category_id] = [];
-        if (!boardAssignmentMap[s.linked_category_id].includes(board.name)) {
-          boardAssignmentMap[s.linked_category_id].push(board.name);
+      const board = (s as any).boardInstance;
+      const linkedCategoryId = (s as any).linkedCategoryId;
+      if (linkedCategoryId && board?.name) {
+        if (!boardAssignmentMap[linkedCategoryId])
+          boardAssignmentMap[linkedCategoryId] = [];
+        if (!boardAssignmentMap[linkedCategoryId].includes(board.name)) {
+          boardAssignmentMap[linkedCategoryId].push(board.name);
         }
       }
     }
 
     // 6. Count active conversations per agent category (last 30 min = "working")
     const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-    const { data: recentConvos } = await client
-      .from('conversations')
-      .select('task:tasks!inner(category_id, override_category_id)')
-      .eq('account_id', accountId)
-      .gte('updated_at', thirtyMinAgo);
+    const recentConvos = await this.db.query.conversations.findMany({
+      where: and(
+        eq(conversations.accountId, accountId),
+        gte(conversations.updatedAt, thirtyMinAgo),
+      ),
+      columns: { id: true },
+      with: {
+        task: {
+          columns: {
+            categoryId: true,
+            overrideCategoryId: true,
+          },
+        },
+      },
+    });
 
     const activeConvoMap: Record<string, number> = {};
     for (const c of recentConvos || []) {
       const task = (c as any).task;
-      const catId = task?.override_category_id || task?.category_id;
+      const catId = task?.overrideCategoryId || task?.categoryId;
       if (catId && categoryIds.includes(catId)) {
         activeConvoMap[catId] = (activeConvoMap[catId] || 0) + 1;
       }
     }
 
     // 7. Build response
-    return (categories || []).map((cat: any) => {
-      const skills = categorySkillMap[cat.id] || {
+    return (categoryRows || []).map((cat: any) => {
+      const skillsForCat = categorySkillMap[cat.id] || {
         skillCount: 0,
         skillNames: [],
       };
@@ -1068,8 +1129,8 @@ export class SkillsService {
         color: cat.color,
         icon: cat.icon,
         status,
-        skill_count: skills.skillCount,
-        skill_names: skills.skillNames,
+        skill_count: skillsForCat.skillCount,
+        skill_names: skillsForCat.skillNames,
         sync_status: sync.sync_status,
         last_synced_at: sync.last_synced_at,
         active_task_count: taskCountMap[cat.id] || 0,

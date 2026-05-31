@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { and, eq, sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { accountUsers, agents, tasks } from '../db/schema';
 import {
   MentionContext,
   MentionExpandService,
@@ -54,7 +56,7 @@ export class MentionDispatchService {
   private readonly logger = new Logger(MentionDispatchService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly expand: MentionExpandService,
   ) {}
 
@@ -105,25 +107,34 @@ export class MentionDispatchService {
   // ------------------------------------------------------------
 
   private async loadContext(accountId: string): Promise<MentionContext> {
-    const client = this.supabaseAdmin.getClient();
     const users = new Map<string, string>();
-    const agents = new Map<string, string>();
-    const tasks = new Map<string, string>();
+    const agentMap = new Map<string, string>();
+    const tasksMap = new Map<string, string>();
 
+    // Drizzle's relational query returns the joined account_users row under the
+    // relation name (`user`); PostgREST returned it under the table name
+    // (`users`). Re-key to `users` so the downstream shape is unchanged.
     const [userRows, agentRows] = await Promise.all([
-      client
-        .from('account_users')
-        .select('user_id, users(id, full_name, email)')
-        .eq('account_id', accountId),
-      client
-        .from('agents')
-        .select('id, name, slug, is_active')
-        .eq('account_id', accountId)
-        .eq('is_active', true),
+      this.db.query.accountUsers.findMany({
+        where: eq(accountUsers.accountId, accountId),
+        columns: { userId: true },
+        with: {
+          user: { columns: { id: true, name: true, email: true } },
+        },
+      }),
+      this.db
+        .select({
+          id: agents.id,
+          name: agents.name,
+          slug: agents.slug,
+          is_active: agents.isActive,
+        })
+        .from(agents)
+        .where(and(eq(agents.accountId, accountId), eq(agents.isActive, true))),
     ]);
 
-    for (const row of userRows.data ?? []) {
-      const u = (row as any).users;
+    for (const row of userRows) {
+      const u = (row as any).user;
       if (!u) continue;
       // Prefer full_name with spaces stripped, fall back to email local-part.
       if (u.full_name) {
@@ -136,16 +147,16 @@ export class MentionDispatchService {
       }
     }
 
-    for (const a of agentRows.data ?? []) {
-      if (a.name) agents.set(String(a.name).split(/\s+/).join(''), a.id);
-      if (a.slug) agents.set(String(a.slug), a.id);
+    for (const a of agentRows) {
+      if (a.name) agentMap.set(String(a.name).split(/\s+/).join(''), a.id);
+      if (a.slug) agentMap.set(String(a.slug), a.id);
     }
 
     // tasks map is left empty here for v1 — populating it requires either a
     // T-1234 short id column (not yet shipped) or a substring scan over
     // recent tasks. Future enhancement; the regex still works without it.
 
-    return { users, agents, tasks };
+    return { users, agents: agentMap, tasks: tasksMap };
   }
 
   private async spawnTaskForAgent(args: {
@@ -157,20 +168,22 @@ export class MentionDispatchService {
     mention_depth: number;
     mention_text: string;
   }) {
-    const client = this.supabaseAdmin.getClient();
-
     // Idempotency: skip if a task with this exact (source_task_id, agent_id,
     // mention_depth) tuple already exists. Prevents duplicate spawns when a
     // notes field is saved twice with the same mention.
-    const { data: existing } = await client
-      .from('tasks')
-      .select('id')
-      .eq('account_id', args.account_id)
-      .eq('assignee_type', 'agent')
-      .eq('assignee_id', args.agent_id)
-      .filter('input_context->>source_task_id', 'eq', args.source_task_id)
-      .filter('input_context->>mention_depth', 'eq', String(args.mention_depth))
-      .maybeSingle();
+    const [existing] = await this.db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.accountId, args.account_id),
+          eq(tasks.assigneeType, 'agent'),
+          eq(tasks.assigneeId, args.agent_id),
+          sql`${tasks.inputContext}->>'source_task_id' = ${args.source_task_id}`,
+          sql`${tasks.inputContext}->>'mention_depth' = ${String(args.mention_depth)}`,
+        ),
+      )
+      .limit(1);
     if (existing) {
       return {
         task_id: existing.id,
@@ -179,33 +192,35 @@ export class MentionDispatchService {
       };
     }
 
-    const { data, error } = await client
-      .from('tasks')
-      .insert({
-        account_id: args.account_id,
+    const rows = await this.db
+      .insert(tasks)
+      .values({
+        accountId: args.account_id,
         title: `Follow-up for @${args.agent_name}`,
         notes: this.excerpt(args.mention_text),
         status: 'To-Do',
         priority: 'Medium',
-        assignee_type: 'agent',
-        assignee_id: args.agent_id,
-        creator_type: 'user',
-        creator_id: args.source_user_id,
-        input_context: {
+        assigneeType: 'agent',
+        assigneeId: args.agent_id,
+        creatorType: 'user',
+        creatorId: args.source_user_id,
+        inputContext: {
           trigger: 'mention',
           source_task_id: args.source_task_id,
           source_user_id: args.source_user_id,
           mention_depth: args.mention_depth,
         },
       })
-      .select('id')
-      .single();
-    if (error || !data) {
+      .returning({ id: tasks.id });
+    const data = rows[0];
+    if (!data) {
       this.logger.error(
-        `tasks.insert failed for mention spawn: ${error?.message ?? 'unknown'}`,
+        `tasks.insert failed for mention spawn: ${'unknown'}`,
       );
       return null;
     }
+    // Note: Drizzle throws on DB error (caught by the caller's try/catch in
+    // dispatch()), so the `!data` guard above only fires on an empty returning.
     this.logger.log(
       `Mention spawned task ${data.id} for agent ${args.agent_name} (depth=${args.mention_depth}, source=${args.source_task_id})`,
     );

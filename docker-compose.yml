@@ -1,26 +1,23 @@
 # ============================================================
-# TaskClaw — Docker Compose
+# TaskClaw — Docker Compose (plain PostgreSQL stack)
 # ============================================================
 #
-# Quick start (BYO Supabase — you provide your own Supabase URL):
+# Quick start:
+#   cp .env.example .env
 #   cp backend/.env.example backend/.env
 #   cp frontend/.env.example frontend/.env
 #   docker compose up -d
 #
-# Full local stack (includes Supabase — zero external dependencies):
-#   cp .env.example .env
-#   docker compose --profile supabase up -d
-#
 # Pin a version:
 #   TASKCLAW_VERSION=v1.0.0 docker compose up -d
 #
+# Stack: postgres (pgvector) + minio (S3 storage) + redis + backend + frontend + ollama.
+# No Supabase — auth is local (NestJS/JWT), storage is MinIO, realtime is pg LISTEN/NOTIFY + SSE.
 # ============================================================
 
 name: taskclaw
 
 services:
-  # ── Core services (always run) ──────────────────────────────
-
   backend:
     image: taskclaw/backend:${TASKCLAW_VERSION:-latest}
     build:
@@ -31,30 +28,34 @@ services:
     env_file: ./backend/.env
     environment:
       EDITION: community
+      # Docker-network overrides (so containers reach each other by service name)
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
       REDIS_URL: redis://redis:6379
-      # Override .env's localhost URL so the container reaches Kong via Docker network
-      SUPABASE_URL: http://kong:8000
-      # PRD §10.1 — shadow-write task_runs alongside BullMQ for one release
-      # cycle, then graduate to source-of-truth.
+      AUTH_LOCAL: "true"
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9000}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # PRD §10.1 — shadow-write task_runs alongside BullMQ.
       FEATURE_TASK_RUNS_V2: ${FEATURE_TASK_RUNS_V2:-true}
     volumes:
       - ./backend/dist:/app/dist
-      # Opt-in read-only mounts for Skills Sync local-folder runner (PRD §4.6).
-      # SKILLS_HOST_DIR  — usually ~/.claude (default skill location).
-      # WORKSPACE_HOST_DIR — usually ~/Workspace; any repo-scoped
-      #                      .claude/skills inside gets picked up too.
-      # Both fall back to /tmp when unset so the mount stays harmless.
+      # Opt-in read-only mounts for the Skills Sync local-folder runner.
       - ${SKILLS_HOST_DIR:-/tmp}:/host-skills:ro
       - ${WORKSPACE_HOST_DIR:-/tmp}:/host-workspace:ro
     depends_on:
+      db:
+        condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3003/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
     restart: unless-stopped
     user: "1000:1000"
 
@@ -68,11 +69,52 @@ services:
     env_file: ./frontend/.env
     environment:
       NEXT_PUBLIC_EDITION: community
-      NEXT_PUBLIC_API_URL: http://backend:3003
+      # Single-origin: the frontend proxies /api -> backend over the Docker network.
+      INTERNAL_API_URL: http://backend:3003
+      SITE_URL: ${SITE_URL:-http://localhost:3002}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     depends_on:
       - backend
     restart: unless-stopped
     user: "1000:1000"
+
+  db:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Create required extensions on first init (pgvector, uuid-ossp, pgcrypto).
+      - ./docker/volumes/db/init-extensions.sql:/docker-entrypoint-initdb.d/00-extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   ollama:
     image: ollama/ollama:latest
@@ -100,210 +142,8 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # ── Supabase services (opt-in: --profile supabase) ──────────
-  # Use these if you don't have a Supabase Cloud instance.
-  # Make sure to update backend/.env and frontend/.env to point
-  # to the local Supabase instance (see .env.example files).
-
-  db:
-    image: supabase/postgres:15.8.1.085
-    profiles: [supabase]
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      JWT_SECRET: ${JWT_SECRET:-change-me-generate-a-secret-at-least-32-chars-long}
-      JWT_EXP: ${JWT_EXP:-3600}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-      # Set passwords for Supabase internal roles (auth, storage, etc.)
-      - ./docker/volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
-      # Set JWT secret in postgres settings for PostgREST / GoTrue
-      - ./docker/volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    restart: unless-stopped
-
-  kong:
-    image: kong:2.8.1
-    profiles: [supabase]
-    ports:
-      - "${SUPABASE_API_PORT:-7431}:8000"
-    environment:
-      KONG_DATABASE: "off"
-      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
-      KONG_DNS_ORDER: LAST,A,CNAME
-      KONG_PLUGINS: request-transformer,cors,key-auth,acl
-    volumes:
-      - ./docker/volumes/api/kong.yml:/var/lib/kong/kong.yml:ro
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
-  auth:
-    image: supabase/gotrue:v2.186.0
-    profiles: [supabase]
-    environment:
-      GOTRUE_API_HOST: 0.0.0.0
-      GOTRUE_API_PORT: 9999
-      API_EXTERNAL_URL: http://localhost:${SUPABASE_API_PORT:-7431}/auth/v1
-      GOTRUE_DB_DRIVER: postgres
-      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
-      GOTRUE_SITE_URL: http://localhost:${FRONTEND_PORT:-3002}
-      GOTRUE_URI_ALLOW_LIST: "*"
-      GOTRUE_JWT_SECRET: ${JWT_SECRET:-change-me-generate-a-secret-at-least-32-chars-long}
-      GOTRUE_JWT_EXP: 3600
-      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
-      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
-      GOTRUE_MAILER_AUTOCONFIRM: "true"
-      GOTRUE_SMTP_ADMIN_EMAIL: admin@example.com
-      GOTRUE_SMTP_HOST: supabase-mail
-      GOTRUE_SMTP_PORT: 2500
-      GOTRUE_SMTP_USER: fake_mail_user
-      GOTRUE_SMTP_PASS: fake_mail_password
-      GOTRUE_SMTP_SENDER_NAME: TaskClaw
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9999/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
-  rest:
-    image: postgrest/postgrest:v12.2.0
-    profiles: [supabase]
-    environment:
-      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
-      PGRST_DB_SCHEMAS: public,storage,graphql_public
-      PGRST_DB_ANON_ROLE: anon
-      PGRST_JWT_SECRET: ${JWT_SECRET:-change-me-generate-a-secret-at-least-32-chars-long}
-      PGRST_DB_USE_LEGACY_GUC_VARS: "false"
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
-  studio:
-    image: supabase/studio:latest
-    profiles: [supabase]
-    ports:
-      - "${SUPABASE_STUDIO_PORT:-7430}:3000"
-    environment:
-      STUDIO_PG_META_URL: http://meta:8080
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      SUPABASE_URL: http://kong:8000
-      SUPABASE_PUBLIC_URL: http://localhost:${SUPABASE_API_PORT:-7431}
-      SUPABASE_ANON_KEY: ${ANON_KEY}
-      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
-    depends_on:
-      kong:
-        condition: service_started
-      auth:
-        condition: service_healthy
-      meta:
-        condition: service_started
-    restart: unless-stopped
-
-  storage:
-    image: public.ecr.aws/supabase/storage-api:v1.35.3
-    profiles: [supabase]
-    environment:
-      ANON_KEY: ${ANON_KEY}
-      SERVICE_KEY: ${SERVICE_ROLE_KEY}
-      POSTGREST_URL: http://rest:3000
-      PGRST_JWT_SECRET: ${JWT_SECRET:-change-me-generate-a-secret-at-least-32-chars-long}
-      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD:-postgres}@db:5432/postgres
-      FILE_SIZE_LIMIT: 52428800
-      STORAGE_BACKEND: file
-      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
-      TENANT_ID: stub
-      REGION: stub
-      GLOBAL_S3_BUCKET: stub
-    volumes:
-      - storage_data:/var/lib/storage   # must be named volume (not bind mount) for xattr support on macOS
-    depends_on:
-      db:
-        condition: service_healthy
-      rest:
-        condition: service_started
-      auth:
-        condition: service_healthy
-    restart: unless-stopped
-
-  imgproxy:
-    image: darthsim/imgproxy:v3.8.0
-    profiles: [supabase]
-    environment:
-      IMGPROXY_BIND: ":5001"
-      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
-      IMGPROXY_USE_ETAG: "true"
-      IMGPROXY_ENABLE_WEBP_DETECTION: "true"
-    volumes:
-      - storage_data:/var/lib/storage
-    restart: unless-stopped
-
-  meta:
-    image: supabase/postgres-meta:v0.84.2
-    profiles: [supabase]
-    environment:
-      PG_META_PORT: 8080
-      PG_META_DB_HOST: db
-      PG_META_DB_PORT: 5432
-      PG_META_DB_NAME: postgres
-      PG_META_DB_USER: supabase_admin
-      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # Supabase Realtime — powers live updates (postgres_changes) for the
-  # execution/blocked-task views. Kong routes /realtime/v1 -> realtime-dev:4000/socket.
-  realtime:
-    image: supabase/realtime:v2.30.23
-    profiles: [supabase]
-    networks:
-      default:
-        # Realtime resolves its tenant from the request Host header. The
-        # self-host seed creates a tenant named "realtime-dev", so Kong must
-        # reach this service under that name — hence the alias.
-        aliases:
-          - realtime-dev
-    environment:
-      PORT: "4000"
-      DB_HOST: db
-      DB_PORT: "5432"
-      DB_USER: supabase_admin
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      DB_NAME: postgres
-      DB_AFTER_CONNECT_QUERY: "SET search_path TO realtime"
-      DB_ENC_KEY: supabaserealtime
-      API_JWT_SECRET: ${JWT_SECRET:-change-me-generate-a-secret-at-least-32-chars-long}
-      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE:-UpNVntn3cDxHJpq99YMc1T1AQgQpc8kfYTuRgBiYa15BLrx8etQoXz3gZv1/u2oq}
-      ERL_AFLAGS: "-proto_dist inet_tcp"
-      DNS_NODES: "''"
-      RLIMIT_NOFILE: "10000"
-      APP_NAME: realtime
-      SEED_SELF_HOST: "true"
-      RUN_JANITOR: "true"
-    command: >
-      sh -c "/app/bin/migrate && /app/bin/realtime eval 'Realtime.Release.seeds(Realtime.Repo)' && /app/bin/server"
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-
 volumes:
   redis_data:
   db_data:
-  storage_data:
+  minio_data:
   ollama_data:

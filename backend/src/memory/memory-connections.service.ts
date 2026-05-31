@@ -1,5 +1,8 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger, NotFoundException } from '@nestjs/common';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { memoryConnections } from '../db/schema';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 export interface MemoryConnectionRow {
   id: string;
@@ -38,62 +41,62 @@ export interface UpdateMemoryConnectionDto {
 export class MemoryConnectionsService {
   private readonly logger = new Logger(MemoryConnectionsService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   /**
    * List all memory connections for an account
    */
   async findAll(accountId: string): Promise<MemoryConnectionRow[]> {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('memory_connections')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('is_account_default', { ascending: false })
-      .order('created_at', { ascending: false });
+    const rows = await this.db
+      .select()
+      .from(memoryConnections)
+      .where(eq(memoryConnections.accountId, accountId))
+      .orderBy(
+        desc(memoryConnections.isAccountDefault),
+        desc(memoryConnections.createdAt),
+      );
 
-    if (error) {
-      this.logger.error(`findAll() failed: ${error.message}`);
-      throw new Error(error.message);
-    }
-    return data || [];
+    return rows.map(snakeKeys) as unknown as MemoryConnectionRow[];
   }
 
   /**
    * Get the active default connection for an account (if any)
    */
   async findActive(accountId: string): Promise<MemoryConnectionRow | null> {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('memory_connections')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('is_active', true)
-      .eq('is_account_default', true)
-      .single();
+    const [row] = await this.db
+      .select()
+      .from(memoryConnections)
+      .where(
+        and(
+          eq(memoryConnections.accountId, accountId),
+          eq(memoryConnections.isActive, true),
+          eq(memoryConnections.isAccountDefault, true),
+        ),
+      )
+      .limit(1);
 
-    if (error && error.code !== 'PGRST116') {
-      this.logger.warn(`findActive() error: ${error.message}`);
-    }
-    return data || null;
+    return row ? (snakeKeys(row) as unknown as MemoryConnectionRow) : null;
   }
 
   /**
    * Find connection by ID
    */
   async findOne(id: string, accountId: string): Promise<MemoryConnectionRow> {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('memory_connections')
-      .select('*')
-      .eq('id', id)
-      .eq('account_id', accountId)
-      .single();
+    const [row] = await this.db
+      .select()
+      .from(memoryConnections)
+      .where(
+        and(
+          eq(memoryConnections.id, id),
+          eq(memoryConnections.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (error || !data) {
+    if (!row) {
       throw new NotFoundException(`Memory connection ${id} not found`);
     }
-    return data;
+    return snakeKeys(row) as unknown as MemoryConnectionRow;
   }
 
   /**
@@ -103,25 +106,19 @@ export class MemoryConnectionsService {
     accountId: string,
     dto: CreateMemoryConnectionDto,
   ): Promise<MemoryConnectionRow> {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('memory_connections')
-      .insert({
-        account_id: accountId,
-        adapter_slug: dto.adapter_slug,
+    const [row] = await this.db
+      .insert(memoryConnections)
+      .values({
+        accountId,
+        adapterSlug: dto.adapter_slug,
         name: dto.name,
         config: dto.config || {},
-        is_active: dto.is_active ?? true,
-        is_account_default: dto.is_account_default ?? false,
+        isActive: dto.is_active ?? true,
+        isAccountDefault: dto.is_account_default ?? false,
       })
-      .select()
-      .single();
+      .returning();
 
-    if (error) {
-      this.logger.error(`create() failed: ${error.message}`);
-      throw new Error(error.message);
-    }
-    return data;
+    return snakeKeys(row) as unknown as MemoryConnectionRow;
   }
 
   /**
@@ -132,47 +129,41 @@ export class MemoryConnectionsService {
     accountId: string,
     dto: UpdateMemoryConnectionDto,
   ): Promise<MemoryConnectionRow> {
-    const client = this.supabaseAdmin.getClient();
-
     const updates: Record<string, any> = {
-      updated_at: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     if (dto.name !== undefined) updates.name = dto.name;
     if (dto.config !== undefined) updates.config = dto.config;
-    if (dto.is_active !== undefined) updates.is_active = dto.is_active;
+    if (dto.is_active !== undefined) updates.isActive = dto.is_active;
     if (dto.is_account_default !== undefined) {
-      updates.is_account_default = dto.is_account_default;
+      updates.isAccountDefault = dto.is_account_default;
     }
 
-    const { data, error } = await client
-      .from('memory_connections')
-      .update(updates)
-      .eq('id', id)
-      .eq('account_id', accountId)
-      .select()
-      .single();
+    const [row] = await this.db
+      .update(memoryConnections)
+      .set(updates)
+      .where(
+        and(
+          eq(memoryConnections.id, id),
+          eq(memoryConnections.accountId, accountId),
+        ),
+      )
+      .returning();
 
-    if (error) {
-      this.logger.error(`update() failed: ${error.message}`);
-      throw new Error(error.message);
-    }
-    return data;
+    return snakeKeys(row) as unknown as MemoryConnectionRow;
   }
 
   /**
    * Delete a memory connection
    */
   async remove(id: string, accountId: string): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-    const { error } = await client
-      .from('memory_connections')
-      .delete()
-      .eq('id', id)
-      .eq('account_id', accountId);
-
-    if (error) {
-      this.logger.error(`remove() failed: ${error.message}`);
-      throw new Error(error.message);
-    }
+    await this.db
+      .delete(memoryConnections)
+      .where(
+        and(
+          eq(memoryConnections.id, id),
+          eq(memoryConnections.accountId, accountId),
+        ),
+      );
   }
 }

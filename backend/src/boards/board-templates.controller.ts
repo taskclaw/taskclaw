@@ -11,6 +11,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { BoardTemplatesService } from './board-templates.service';
 import { InstallTemplateDto } from './dto/install-template.dto';
 import { AuthGuard } from '../common/guards/auth.guard';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @ApiTags('Board Templates')
 @Controller()
@@ -24,8 +25,10 @@ export class BoardTemplatesController {
   }
 
   @Get('board-templates/:id')
-  findOne(@Param('id') id: string) {
-    return this.boardTemplatesService.findOne(id);
+  // `findOne` is dual-use: `install()` reads its raw camelCase row internally,
+  // so we re-key here at the HTTP boundary rather than in the service.
+  async findOne(@Param('id') id: string) {
+    return snakeKeys(await this.boardTemplatesService.findOne(id));
   }
 
   @Post('accounts/:accountId/boards/install')

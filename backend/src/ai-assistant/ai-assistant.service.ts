@@ -1,7 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SupabaseService } from '../supabase/supabase.service';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  aiConversations,
+  aiMessages,
+  integrationConnections,
+  integrationDefinitions,
+} from '../db/schema';
 import { EmbeddingService } from './services/embedding.service';
 import { SYSTEM_PROMPT, PROMPTS } from './system-prompt';
 import { ChatOpenAI } from '@langchain/openai';
@@ -29,8 +36,7 @@ export class AiAssistantService {
 
   constructor(
     private configService: ConfigService,
-    private supabaseService: SupabaseService,
-    private supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private embeddingService: EmbeddingService,
   ) {
     const apiKey = this.configService.get<string>('OPENROUTER_API_KEY');
@@ -76,42 +82,46 @@ export class AiAssistantService {
         };
       }
 
-      const client = this.supabaseService.getAdminClient();
       let currentConversationId = conversationId;
 
       // 1. Create or Verify Conversation
       if (user?.id) {
         if (!currentConversationId) {
-          const { data: conv, error } = await client
-            .from('ai_conversations')
-            .insert({
-              user_id: user.id,
-              title:
-                message.substring(0, 50) + (message.length > 50 ? '...' : ''),
-            })
-            .select()
-            .single();
-          if (!error && conv) currentConversationId = conv.id;
-        } else {
-          // Verify ownership
-          const { data: conv } = await client
-            .from('ai_conversations')
-            .select('id')
-            .eq('id', currentConversationId)
-            .eq('user_id', user.id)
-            .single();
-          if (!conv) {
-            // Fallback to new conversation if not found/owned
-            currentConversationId = undefined;
-            const { data: newConv } = await client
-              .from('ai_conversations')
-              .insert({
-                user_id: user.id,
+          try {
+            const convRows = await this.db
+              .insert(aiConversations)
+              .values({
+                userId: user.id,
                 title:
                   message.substring(0, 50) + (message.length > 50 ? '...' : ''),
               })
-              .select()
-              .single();
+              .returning();
+            const conv = convRows[0];
+            if (conv) currentConversationId = conv.id;
+          } catch {
+            // Match prior behavior: insert failure leaves conversation unset.
+          }
+        } else {
+          // Verify ownership
+          const conv = await this.db.query.aiConversations.findFirst({
+            columns: { id: true },
+            where: and(
+              eq(aiConversations.id, currentConversationId),
+              eq(aiConversations.userId, user.id),
+            ),
+          });
+          if (!conv) {
+            // Fallback to new conversation if not found/owned
+            currentConversationId = undefined;
+            const newConvRows = await this.db
+              .insert(aiConversations)
+              .values({
+                userId: user.id,
+                title:
+                  message.substring(0, 50) + (message.length > 50 ? '...' : ''),
+              })
+              .returning();
+            const newConv = newConvRows[0];
             if (newConv) currentConversationId = newConv.id;
           }
         }
@@ -119,8 +129,8 @@ export class AiAssistantService {
 
       // 2. Save User Message
       if (currentConversationId && user?.id) {
-        await client.from('ai_messages').insert({
-          conversation_id: currentConversationId,
+        await this.db.insert(aiMessages).values({
+          conversationId: currentConversationId,
           role: 'user',
           content: message,
         });
@@ -155,14 +165,12 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
           }
 
           try {
-            // Use RPC for execution
-            const client = this.supabaseService.getAdminClient();
-            const { data, error } = await client.rpc('exec_sql', {
-              query_text: cleanedQuery,
-            });
-
-            if (error) return `Error: ${error.message}`;
-            return JSON.stringify(data);
+            // SECURITY-SENSITIVE: arbitrary-SQL escape hatch (formerly the
+            // `exec_sql` RPC). The SELECT-only guardrail above is the ONLY
+            // gate — `sql.raw` runs the already-built query string verbatim
+            // with NO parameterization. Flagged for security review.
+            const result = await this.db.execute(sql.raw(cleanedQuery));
+            return JSON.stringify(result.rows);
           } catch (e: any) {
             return `Error: ${e.message}`;
           }
@@ -203,41 +211,28 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
             // Generate embedding for the search query
             const queryEmbedding =
               await this.embeddingService.generateEmbedding(query);
-            const client = this.supabaseService.getAdminClient();
 
-            let result;
+            // Vector search functions STAY as SQL functions (per migration
+            // guide). The embedding is cast to ::vector; args are parameterized.
+            const embeddingJson = JSON.stringify(queryEmbedding);
+
+            let result: any[] | undefined;
 
             if (entity_type === 'projects') {
-              const { data, error } = await client.rpc(
-                'search_projects_vector',
-                {
-                  query_embedding: JSON.stringify(queryEmbedding),
-                  match_limit: limit,
-                  similarity_threshold: 0.3,
-                },
+              const res = await this.db.execute(
+                sql`select * from search_projects_vector(${embeddingJson}::vector, ${limit}, ${0.3})`,
               );
-              if (error) return `Error: ${error.message}`;
-              result = data;
+              result = res.rows;
             } else if (entity_type === 'users') {
-              const { data, error } = await client.rpc('search_users_vector', {
-                query_embedding: JSON.stringify(queryEmbedding),
-                match_limit: limit,
-                similarity_threshold: 0.3,
-              });
-              if (error) return `Error: ${error.message}`;
-              result = data;
-            } else if (entity_type === 'messages') {
-              const { data, error } = await client.rpc(
-                'search_messages_vector',
-                {
-                  query_embedding: JSON.stringify(queryEmbedding),
-                  conversation_id_filter: conversation_id || null,
-                  match_limit: limit,
-                  similarity_threshold: 0.3,
-                },
+              const res = await this.db.execute(
+                sql`select * from search_users_vector(${embeddingJson}::vector, ${limit}, ${0.3})`,
               );
-              if (error) return `Error: ${error.message}`;
-              result = data;
+              result = res.rows;
+            } else if (entity_type === 'messages') {
+              const res = await this.db.execute(
+                sql`select * from search_messages_vector(${embeddingJson}::vector, ${conversation_id || null}, ${limit}, ${0.3})`,
+              );
+              result = res.rows;
             }
 
             if (!result || result.length === 0) {
@@ -336,15 +331,15 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
 
           // Only save if it's meaningful
           if (content || tool_calls) {
-            const dbMsg: any = {
-              conversation_id: currentConversationId,
+            const dbMsg: typeof aiMessages.$inferInsert = {
+              conversationId: currentConversationId,
               role,
               content: content || '', // Ensure content is string
             };
-            if (tool_calls) dbMsg.tool_calls = tool_calls; // Supabase handles jsonb
-            if (tool_call_id) dbMsg.tool_call_id = tool_call_id;
+            if (tool_calls) dbMsg.toolCalls = tool_calls; // jsonb column
+            if (tool_call_id) dbMsg.toolCallId = tool_call_id;
 
-            await client.from('ai_messages').insert(dbMsg);
+            await this.db.insert(aiMessages).values(dbMsg);
           }
         }
       }
@@ -366,16 +361,17 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
     const tools: DynamicStructuredTool[] = [];
 
     try {
-      const client = this.supabaseAdmin.getClient();
-
-      // Always include the board tasks query tool
-      tools.push(createQueryBoardTasksTool(this.supabaseAdmin, accountId));
+      // Always include the board tasks query tool (Drizzle-backed).
+      tools.push(createQueryBoardTasksTool(this.db, accountId));
 
       // Resolve definition IDs for elevenlabs and replicate slugs
-      const { data: defRows } = await client
-        .from('integration_definitions')
-        .select('id, slug')
-        .in('slug', ['elevenlabs', 'replicate']);
+      const defRows = await this.db
+        .select({
+          id: integrationDefinitions.id,
+          slug: integrationDefinitions.slug,
+        })
+        .from(integrationDefinitions)
+        .where(inArray(integrationDefinitions.slug, ['elevenlabs', 'replicate']));
 
       const defMap: Record<string, string> = {};
       for (const def of defRows ?? []) {
@@ -386,12 +382,16 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
       const elevenLabsDefId = defMap['elevenlabs'];
       let elevenLabsConn: { id: string } | null = null;
       if (elevenLabsDefId) {
-        const { data: rows } = await client
-          .from('integration_connections')
-          .select('id')
-          .eq('account_id', accountId)
-          .eq('definition_id', elevenLabsDefId)
-          .eq('status', 'active')
+        const rows = await this.db
+          .select({ id: integrationConnections.id })
+          .from(integrationConnections)
+          .where(
+            and(
+              eq(integrationConnections.accountId, accountId),
+              eq(integrationConnections.definitionId, elevenLabsDefId),
+              eq(integrationConnections.status, 'active'),
+            ),
+          )
           .limit(1);
         elevenLabsConn = rows?.[0] ?? null;
       }
@@ -400,22 +400,27 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
       const replicateDefId = defMap['replicate'];
       let replicateConn: { id: string } | null = null;
       if (replicateDefId) {
-        const { data: rows } = await client
-          .from('integration_connections')
-          .select('id')
-          .eq('account_id', accountId)
-          .eq('definition_id', replicateDefId)
-          .eq('status', 'active')
+        const rows = await this.db
+          .select({ id: integrationConnections.id })
+          .from(integrationConnections)
+          .where(
+            and(
+              eq(integrationConnections.accountId, accountId),
+              eq(integrationConnections.definitionId, replicateDefId),
+              eq(integrationConnections.status, 'active'),
+            ),
+          )
           .limit(1);
         replicateConn = rows?.[0] ?? null;
       }
 
       if (elevenLabsConn) {
-        const { data: connRow } = await client
-          .from('integration_connections')
-          .select('credentials')
-          .eq('id', elevenLabsConn.id)
-          .single();
+        const connRows = await this.db
+          .select({ credentials: integrationConnections.credentials })
+          .from(integrationConnections)
+          .where(eq(integrationConnections.id, elevenLabsConn.id))
+          .limit(1);
+        const connRow = connRows[0];
         if (connRow?.credentials) {
           try {
             const creds = JSON.parse(decrypt(connRow.credentials));
@@ -431,11 +436,12 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
       }
 
       if (replicateConn) {
-        const { data: connRow } = await client
-          .from('integration_connections')
-          .select('credentials')
-          .eq('id', replicateConn.id)
-          .single();
+        const connRows = await this.db
+          .select({ credentials: integrationConnections.credentials })
+          .from(integrationConnections)
+          .where(eq(integrationConnections.id, replicateConn.id))
+          .limit(1);
+        const connRow = connRows[0];
         if (connRow?.credentials) {
           try {
             const creds = JSON.parse(decrypt(connRow.credentials));
@@ -458,50 +464,47 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
   }
 
   async getUserConversations(userId: string) {
-    const client = this.supabaseService.getAdminClient();
-    const { data } = await client
-      .from('ai_conversations')
-      .select('*')
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
+    const data = await this.db
+      .select()
+      .from(aiConversations)
+      .where(eq(aiConversations.userId, userId))
+      .orderBy(desc(aiConversations.updatedAt));
     return data || [];
   }
 
   async getConversationMessages(conversationId: string, userId: string) {
-    const client = this.supabaseService.getAdminClient();
-
     // Check access: Owner OR Public
-    const { data: conv, error } = await client
-      .from('ai_conversations')
-      .select('id, user_id, is_public')
-      .eq('id', conversationId)
-      .single();
+    const conv = await this.db.query.aiConversations.findFirst({
+      columns: { id: true, userId: true, isPublic: true },
+      where: eq(aiConversations.id, conversationId),
+    });
 
-    if (error || !conv) return [];
+    if (!conv) return [];
 
     // Allow if user owns it OR if it's public
-    if (conv.user_id !== userId && !conv.is_public) {
+    if (conv.userId !== userId && !conv.isPublic) {
       return [];
     }
 
-    const { data } = await client
-      .from('ai_messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
+    const data = await this.db
+      .select()
+      .from(aiMessages)
+      .where(eq(aiMessages.conversationId, conversationId))
+      .orderBy(asc(aiMessages.createdAt));
 
     return data || [];
   }
 
   async deleteConversation(conversationId: string, userId: string) {
-    const client = this.supabaseService.getAdminClient();
-    const { error } = await client
-      .from('ai_conversations')
-      .delete()
-      .eq('id', conversationId)
-      .eq('user_id', userId);
+    await this.db
+      .delete(aiConversations)
+      .where(
+        and(
+          eq(aiConversations.id, conversationId),
+          eq(aiConversations.userId, userId),
+        ),
+      );
 
-    if (error) throw new Error(error.message);
     return { success: true };
   }
 
@@ -510,14 +513,16 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
     userId: string,
     title: string,
   ) {
-    const client = this.supabaseService.getAdminClient();
-    const { error } = await client
-      .from('ai_conversations')
-      .update({ title })
-      .eq('id', conversationId)
-      .eq('user_id', userId);
+    await this.db
+      .update(aiConversations)
+      .set({ title })
+      .where(
+        and(
+          eq(aiConversations.id, conversationId),
+          eq(aiConversations.userId, userId),
+        ),
+      );
 
-    if (error) throw new Error(error.message);
     return { success: true };
   }
 
@@ -526,26 +531,29 @@ DO NOT use current_setting('my.user_id') or similar PostgreSQL session variables
     userId: string,
     isPublic: boolean,
   ) {
-    const client = this.supabaseService.getAdminClient();
-    const { error } = await client
-      .from('ai_conversations')
-      .update({ is_public: isPublic })
-      .eq('id', conversationId)
-      .eq('user_id', userId);
+    await this.db
+      .update(aiConversations)
+      .set({ isPublic })
+      .where(
+        and(
+          eq(aiConversations.id, conversationId),
+          eq(aiConversations.userId, userId),
+        ),
+      );
 
-    if (error) throw new Error(error.message);
     return { success: true, isPublic };
   }
 
   async deleteConversations(conversationIds: string[], userId: string) {
-    const client = this.supabaseService.getAdminClient();
-    const { error } = await client
-      .from('ai_conversations')
-      .delete()
-      .in('id', conversationIds)
-      .eq('user_id', userId);
+    await this.db
+      .delete(aiConversations)
+      .where(
+        and(
+          inArray(aiConversations.id, conversationIds),
+          eq(aiConversations.userId, userId),
+        ),
+      );
 
-    if (error) throw new Error(error.message);
     return { success: true };
   }
 }

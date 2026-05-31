@@ -1,8 +1,15 @@
 import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Queue } from 'bullmq';
-import { InjectQueue } from '@nestjs/bullmq';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, desc, eq, ne } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  sources,
+  syncJobs,
+  tasks,
+  categories,
+  integrationConnections,
+} from '../db/schema';
 import { AdapterRegistry } from '../adapters/adapter.registry';
 import { SYNC_QUEUE_NAME } from './sync-queue.module';
 import { SyncJobData } from './sync.processor';
@@ -23,7 +30,7 @@ export class SyncService {
   private bullQueue: Queue<SyncJobData> | null = null;
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly adapterRegistry: AdapterRegistry,
     @Optional()
     @Inject('BULL_QUEUE_AVAILABLE')
@@ -38,11 +45,6 @@ export class SyncService {
   setBullQueue(queue: Queue<SyncJobData>) {
     this.bullQueue = queue;
     this.logger.log('BullMQ queue attached to SyncService.');
-  }
-
-  /** Use admin client for all sync operations to bypass RLS */
-  private get db() {
-    return this.supabaseAdmin.getClient();
   }
 
   /**
@@ -108,34 +110,30 @@ export class SyncService {
 
     try {
       // Find all active sources that are due for sync
-      const { data: sources, error } = await this.db
-        .from('sources')
-        .select('*')
-        .eq('is_active', true)
-        .neq('sync_status', 'syncing');
-
-      if (error) {
-        this.logger.error(`Failed to fetch sources: ${error.message}`);
-        return;
-      }
+      const activeSources = await this.db
+        .select()
+        .from(sources)
+        .where(
+          and(eq(sources.isActive, true), ne(sources.syncStatus, 'syncing')),
+        );
 
       const now = new Date();
 
-      for (const source of sources || []) {
-        const lastSync = source.last_synced_at
-          ? new Date(source.last_synced_at)
+      for (const source of activeSources) {
+        const lastSync = source.lastSyncedAt
+          ? new Date(source.lastSyncedAt)
           : new Date(0);
         const minutesSinceSync =
           (now.getTime() - lastSync.getTime()) / (1000 * 60);
 
         // Check if it's time to sync this source
-        if (minutesSinceSync >= (source.sync_interval_minutes || 30)) {
+        if (minutesSinceSync >= (source.syncIntervalMinutes || 30)) {
           this.logger.log(
             `Source ${source.id} (${source.provider}) is due for sync`,
           );
 
           // Route through the queue if available, otherwise direct execution
-          await this.addSyncJob(source.id, source.account_id, 'cron');
+          await this.addSyncJob(source.id, source.accountId, 'cron');
         }
       }
     } catch (error) {
@@ -159,36 +157,36 @@ export class SyncService {
 
     try {
       // Fetch source details
-      const { data: source, error: sourceError } = await this.db
-        .from('sources')
-        .select('*')
-        .eq('id', sourceId)
-        .single();
+      const [source] = await this.db
+        .select()
+        .from(sources)
+        .where(eq(sources.id, sourceId))
+        .limit(1);
 
-      if (sourceError || !source) {
+      if (!source) {
         throw new Error(`Source ${sourceId} not found`);
       }
 
       // Create sync job record
-      const { data: syncJob, error: jobError } = await this.db
-        .from('sync_jobs')
-        .insert({
-          source_id: sourceId,
+      const syncJobRows = await this.db
+        .insert(syncJobs)
+        .values({
+          sourceId,
           direction: 'inbound',
           status: 'running',
         })
-        .select()
-        .single();
+        .returning();
+      const syncJob = syncJobRows[0];
 
-      if (jobError || !syncJob) {
+      if (!syncJob) {
         throw new Error('Failed to create sync job');
       }
 
       // Update source status to syncing
       await this.db
-        .from('sources')
-        .update({ sync_status: 'syncing' })
-        .eq('id', sourceId);
+        .update(sources)
+        .set({ syncStatus: 'syncing' })
+        .where(eq(sources.id, sourceId));
 
       try {
         // Perform the actual sync
@@ -196,27 +194,27 @@ export class SyncService {
 
         // Update source status
         await this.db
-          .from('sources')
-          .update({
-            sync_status: 'idle',
-            last_synced_at: new Date().toISOString(),
-            last_sync_error: null,
+          .update(sources)
+          .set({
+            syncStatus: 'idle',
+            lastSyncedAt: new Date().toISOString(),
+            lastSyncError: null,
           })
-          .eq('id', sourceId);
+          .where(eq(sources.id, sourceId));
 
         // Update sync job
         await this.db
-          .from('sync_jobs')
-          .update({
+          .update(syncJobs)
+          .set({
             status: 'completed',
-            completed_at: new Date().toISOString(),
-            tasks_synced: result.tasks_synced,
-            tasks_created: result.tasks_created,
-            tasks_updated: result.tasks_updated,
-            tasks_deleted: result.tasks_deleted,
-            error_log: result.errors.join('\n') || null,
+            completedAt: new Date().toISOString(),
+            tasksSynced: result.tasks_synced,
+            tasksCreated: result.tasks_created,
+            tasksUpdated: result.tasks_updated,
+            tasksDeleted: result.tasks_deleted,
+            errorLog: result.errors.join('\n') || null,
           })
-          .eq('id', syncJob.id);
+          .where(eq(syncJobs.id, syncJob.id));
 
         this.logger.log(
           `Sync completed for source ${sourceId}: ${result.tasks_synced} tasks synced`,
@@ -228,22 +226,22 @@ export class SyncService {
 
         // Update source with error
         await this.db
-          .from('sources')
-          .update({
-            sync_status: 'error',
-            last_sync_error: errorMessage,
+          .update(sources)
+          .set({
+            syncStatus: 'error',
+            lastSyncError: errorMessage,
           })
-          .eq('id', sourceId);
+          .where(eq(sources.id, sourceId));
 
         // Update sync job with error
         await this.db
-          .from('sync_jobs')
-          .update({
+          .update(syncJobs)
+          .set({
             status: 'failed',
-            completed_at: new Date().toISOString(),
-            error_log: errorMessage,
+            completedAt: new Date().toISOString(),
+            errorLog: errorMessage,
           })
-          .eq('id', syncJob.id);
+          .where(eq(syncJobs.id, syncJob.id));
 
         throw syncError;
       }
@@ -253,7 +251,7 @@ export class SyncService {
   }
 
   /**
-   * Perform inbound sync: fetch tasks from external source → upsert into Supabase
+   * Perform inbound sync: fetch tasks from external source → upsert into Postgres
    */
   private async performInboundSync(source: any): Promise<SyncResult> {
     const result: SyncResult = {
@@ -270,20 +268,20 @@ export class SyncService {
 
       // Fetch tasks from external source, applying any configured pre-filters
       const syncFilters =
-        source.sync_filters &&
-        Array.isArray(source.sync_filters) &&
-        source.sync_filters.length > 0
-          ? source.sync_filters
+        source.syncFilters &&
+        Array.isArray(source.syncFilters) &&
+        source.syncFilters.length > 0
+          ? source.syncFilters
           : undefined;
       this.logger.log(
         `Fetching tasks from ${source.provider} (source ${source.id})${syncFilters ? ` with ${syncFilters.length} filter(s)` : ''}...`,
       );
       // If source is linked to an integration connection, merge decrypted credentials
       let effectiveConfig = source.config;
-      if (source.connection_id) {
+      if (source.connectionId) {
         try {
           const connCredentials = await this.getConnectionCredentials(
-            source.connection_id,
+            source.connectionId,
           );
           effectiveConfig = { ...source.config, ...connCredentials };
         } catch (err) {
@@ -302,24 +300,28 @@ export class SyncService {
         `Fetched ${externalTasks.length} tasks from external source`,
       );
 
-      // Get existing tasks for this source from Supabase
-      const { data: existingTasks } = await this.db
-        .from('tasks')
-        .select('id, external_id, last_synced_at')
-        .eq('source_id', source.id);
+      // Get existing tasks for this source from Postgres
+      const existingTasks = await this.db
+        .select({
+          id: tasks.id,
+          external_id: tasks.externalId,
+          last_synced_at: tasks.lastSyncedAt,
+        })
+        .from(tasks)
+        .where(eq(tasks.sourceId, source.id));
 
       const existingMap = new Map(
-        (existingTasks || []).map((t) => [t.external_id, t]),
+        existingTasks.map((t) => [t.external_id, t]),
       );
 
       // Build category name → id map for dynamic category assignment
-      const { data: categories } = await this.db
-        .from('categories')
-        .select('id, name')
-        .eq('account_id', source.account_id);
+      const categoryList = await this.db
+        .select({ id: categories.id, name: categories.name })
+        .from(categories)
+        .where(eq(categories.accountId, source.accountId));
 
       const categoryMap = new Map(
-        (categories || []).map((c) => [c.name.toLowerCase(), c.id]),
+        categoryList.map((c) => [c.name.toLowerCase(), c.id]),
       );
 
       // Sync each external task
@@ -328,8 +330,8 @@ export class SyncService {
           const existing = existingMap.get(externalTask.external_id);
 
           // Resolve category: match external property → local category, fallback to source default
-          let categoryId = source.category_id;
-          const categoryPropertyName = source.category_property || 'category';
+          let categoryId = source.categoryId;
+          const categoryPropertyName = source.categoryProperty || 'category';
           const externalCategory =
             externalTask.metadata?.[categoryPropertyName] ||
             externalTask.metadata?.category; // fallback to 'category' metadata
@@ -343,30 +345,33 @@ export class SyncService {
           }
 
           const taskData = {
-            account_id: source.account_id,
-            category_id: categoryId,
-            source_id: source.id,
-            external_id: externalTask.external_id,
+            accountId: source.accountId,
+            categoryId: categoryId,
+            sourceId: source.id,
+            externalId: externalTask.external_id,
             title: externalTask.title,
             status: externalTask.status,
             priority: externalTask.priority || 'Medium',
             completed: externalTask.completed,
             notes: externalTask.notes || '',
             metadata: externalTask.metadata || {},
-            external_url: externalTask.external_url,
-            due_date: externalTask.due_date?.toISOString() || null,
-            completed_at: externalTask.completed_at?.toISOString() || null,
-            last_synced_at: new Date().toISOString(),
+            externalUrl: externalTask.external_url,
+            dueDate: externalTask.due_date?.toISOString() || null,
+            completedAt: externalTask.completed_at?.toISOString() || null,
+            lastSyncedAt: new Date().toISOString(),
           };
 
           if (existing) {
             // Update existing task (conflict resolution: last-write-wins from external)
-            await this.db.from('tasks').update(taskData).eq('id', existing.id);
+            await this.db
+              .update(tasks)
+              .set(taskData)
+              .where(eq(tasks.id, existing.id));
 
             result.tasks_updated++;
           } else {
             // Create new task
-            await this.db.from('tasks').insert(taskData);
+            await this.db.insert(tasks).values(taskData);
 
             result.tasks_created++;
           }
@@ -397,27 +402,29 @@ export class SyncService {
    */
   async getSyncStatus(userId: string, accountId: string) {
     // Note: Access control should be done by caller
-    const { data: sources, error } = await this.db
-      .from('sources')
-      .select('id, provider, sync_status, last_synced_at, last_sync_error')
-      .eq('account_id', accountId);
-
-    if (error) {
-      throw new Error(`Failed to fetch sync status: ${error.message}`);
-    }
+    const sourceList = await this.db
+      .select({
+        id: sources.id,
+        provider: sources.provider,
+        sync_status: sources.syncStatus,
+        last_synced_at: sources.lastSyncedAt,
+        last_sync_error: sources.lastSyncError,
+      })
+      .from(sources)
+      .where(eq(sources.accountId, accountId));
 
     // Get recent sync jobs for each source
-    const syncStatusPromises = (sources || []).map(async (source) => {
-      const { data: recentJobs } = await this.db
-        .from('sync_jobs')
-        .select('*')
-        .eq('source_id', source.id)
-        .order('started_at', { ascending: false })
+    const syncStatusPromises = sourceList.map(async (source) => {
+      const recentJobs = await this.db
+        .select()
+        .from(syncJobs)
+        .where(eq(syncJobs.sourceId, source.id))
+        .orderBy(desc(syncJobs.startedAt))
         .limit(5);
 
       return {
         ...source,
-        recent_jobs: recentJobs || [],
+        recent_jobs: recentJobs,
       };
     });
 
@@ -427,13 +434,13 @@ export class SyncService {
   private async getConnectionCredentials(
     connectionId: string,
   ): Promise<Record<string, string>> {
-    const { data, error } = await this.db
-      .from('integration_connections')
-      .select('credentials')
-      .eq('id', connectionId)
-      .single();
+    const [data] = await this.db
+      .select({ credentials: integrationConnections.credentials })
+      .from(integrationConnections)
+      .where(eq(integrationConnections.id, connectionId))
+      .limit(1);
 
-    if (error || !data || !data.credentials) return {};
+    if (!data || !data.credentials) return {};
 
     try {
       const json = decrypt(data.credentials);
@@ -445,9 +452,9 @@ export class SyncService {
         // Re-encrypt for next time
         const encrypted = encrypt(JSON.stringify(parsed));
         void this.db
-          .from('integration_connections')
-          .update({ credentials: encrypted })
-          .eq('id', connectionId);
+          .update(integrationConnections)
+          .set({ credentials: encrypted })
+          .where(eq(integrationConnections.id, connectionId));
         return parsed;
       } catch {
         return {};

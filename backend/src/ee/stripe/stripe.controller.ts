@@ -7,15 +7,18 @@ import {
   UseGuards,
   BadRequestException,
 } from '@nestjs/common';
+import { Inject } from '@nestjs/common';
+import { eq } from 'drizzle-orm';
 import { StripeService } from './stripe.service';
 import { AuthGuard } from '../../common/guards/auth.guard';
-import { SupabaseService } from '../../supabase/supabase.service';
+import { DB, type Db } from '../../db';
+import { subscriptions } from '../../db/schema';
 
 @Controller('stripe')
 export class StripeController {
   constructor(
     private readonly stripeService: StripeService,
-    private readonly supabaseService: SupabaseService,
+    @Inject(DB) private readonly db: Db,
   ) {}
 
   /**
@@ -66,17 +69,15 @@ export class StripeController {
       throw new BadRequestException('accountId and returnUrl are required');
     }
 
-    const token = req.headers.authorization?.split(' ')[1];
-    const supabase = this.supabaseService.getClient(token);
-
     // Look up the subscription to get the Stripe customer ID
-    const { data: subscription, error } = await supabase
-      .from('subscriptions')
-      .select('stripe_customer_id')
-      .eq('account_id', accountId)
-      .single();
+    const rows = await this.db
+      .select({ stripeCustomerId: subscriptions.stripeCustomerId })
+      .from(subscriptions)
+      .where(eq(subscriptions.accountId, accountId))
+      .limit(1);
+    const subscription = rows[0];
 
-    if (error || !subscription?.stripe_customer_id) {
+    if (!subscription?.stripeCustomerId) {
       throw new BadRequestException(
         'No active Stripe subscription found for this account. ' +
           'Please subscribe to a plan first.',
@@ -84,7 +85,7 @@ export class StripeController {
     }
 
     return this.stripeService.createCustomerPortalSession(
-      subscription.stripe_customer_id,
+      subscription.stripeCustomerId,
       returnUrl,
     );
   }

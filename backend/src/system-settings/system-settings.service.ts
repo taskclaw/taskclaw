@@ -1,5 +1,11 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import {
+  Injectable,
+  Inject,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { systemSettings } from '../db/schema';
 import { UpdateSystemSettingsDto } from './dto/update-settings.dto';
 
 /**
@@ -25,9 +31,12 @@ export interface ThemeSettings {
   theme_set: string;
 }
 
+/** Drizzle row → public (snake_case) SystemSettings shape. */
+type SystemSettingsRow = typeof systemSettings.$inferSelect;
+
 @Injectable()
 export class SystemSettingsService {
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   private getDefaultSettings(): SystemSettings {
     return {
@@ -39,23 +48,34 @@ export class SystemSettingsService {
     };
   }
 
+  /** Map a Drizzle (camelCase) row to the public snake_case interface. */
+  private toSystemSettings(row: SystemSettingsRow): SystemSettings {
+    return {
+      id: row.id,
+      allow_multiple_projects: row.allowMultipleProjects ?? true,
+      allow_multiple_teams: row.allowMultipleTeams ?? true,
+      theme_set: row.themeSet ?? 'corporate',
+      extended_settings: (row.extendedSettings ?? {}) as Record<
+        string,
+        unknown
+      >,
+      created_at: row.createdAt ?? undefined,
+      updated_at: row.updatedAt ?? undefined,
+    };
+  }
+
   async getSettings(): Promise<SystemSettings> {
-    const supabase = this.supabaseService.getAdminClient();
+    const [row] = await this.db
+      .select()
+      .from(systemSettings)
+      .limit(1);
 
-    const { data, error } = await supabase
-      .from('system_settings')
-      .select('*')
-      .single();
-
-    if (error) {
-      // If no settings found (shouldn't happen if initialized correctly), return defaults
-      if (error.code === 'PGRST116') {
-        return this.getDefaultSettings();
-      }
-      throw new InternalServerErrorException(error.message);
+    // If no settings found (shouldn't happen if initialized correctly), return defaults
+    if (!row) {
+      return this.getDefaultSettings();
     }
 
-    return data;
+    return this.toSystemSettings(row);
   }
 
   /**
@@ -64,23 +84,18 @@ export class SystemSettingsService {
    * NOTE: Only theme_set is returned. Mode is client-side only.
    */
   async getThemeSettings(): Promise<ThemeSettings> {
-    const supabase = this.supabaseService.getAdminClient();
+    const [row] = await this.db
+      .select({ themeSet: systemSettings.themeSet })
+      .from(systemSettings)
+      .limit(1);
 
-    const { data, error } = await supabase
-      .from('system_settings')
-      .select('theme_set')
-      .single();
-
-    if (error) {
-      // Fallback to defaults if not found
-      if (error.code === 'PGRST116') {
-        return { theme_set: 'corporate' };
-      }
-      throw new InternalServerErrorException(error.message);
+    // Fallback to defaults if not found
+    if (!row) {
+      return { theme_set: 'corporate' };
     }
 
     return {
-      theme_set: data.theme_set ?? 'corporate',
+      theme_set: row.themeSet ?? 'corporate',
     };
   }
 
@@ -105,25 +120,34 @@ export class SystemSettingsService {
   }
 
   async updateSettings(dto: UpdateSystemSettingsDto): Promise<SystemSettings> {
-    const supabase = this.supabaseService.getAdminClient();
-
-    const updateData = {
-      id: true,
-      ...dto,
-      updated_at: new Date().toISOString(),
+    // Map snake_case DTO keys → schema camelCase columns.
+    const patch = {
+      ...(dto.allow_multiple_projects !== undefined && {
+        allowMultipleProjects: dto.allow_multiple_projects,
+      }),
+      ...(dto.allow_multiple_teams !== undefined && {
+        allowMultipleTeams: dto.allow_multiple_teams,
+      }),
+      ...(dto.theme_set !== undefined && { themeSet: dto.theme_set }),
+      ...(dto.extended_settings !== undefined && {
+        extendedSettings: dto.extended_settings,
+      }),
+      updatedAt: new Date().toISOString(),
     };
 
-    // We use upsert with the fixed ID true to ensure we only have one row
-    const { data, error } = await supabase
-      .from('system_settings')
-      .upsert(updateData)
-      .select()
-      .single();
+    // Upsert with the fixed ID `true` to ensure we only ever have one row.
+    const [row] = await this.db
+      .insert(systemSettings)
+      .values({ id: true, ...patch })
+      .onConflictDoUpdate({ target: systemSettings.id, set: patch })
+      .returning();
 
-    if (error) {
-      throw new InternalServerErrorException(error.message);
+    if (!row) {
+      throw new InternalServerErrorException(
+        'Failed to update system settings',
+      );
     }
 
-    return data;
+    return this.toSystemSettings(row);
   }
 }

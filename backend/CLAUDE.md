@@ -7,15 +7,15 @@ validated with Zod. Bare `as Foo` casts on cross-boundary values are
 forbidden. This applies to:
 
 - HTTP request bodies (`@Body() body: unknown` → Zod-parse → typed).
-- Supabase query results when the row shape matters (use the schema
-  next to the service; bare PostgREST type-tags aren't sufficient).
+- Drizzle query results when the row shape crosses a boundary (jsonb
+  columns are typed `unknown`; re-keyed relation aliases are hand-mapped).
 - Adapter return values that get persisted (Pod bundles, sync runner
   output, mention spawn payloads).
 - MCP tool arguments and results.
 
 **Why.** The marketplace will import Pod bundles from arbitrary
 sources; CLI-backed adapters return data shaped by external programs
-we don't control; PostgREST returns columns the migration may rename
+we don't control; jsonb columns and re-keyed relations can drift
 without TS catching it.
 
 **How to apply.**
@@ -60,5 +60,10 @@ in docker-compose, off-by-default for fresh local installs.
   Import + add to `imports[]`.
 - Encryption helpers: `src/common/utils/encryption.util.ts`. Use
   `encrypt()` / `decrypt()` for any secret stored in JSONB or text.
-- Service-role DB access: `SupabaseAdminService.getClient()`. RLS-respecting
-  user calls go through `SupabaseService.getAuthClient(token)`.
+- DB access: inject the Drizzle handle — `@Inject(DB) private readonly db: Db`
+  (token + type from `src/db`). Tenant isolation is app-level (`account_id`
+  scoping + `AccessControlHelper.verifyAccountAccess`); there is no RLS.
+  Conversion patterns: `backend/docs/drizzle-conversion-guide.md`.
+- Auth: local JWT (`AuthService`/`JwtAuthService`/`AuthGuard`), bcrypt-compatible
+  with old GoTrue hashes. Storage: inject `StorageService` (MinIO/S3).
+  Realtime: DB triggers `pg_notify('taskclaw_events', …)` → `EventsService` SSE.

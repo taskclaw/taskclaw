@@ -1,116 +1,89 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { categories } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 
+/**
+ * Categories — first service converted to Drizzle (Epic 2 pilot).
+ * Tenant isolation stays at the app level (`account_id` scoping + verifyAccountAccess),
+ * exactly as before; only the data-access transport changed (PostgREST → Drizzle).
+ */
 @Injectable()
 export class CategoriesService {
   constructor(
-    private readonly supabase: SupabaseService,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
   ) {}
 
-  async findAll(userId: string, accountId: string, accessToken: string) {
-    // Use admin client to bypass RLS
-    const client = this.supabaseAdmin.getClient();
+  async findAll(userId: string, accountId: string, _accessToken?: string) {
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
-
-    const { data, error } = await client
-      .from('categories')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new Error(`Failed to fetch agents: ${error.message}`);
-    }
-
-    return data;
+    const rows = await this.db
+      .select()
+      .from(categories)
+      .where(eq(categories.accountId, accountId))
+      .orderBy(desc(categories.createdAt));
+    return rows.map(snakeKeys);
   }
 
   async findOne(
     userId: string,
     accountId: string,
     id: string,
-    accessToken: string,
+    _accessToken?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    const [row] = await this.db
+      .select()
+      .from(categories)
+      .where(and(eq(categories.id, id), eq(categories.accountId, accountId)))
+      .limit(1);
 
-    const { data, error } = await client
-      .from('categories')
-      .select('*')
-      .eq('id', id)
-      .eq('account_id', accountId)
-      .single();
-
-    if (error || !data) {
-      throw new NotFoundException(`Agent with ID ${id} not found`);
+    if (!row) {
+      throw new NotFoundException(`Category with ID ${id} not found`);
     }
-
-    return data;
+    return snakeKeys(row);
   }
 
   async create(
     userId: string,
     accountId: string,
     createCategoryDto: CreateCategoryDto,
-    accessToken: string,
+    _accessToken?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
-
-    const { data, error } = await client
-      .from('categories')
-      .insert({
-        account_id: accountId,
-        ...createCategoryDto,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to create agent: ${error.message}`);
-    }
-
-    return data;
+    const [row] = await this.db
+      .insert(categories)
+      .values({ accountId, ...createCategoryDto })
+      .returning();
+    return snakeKeys(row);
   }
 
   async createBulk(
     userId: string,
     accountId: string,
-    categories: CreateCategoryDto[],
-    accessToken: string,
+    categoryList: CreateCategoryDto[],
+    _accessToken?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    const values = categoryList.map((cat) => ({ accountId, ...cat }));
 
-    const rows = categories.map((cat) => ({
-      account_id: accountId,
-      ...cat,
-    }));
-
-    // Use upsert with onConflict to handle duplicates gracefully
-    const { data, error } = await client
-      .from('categories')
-      .upsert(rows, { onConflict: 'account_id,name', ignoreDuplicates: true })
-      .select();
-
-    if (error) {
-      throw new Error(`Failed to create agents: ${error.message}`);
-    }
-
-    return data;
+    // Upsert ignoring duplicates on (account_id, name).
+    const rows = await this.db
+      .insert(categories)
+      .values(values)
+      .onConflictDoNothing({
+        target: [categories.accountId, categories.name],
+      })
+      .returning();
+    return rows.map(snakeKeys);
   }
 
   async update(
@@ -118,55 +91,34 @@ export class CategoriesService {
     accountId: string,
     id: string,
     updateCategoryDto: UpdateCategoryDto,
-    accessToken: string,
+    _accessToken?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
-    // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
-
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
     // Verify category exists and belongs to account
-    await this.findOne(userId, accountId, id, accessToken);
+    await this.findOne(userId, accountId, id);
 
-    const { data, error } = await client
-      .from('categories')
-      .update(updateCategoryDto)
-      .eq('id', id)
-      .eq('account_id', accountId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to update agent: ${error.message}`);
-    }
-
-    return data;
+    const [row] = await this.db
+      .update(categories)
+      .set(updateCategoryDto)
+      .where(and(eq(categories.id, id), eq(categories.accountId, accountId)))
+      .returning();
+    return snakeKeys(row);
   }
 
   async remove(
     userId: string,
     accountId: string,
     id: string,
-    accessToken: string,
+    _accessToken?: string,
   ) {
-    const client = this.supabaseAdmin.getClient();
-
-    // Verify user has access to this account
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
-
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
     // Verify category exists and belongs to account
-    await this.findOne(userId, accountId, id, accessToken);
+    await this.findOne(userId, accountId, id);
 
-    const { error } = await client
-      .from('categories')
-      .delete()
-      .eq('id', id)
-      .eq('account_id', accountId);
+    await this.db
+      .delete(categories)
+      .where(and(eq(categories.id, id), eq(categories.accountId, accountId)));
 
-    if (error) {
-      throw new Error(`Failed to delete agent: ${error.message}`);
-    }
-
-    return { message: 'Agent deleted successfully' };
+    return { message: 'Category deleted successfully' };
   }
 }

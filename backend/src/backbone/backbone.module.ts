@@ -1,5 +1,4 @@
 import { Module, forwardRef, OnModuleInit, Logger } from '@nestjs/common';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { BackboneAdapterRegistry } from './adapters/backbone-adapter.registry';
@@ -25,7 +24,6 @@ import { BackboneDispatchProcessor } from './backbone-dispatch.processor';
 
 @Module({
   imports: [
-    SupabaseModule,
     CommonModule,
     forwardRef(() => ConversationsModule),
     BackboneDispatchQueueModule.register(),

@@ -1,43 +1,52 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { eq, inArray } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { tasks, taskDependencies, taskDags } from '../db/schema';
 
 @Injectable()
 export class DAGExecutorService {
   private readonly logger = new Logger(DAGExecutorService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   async onTaskCompleted(taskId: string, result?: any) {
-    const client = this.supabaseAdmin.getClient();
-
     // Store result if provided
     if (result) {
-      await client.from('tasks').update({ result }).eq('id', taskId);
+      await this.db.update(tasks).set({ result }).where(eq(tasks.id, taskId));
     }
 
     // Find downstream tasks
-    const { data: deps } = await client
-      .from('task_dependencies')
-      .select('target_task_id, dag_id')
-      .eq('source_task_id', taskId);
+    const deps = await this.db
+      .select({
+        target_task_id: taskDependencies.targetTaskId,
+        dag_id: taskDependencies.dagId,
+      })
+      .from(taskDependencies)
+      .where(eq(taskDependencies.sourceTaskId, taskId));
 
     if (!deps?.length) return;
 
     for (const dep of deps) {
       // Check if ALL upstreams of this downstream task are completed
-      const { data: allUpstreamDeps } = await client
-        .from('task_dependencies')
-        .select('source_task_id')
-        .eq('target_task_id', dep.target_task_id);
+      const allUpstreamDeps = await this.db
+        .select({ source_task_id: taskDependencies.sourceTaskId })
+        .from(taskDependencies)
+        .where(eq(taskDependencies.targetTaskId, dep.target_task_id));
 
       if (!allUpstreamDeps?.length) continue;
 
-      const { data: upstreamTasks } = await client
-        .from('tasks')
-        .select('id, status, completed')
-        .in(
-          'id',
-          allUpstreamDeps.map((d) => d.source_task_id),
+      const upstreamTasks = await this.db
+        .select({
+          id: tasks.id,
+          status: tasks.status,
+          completed: tasks.completed,
+        })
+        .from(tasks)
+        .where(
+          inArray(
+            tasks.id,
+            allUpstreamDeps.map((d) => d.source_task_id),
+          ),
         );
 
       const allDone = upstreamTasks?.every(
@@ -48,10 +57,10 @@ export class DAGExecutorService {
         this.logger.log(
           `All dependencies met for task ${dep.target_task_id}, marking as In Progress`,
         );
-        await client
-          .from('tasks')
-          .update({ status: 'In Progress' })
-          .eq('id', dep.target_task_id);
+        await this.db
+          .update(tasks)
+          .set({ status: 'In Progress' })
+          .where(eq(tasks.id, dep.target_task_id));
       }
     }
 
@@ -62,8 +71,6 @@ export class DAGExecutorService {
   }
 
   async onTaskFailed(taskId: string, error: string) {
-    const client = this.supabaseAdmin.getClient();
-
     // BFS to find all downstream tasks and mark as blocked
     const visited = new Set<string>();
     const queue = [taskId];
@@ -73,19 +80,19 @@ export class DAGExecutorService {
       if (visited.has(current)) continue;
       visited.add(current);
 
-      const { data: deps } = await client
-        .from('task_dependencies')
-        .select('target_task_id')
-        .eq('source_task_id', current);
+      const deps = await this.db
+        .select({ target_task_id: taskDependencies.targetTaskId })
+        .from(taskDependencies)
+        .where(eq(taskDependencies.sourceTaskId, current));
 
       for (const dep of deps ?? []) {
         if (!visited.has(dep.target_task_id)) {
-          await client
-            .from('tasks')
-            .update({
+          await this.db
+            .update(tasks)
+            .set({
               status: 'Blocked',
             })
-            .eq('id', dep.target_task_id);
+            .where(eq(tasks.id, dep.target_task_id));
           queue.push(dep.target_task_id);
         }
       }
@@ -93,13 +100,15 @@ export class DAGExecutorService {
   }
 
   private async checkDagCompletion(dagId: string) {
-    const client = this.supabaseAdmin.getClient();
-
     // Get all tasks in this DAG
-    const { data: dagTasks } = await client
-      .from('tasks')
-      .select('id, completed, status')
-      .eq('dag_id', dagId);
+    const dagTasks = await this.db
+      .select({
+        id: tasks.id,
+        completed: tasks.completed,
+        status: tasks.status,
+      })
+      .from(tasks)
+      .where(eq(tasks.dagId, dagId));
 
     if (!dagTasks?.length) return;
 
@@ -109,13 +118,13 @@ export class DAGExecutorService {
 
     if (allCompleted) {
       this.logger.log(`DAG ${dagId} fully completed`);
-      await client
-        .from('task_dags')
-        .update({
+      await this.db
+        .update(taskDags)
+        .set({
           status: 'completed',
-          completed_at: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
         })
-        .eq('id', dagId);
+        .where(eq(taskDags.id, dagId));
     }
   }
 }

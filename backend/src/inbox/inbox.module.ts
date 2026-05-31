@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { InboxService } from './inbox.service';
 import { InboxController } from './inbox.controller';
 
@@ -10,7 +9,7 @@ import { InboxController } from './inbox.controller';
  * user to the existing detail surface for each kind.
  */
 @Module({
-  imports: [SupabaseModule],
+  imports: [],
   controllers: [InboxController],
   providers: [InboxService],
   exports: [InboxService],

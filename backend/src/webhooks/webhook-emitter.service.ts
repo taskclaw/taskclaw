@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { createHmac } from 'crypto';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { webhooks, webhookDeliveries } from '../db/schema';
 
 const MAX_ATTEMPTS = 3;
 const BACKOFF_BASE_MS = 5000; // 5s, 25s, 125s
@@ -9,11 +11,7 @@ const BACKOFF_BASE_MS = 5000; // 5s, 25s, 125s
 export class WebhookEmitterService {
   private readonly logger = new Logger(WebhookEmitterService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
-
-  private getClient() {
-    return this.supabaseAdmin.getClient();
-  }
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   /**
    * Emit a webhook event. Finds all matching webhooks for the account/event
@@ -25,15 +23,21 @@ export class WebhookEmitterService {
     payload: Record<string, unknown>,
   ) {
     try {
-      const { data: webhooks, error } = await this.getClient()
-        .from('webhooks')
-        .select('id, url, secret, events')
-        .eq('account_id', accountId)
-        .eq('active', true);
+      const matchedWebhooks = await this.db
+        .select({
+          id: webhooks.id,
+          url: webhooks.url,
+          secret: webhooks.secret,
+          events: webhooks.events,
+        })
+        .from(webhooks)
+        .where(
+          and(eq(webhooks.accountId, accountId), eq(webhooks.active, true)),
+        );
 
-      if (error || !webhooks?.length) return;
+      if (!matchedWebhooks.length) return;
 
-      const matching = webhooks.filter(
+      const matching = matchedWebhooks.filter(
         (wh) => wh.events.includes(event) || wh.events.includes('*'),
       );
 
@@ -68,17 +72,16 @@ export class WebhookEmitterService {
       .digest('hex');
 
     // Create delivery record
-    const { data: delivery } = await this.getClient()
-      .from('webhook_deliveries')
-      .insert({
-        webhook_id: webhook.id,
+    const [delivery] = await this.db
+      .insert(webhookDeliveries)
+      .values({
+        webhookId: webhook.id,
         event,
         payload: { event, payload },
         status: 'pending',
         attempts: attempt,
       })
-      .select('id')
-      .single();
+      .returning({ id: webhookDeliveries.id });
 
     const deliveryId = delivery?.id;
 
@@ -98,15 +101,15 @@ export class WebhookEmitterService {
 
       if (res.ok) {
         if (deliveryId) {
-          await this.getClient()
-            .from('webhook_deliveries')
-            .update({
+          await this.db
+            .update(webhookDeliveries)
+            .set({
               status: 'success',
-              response_code: res.status,
-              response_body: responseBody.substring(0, 1000),
+              responseCode: res.status,
+              responseBody: responseBody.substring(0, 1000),
               attempts: attempt,
             })
-            .eq('id', deliveryId);
+            .where(eq(webhookDeliveries.id, deliveryId));
         }
       } else {
         throw new Error(
@@ -127,15 +130,15 @@ export class WebhookEmitterService {
               ).toISOString()
             : null;
 
-        await this.getClient()
-          .from('webhook_deliveries')
-          .update({
+        await this.db
+          .update(webhookDeliveries)
+          .set({
             status: attempt >= MAX_ATTEMPTS ? 'failed' : 'pending',
-            response_body: errMsg.substring(0, 1000),
+            responseBody: errMsg.substring(0, 1000),
             attempts: attempt,
-            next_retry_at: nextRetry,
+            nextRetryAt: nextRetry,
           })
-          .eq('id', deliveryId);
+          .where(eq(webhookDeliveries.id, deliveryId));
       }
 
       // Retry with exponential backoff

@@ -1,8 +1,9 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from './auth.guard';
 import { createCacheMock } from '../../__test__/mocks/cache.mock';
+import { createDrizzleMock } from '../../__test__/mocks/drizzle.mock';
 
-// ─── Helper: build a minimal ExecutionContext from request headers ───────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function buildContext(headers: Record<string, string>): ExecutionContext {
   const request = {
@@ -15,30 +16,16 @@ function buildContext(headers: Record<string, string>): ExecutionContext {
   } as unknown as ExecutionContext;
 }
 
-// ─── Supabase mock helpers ──────────────────────────────────────────────────
-
-function makeSupabaseService(getUserResult: any, profileResult?: any) {
-  const adminClient = {
-    from: jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      single: jest
-        .fn()
-        .mockResolvedValue(
-          profileResult ?? { data: { status: 'active' }, error: null },
-        ),
-    }),
-  };
-
+/** JwtService mock: resolves to `payload`, or rejects when payload is null. */
+function makeJwt(payload: any) {
   return {
-    getClient: jest.fn().mockReturnValue({
-      auth: {
-        getUser: jest.fn().mockResolvedValue(getUserResult),
-      },
-    }),
-    getAdminClient: jest.fn().mockReturnValue(adminClient),
+    verifyAsync: jest.fn(() =>
+      payload ? Promise.resolve(payload) : Promise.reject(new Error('invalid')),
+    ),
   };
 }
+
+const makeConfig = () => ({ get: jest.fn().mockReturnValue('test-secret') });
 
 function makeApiKeysService(
   result: any = { userId: 'user-1', accountId: 'account-1', scopes: ['read'] },
@@ -46,7 +33,14 @@ function makeApiKeysService(
   return { validate: jest.fn().mockResolvedValue(result) };
 }
 
-// ─── Tests ──────────────────────────────────────────────────────────────────
+/** Drizzle mock whose users status lookup returns `statusRow` (or [] for none). */
+function makeDb(statusRow?: { status: string }) {
+  const mock = createDrizzleMock();
+  mock.select.mockReturnValue(mock.makeBuilder(statusRow ? [statusRow] : []));
+  return mock;
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('AuthGuard', () => {
   let cacheMock: ReturnType<typeof createCacheMock>;
@@ -55,23 +49,19 @@ describe('AuthGuard', () => {
     cacheMock = createCacheMock();
   });
 
-  // ── API key via X-API-Key header ─────────────────────────────
-
   describe('API key authentication (X-API-Key header)', () => {
-    it('validates api key and sets user, apiKeyAccountId, apiKeyScopes on request', async () => {
+    it('validates api key and sets user/account/scopes on request', async () => {
       const apiKeysService = makeApiKeysService();
-      const supabaseService = makeSupabaseService({});
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt(null) as any,
+        makeConfig() as any,
         apiKeysService as any,
         cacheMock as any,
+        makeDb().db as any,
       );
 
       const context = buildContext({ 'x-api-key': 'tc_live_testkey' });
-      const result = await guard.canActivate(context);
-
-      expect(result).toBe(true);
+      expect(await guard.canActivate(context)).toBe(true);
       expect(apiKeysService.validate).toHaveBeenCalledWith('tc_live_testkey');
 
       const req = context.switchToHttp().getRequest();
@@ -81,19 +71,14 @@ describe('AuthGuard', () => {
       expect(req.accessToken).toBeNull();
     });
 
-    it('ignores X-API-Key header that does not start with tc_live_', async () => {
-      const supabaseService = makeSupabaseService({
-        data: { user: { id: 'jwt-user' } },
-        error: null,
-      });
+    it('ignores X-API-Key not starting with tc_live_ and falls through to JWT (none → 401)', async () => {
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt({ sub: 'u' }) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb({ status: 'active' }).db as any,
       );
-
-      // No Authorization header either → should throw
       const context = buildContext({ 'x-api-key': 'sk-someotherkey' });
       await expect(guard.canActivate(context)).rejects.toThrow(
         UnauthorizedException,
@@ -101,100 +86,73 @@ describe('AuthGuard', () => {
     });
   });
 
-  // ── API key via Bearer tc_live_ prefix ───────────────────────
-
   describe('API key via Bearer token prefix', () => {
     it('detects tc_live_ Bearer token as API key', async () => {
       const apiKeysService = makeApiKeysService();
-      const supabaseService = makeSupabaseService({});
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt(null) as any,
+        makeConfig() as any,
         apiKeysService as any,
         cacheMock as any,
+        makeDb().db as any,
       );
-
       const context = buildContext({ authorization: 'Bearer tc_live_somekey' });
-      const result = await guard.canActivate(context);
-
-      expect(result).toBe(true);
+      expect(await guard.canActivate(context)).toBe(true);
       expect(apiKeysService.validate).toHaveBeenCalledWith('tc_live_somekey');
     });
   });
 
-  // ── JWT Bearer token path ────────────────────────────────────
-
   describe('JWT Bearer token authentication', () => {
     it('authenticates a valid JWT and sets user + accessToken', async () => {
-      const mockUser = { id: 'jwt-user-id', email: 'test@example.com' };
-      const supabaseService = makeSupabaseService(
-        { data: { user: mockUser }, error: null },
-        { data: { status: 'active' }, error: null },
-      );
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt({ sub: 'jwt-user-id', email: 'test@example.com' }) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb({ status: 'active' }).db as any,
       );
-
       const context = buildContext({ authorization: 'Bearer valid.jwt.token' });
-      const result = await guard.canActivate(context);
-
-      expect(result).toBe(true);
+      expect(await guard.canActivate(context)).toBe(true);
       const req = context.switchToHttp().getRequest();
-      expect(req.user).toEqual(mockUser);
+      expect(req.user).toEqual({ id: 'jwt-user-id', email: 'test@example.com' });
       expect(req.accessToken).toBe('valid.jwt.token');
     });
 
-    it('throws UnauthorizedException when no authorization header is present', async () => {
-      const supabaseService = makeSupabaseService({
-        data: { user: null },
-        error: null,
-      });
+    it('throws when no authorization header is present', async () => {
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt(null) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb().db as any,
       );
-
-      const context = buildContext({});
-      await expect(guard.canActivate(context)).rejects.toThrow(
+      await expect(guard.canActivate(buildContext({}))).rejects.toThrow(
         UnauthorizedException,
       );
     });
 
-    it('throws UnauthorizedException when JWT is invalid (getUser returns error)', async () => {
-      const supabaseService = makeSupabaseService({
-        data: { user: null },
-        error: { message: 'invalid jwt' },
-      });
+    it('throws when JWT verification fails', async () => {
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt(null) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb().db as any,
       );
-
       const context = buildContext({ authorization: 'Bearer bad.jwt' });
       await expect(guard.canActivate(context)).rejects.toThrow(
         UnauthorizedException,
       );
     });
 
-    it('throws UnauthorizedException when getUser returns no user', async () => {
-      const supabaseService = makeSupabaseService({
-        data: { user: null },
-        error: null,
-      });
+    it('throws when the user row does not exist', async () => {
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt({ sub: 'ghost' }) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb(undefined).db as any, // no row
       );
-
       const context = buildContext({ authorization: 'Bearer some.jwt' });
       await expect(guard.canActivate(context)).rejects.toThrow(
         UnauthorizedException,
@@ -202,146 +160,78 @@ describe('AuthGuard', () => {
     });
   });
 
-  // ── User status enforcement ──────────────────────────────────
-
   describe('User status enforcement', () => {
-    it('allows access when user status is active', async () => {
-      const mockUser = { id: 'user-active' };
-      const supabaseService = makeSupabaseService(
-        { data: { user: mockUser }, error: null },
-        { data: { status: 'active' }, error: null },
-      );
+    it('allows access when status is active', async () => {
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt({ sub: 'user-active' }) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb({ status: 'active' }).db as any,
       );
-
-      const context = buildContext({ authorization: 'Bearer jwt' });
-      await expect(guard.canActivate(context)).resolves.toBe(true);
+      await expect(
+        guard.canActivate(buildContext({ authorization: 'Bearer jwt' })),
+      ).resolves.toBe(true);
     });
 
-    it('throws UnauthorizedException when user status is suspended', async () => {
-      const mockUser = { id: 'user-suspended' };
-      const supabaseService = makeSupabaseService(
-        { data: { user: mockUser }, error: null },
-        { data: { status: 'suspended' }, error: null },
-      );
+    it('throws when status is suspended', async () => {
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt({ sub: 'user-suspended' }) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb({ status: 'suspended' }).db as any,
       );
-
-      const context = buildContext({ authorization: 'Bearer jwt' });
-      const error = await guard.canActivate(context).catch((e) => e);
+      const error = await guard
+        .canActivate(buildContext({ authorization: 'Bearer jwt' }))
+        .catch((e) => e);
       expect(error).toBeInstanceOf(UnauthorizedException);
       expect(error.message).toContain('pending approval or suspended');
     });
 
-    it('throws UnauthorizedException when user status is pending', async () => {
-      const mockUser = { id: 'user-pending' };
-      const supabaseService = makeSupabaseService(
-        { data: { user: mockUser }, error: null },
-        { data: { status: 'pending' }, error: null },
-      );
+    it('throws when status is pending', async () => {
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt({ sub: 'user-pending' }) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb({ status: 'pending' }).db as any,
       );
-
-      const context = buildContext({ authorization: 'Bearer jwt' });
-      await expect(guard.canActivate(context)).rejects.toThrow(
-        'pending approval or suspended',
-      );
+      await expect(
+        guard.canActivate(buildContext({ authorization: 'Bearer jwt' })),
+      ).rejects.toThrow('pending approval or suspended');
     });
   });
 
-  // ── Cache behavior ──────────────────────────────────────────
-
   describe('User status caching', () => {
-    it('skips DB lookup on cache hit and uses cached status', async () => {
-      const mockUser = { id: 'cached-user' };
-      const supabaseService = makeSupabaseService({
-        data: { user: mockUser },
-        error: null,
-      });
-      // Pre-seed the cache
-      cacheMock.seed(`user:${mockUser.id}:status`, 'active');
-
+    it('skips DB lookup on cache hit', async () => {
+      const db = makeDb({ status: 'active' });
+      cacheMock.seed(`user:cached-user:status`, 'active');
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt({ sub: 'cached-user' }) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        db.db as any,
       );
-      const context = buildContext({ authorization: 'Bearer jwt' });
-      await guard.canActivate(context);
-
-      // Admin client should NOT be called since we had a cache hit
-      expect(supabaseService.getAdminClient).not.toHaveBeenCalled();
+      await guard.canActivate(buildContext({ authorization: 'Bearer jwt' }));
+      expect(db.select).not.toHaveBeenCalled();
     });
 
     it('stores status in cache after a DB lookup', async () => {
-      const mockUser = { id: 'fresh-user' };
-      const supabaseService = makeSupabaseService(
-        { data: { user: mockUser }, error: null },
-        { data: { status: 'active' }, error: null },
-      );
       const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
+        makeJwt({ sub: 'fresh-user' }) as any,
+        makeConfig() as any,
         makeApiKeysService() as any,
         cacheMock as any,
+        makeDb({ status: 'active' }).db as any,
       );
-
-      const context = buildContext({ authorization: 'Bearer jwt' });
-      await guard.canActivate(context);
-
+      await guard.canActivate(buildContext({ authorization: 'Bearer jwt' }));
       expect(cacheMock.set).toHaveBeenCalledWith(
-        `user:${mockUser.id}:status`,
+        `user:fresh-user:status`,
         'active',
         300,
       );
-    });
-
-    it('assumes active status when status column missing (migration backward compat)', async () => {
-      const mockUser = { id: 'compat-user' };
-      const adminClient = {
-        from: jest.fn().mockReturnValue({
-          select: jest.fn().mockReturnThis(),
-          eq: jest.fn().mockReturnThis(),
-          single: jest.fn().mockResolvedValue({
-            data: null,
-            error: { message: 'column users.status does not exist' },
-          }),
-        }),
-      };
-      const supabaseService = {
-        getClient: jest.fn().mockReturnValue({
-          auth: {
-            getUser: jest
-              .fn()
-              .mockResolvedValue({ data: { user: mockUser }, error: null }),
-          },
-        }),
-        getAdminClient: jest.fn().mockReturnValue(adminClient),
-      };
-
-      const guard = new AuthGuard(
-        supabaseService as any,
-        {} as any,
-        makeApiKeysService() as any,
-        cacheMock as any,
-      );
-      const context = buildContext({ authorization: 'Bearer jwt' });
-      const result = await guard.canActivate(context);
-
-      expect(result).toBe(true);
     });
   });
 });

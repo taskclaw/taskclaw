@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { SyncsService } from './syncs.service';
 import { SyncsController } from './syncs.controller';
@@ -19,7 +18,7 @@ import { SkillsLocalFolderRunner } from './runners/skills-local-folder.runner';
  * them in `providers` here.
  */
 @Module({
-  imports: [SupabaseModule, CommonModule],
+  imports: [ CommonModule],
   controllers: [SyncsController],
   providers: [SyncsService, SyncsScheduler, SkillsLocalFolderRunner],
   exports: [SyncsService],
