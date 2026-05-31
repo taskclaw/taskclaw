@@ -1,20 +1,19 @@
 import {
   Injectable,
+  Inject,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomBytes, createHash } from 'crypto';
-import { SupabaseAdminService } from '../../supabase/supabase-admin.service';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import { apiKeys } from '../../db/schema';
 
 const KEY_PREFIX = 'tc_live_';
 
 @Injectable()
 export class ApiKeysService {
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
-
-  private getClient() {
-    return this.supabaseAdmin.getClient();
-  }
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   private hashKey(rawKey: string): string {
     return createHash('sha256').update(rawKey).digest('hex');
@@ -35,22 +34,25 @@ export class ApiKeysService {
     const keyHash = this.hashKey(rawKey);
     const keyPrefix = rawKey.substring(0, 12);
 
-    const { data, error } = await this.getClient()
-      .from('api_keys')
-      .insert({
-        account_id: accountId,
-        user_id: userId,
-        key_hash: keyHash,
-        key_prefix: keyPrefix,
-        name,
-        scopes,
-        expires_at: expiresAt || null,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Failed to create API key: ${error.message}`);
+    let data: typeof apiKeys.$inferSelect;
+    try {
+      const [row] = await this.db
+        .insert(apiKeys)
+        .values({
+          accountId,
+          userId,
+          keyHash,
+          keyPrefix,
+          name,
+          scopes,
+          expiresAt: expiresAt || null,
+        })
+        .returning();
+      data = row;
+    } catch (e) {
+      throw new Error(
+        `Failed to create API key: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
 
     // Return the full key only on creation
@@ -64,34 +66,33 @@ export class ApiKeysService {
    * List API keys for an account (masked — never returns full key or hash).
    */
   async findAll(accountId: string) {
-    const { data, error } = await this.getClient()
-      .from('api_keys')
-      .select(
-        'id, account_id, user_id, key_prefix, name, scopes, last_used_at, expires_at, created_at',
-      )
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new Error(`Failed to list API keys: ${error.message}`);
-    }
-
-    return data;
+    return this.db
+      .select({
+        id: apiKeys.id,
+        account_id: apiKeys.accountId,
+        user_id: apiKeys.userId,
+        key_prefix: apiKeys.keyPrefix,
+        name: apiKeys.name,
+        scopes: apiKeys.scopes,
+        last_used_at: apiKeys.lastUsedAt,
+        expires_at: apiKeys.expiresAt,
+        created_at: apiKeys.createdAt,
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.accountId, accountId))
+      .orderBy(desc(apiKeys.createdAt));
   }
 
   /**
    * Delete/revoke an API key.
    */
   async remove(accountId: string, keyId: string) {
-    const { data, error } = await this.getClient()
-      .from('api_keys')
-      .delete()
-      .eq('id', keyId)
-      .eq('account_id', accountId)
-      .select()
-      .single();
+    const deleted = await this.db
+      .delete(apiKeys)
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.accountId, accountId)))
+      .returning();
 
-    if (error) {
+    if (deleted.length === 0) {
       throw new NotFoundException('API key not found');
     }
 
@@ -113,13 +114,19 @@ export class ApiKeysService {
 
     const keyHash = this.hashKey(rawKey);
 
-    const { data, error } = await this.getClient()
-      .from('api_keys')
-      .select('id, account_id, user_id, scopes, expires_at')
-      .eq('key_hash', keyHash)
-      .single();
+    const [data] = await this.db
+      .select({
+        id: apiKeys.id,
+        account_id: apiKeys.accountId,
+        user_id: apiKeys.userId,
+        scopes: apiKeys.scopes,
+        expires_at: apiKeys.expiresAt,
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.keyHash, keyHash))
+      .limit(1);
 
-    if (error || !data) {
+    if (!data) {
       throw new UnauthorizedException('Invalid API key');
     }
 
@@ -129,16 +136,16 @@ export class ApiKeysService {
     }
 
     // Update last_used_at (fire and forget)
-    this.getClient()
-      .from('api_keys')
-      .update({ last_used_at: new Date().toISOString() })
-      .eq('id', data.id)
-      .then();
+    void this.db
+      .update(apiKeys)
+      .set({ lastUsedAt: new Date().toISOString() })
+      .where(eq(apiKeys.id, data.id))
+      .catch(() => undefined);
 
     return {
       userId: data.user_id,
       accountId: data.account_id,
-      scopes: data.scopes || [],
+      scopes: (data.scopes as string[]) || [],
     };
   }
 }

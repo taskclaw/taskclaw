@@ -1,5 +1,4 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { BackboneModule } from '../backbone/backbone.module';
 import { TasksModule } from '../tasks/tasks.module';
@@ -16,7 +15,6 @@ import { PilotController } from './pilot.controller';
  */
 @Module({
   imports: [
-    SupabaseModule,
     CommonModule,
     forwardRef(() => BackboneModule),
     forwardRef(() => TasksModule),

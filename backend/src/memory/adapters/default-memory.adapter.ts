@@ -1,5 +1,7 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import { SupabaseAdminService } from '../../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger, BadRequestException } from '@nestjs/common';
+import { and, desc, eq, isNull, ilike, sql } from 'drizzle-orm';
+import { DB, type Db } from '../../db';
+import { agentMemories } from '../../db/schema';
 import { EmbeddingService } from '../../ai-assistant/services/embedding.service';
 import {
   MemoryAdapter,
@@ -12,9 +14,9 @@ import {
 /**
  * DefaultMemoryAdapter (BE02)
  *
- * Persists memories to the agent_memories Supabase table.
+ * Persists memories to the agent_memories table (Drizzle).
  * - remember(): INSERT row + generate embedding non-blocking (errors caught silently)
- * - recall(): vector similarity via search_memories_vector() RPC with ILIKE fallback
+ * - recall(): vector similarity via search_memories_vector() SQL fn with ILIKE fallback
  * - recent(): SELECT ORDER BY created_at DESC LIMIT N
  * - forget(): DELETE by id + account_id
  * - buildContextBlock(): '\n=== AGENT MEMORY ===\n' + bullet list
@@ -27,12 +29,11 @@ export class DefaultMemoryAdapter implements MemoryAdapter {
   private readonly logger = new Logger(DefaultMemoryAdapter.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly embeddingService: EmbeddingService,
   ) {}
 
   async remember(options: MemoryWriteOptions): Promise<MemoryEntry> {
-    const client = this.supabaseAdmin.getClient();
     const { content, type, source = 'agent', metadata = {} as any } = options;
     const account_id = metadata?.account_id as string;
 
@@ -40,26 +41,25 @@ export class DefaultMemoryAdapter implements MemoryAdapter {
       throw new BadRequestException('remember() requires metadata.account_id');
     }
 
-    const row: Record<string, any> = {
-      account_id,
-      content,
-      type,
-      source,
-      salience: 1.0,
-      metadata,
-      task_id: metadata?.task_id || null,
-      conversation_id: metadata?.conversation_id || null,
-      board_instance_id: metadata?.board_instance_id || null,
-      category_id: metadata?.category_id || null,
-    };
-
-    const { data, error } = await client
-      .from('agent_memories')
-      .insert(row)
-      .select()
-      .single();
-
-    if (error) {
+    let data: typeof agentMemories.$inferSelect;
+    try {
+      const rows = await this.db
+        .insert(agentMemories)
+        .values({
+          accountId: account_id,
+          content,
+          type,
+          source,
+          salience: 1.0,
+          metadata,
+          taskId: metadata?.task_id || null,
+          conversationId: metadata?.conversation_id || null,
+          boardInstanceId: metadata?.board_instance_id || null,
+          categoryId: metadata?.category_id || null,
+        })
+        .returning();
+      data = rows[0];
+    } catch (error: any) {
       this.logger.error(`Failed to insert memory: ${error.message}`);
       throw new Error(`Memory insert failed: ${error.message}`);
     }
@@ -84,23 +84,22 @@ export class DefaultMemoryAdapter implements MemoryAdapter {
       type,
     } = options;
 
-    const client = this.supabaseAdmin.getClient();
-
-    // Try vector similarity first
+    // Try vector similarity first.
+    // Vector search STAYS as a SQL function (per migration guide). The embedding
+    // is cast to ::vector; args are parameterized. Param order matches
+    // search_memories_vector(query_embedding, p_account_id, match_limit,
+    // similarity_threshold, p_task_id, p_type).
     try {
       if (this.embeddingService.isConfigured()) {
         const embedding = await this.embeddingService.generateEmbedding(query);
+        const embeddingJson = JSON.stringify(embedding);
 
-        const { data, error } = await client.rpc('search_memories_vector', {
-          query_embedding: embedding,
-          p_account_id: account_id,
-          match_limit: limit,
-          similarity_threshold: threshold,
-          p_task_id: task_id || null,
-          p_type: type || null,
-        });
+        const res = await this.db.execute(
+          sql`select * from search_memories_vector(${embeddingJson}::vector, ${account_id}, ${limit}, ${threshold}, ${task_id || null}, ${type || null})`,
+        );
+        const data = res.rows;
 
-        if (!error && data && data.length > 0) {
+        if (data && data.length > 0) {
           return (data as any[]).map((r) => this.mapRow(r));
         }
       }
@@ -112,24 +111,22 @@ export class DefaultMemoryAdapter implements MemoryAdapter {
 
     // ILIKE fallback
     try {
-      let q = client
-        .from('agent_memories')
-        .select('*')
-        .eq('account_id', account_id)
-        .is('valid_to', null)
-        .ilike('content', `%${query}%`)
-        .order('created_at', { ascending: false })
+      const conditions = [
+        eq(agentMemories.accountId, account_id),
+        isNull(agentMemories.validTo),
+        ilike(agentMemories.content, `%${query}%`),
+      ];
+      if (task_id) conditions.push(eq(agentMemories.taskId, task_id));
+      if (type) conditions.push(eq(agentMemories.type, type));
+
+      const data = await this.db
+        .select()
+        .from(agentMemories)
+        .where(and(...conditions))
+        .orderBy(desc(agentMemories.createdAt))
         .limit(limit);
 
-      if (task_id) q = q.eq('task_id', task_id);
-      if (type) q = q.eq('type', type);
-
-      const { data, error } = await q;
-      if (error) {
-        this.logger.warn(`ILIKE fallback failed: ${error.message}`);
-        return [];
-      }
-      return (data || []).map((r) => this.mapRow(r));
+      return data.map((r) => this.mapRow(r));
     } catch (err) {
       this.logger.warn(`recall() completely failed: ${err.message}`);
       return [];
@@ -141,35 +138,38 @@ export class DefaultMemoryAdapter implements MemoryAdapter {
     limit = 20,
     type?: string,
   ): Promise<MemoryEntry[]> {
-    const client = this.supabaseAdmin.getClient();
+    try {
+      const conditions = [
+        eq(agentMemories.accountId, accountId),
+        isNull(agentMemories.validTo),
+      ];
+      if (type) conditions.push(eq(agentMemories.type, type));
 
-    let q = client
-      .from('agent_memories')
-      .select('*')
-      .eq('account_id', accountId)
-      .is('valid_to', null)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+      const data = await this.db
+        .select()
+        .from(agentMemories)
+        .where(and(...conditions))
+        .orderBy(desc(agentMemories.createdAt))
+        .limit(limit);
 
-    if (type) q = q.eq('type', type);
-
-    const { data, error } = await q;
-    if (error) {
-      this.logger.error(`recent() failed: ${error.message}`);
+      return data.map((r) => this.mapRow(r));
+    } catch (err: any) {
+      this.logger.error(`recent() failed: ${err.message}`);
       return [];
     }
-    return (data || []).map((r) => this.mapRow(r));
   }
 
   async forget(id: string, accountId: string): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-    const { error } = await client
-      .from('agent_memories')
-      .delete()
-      .eq('id', id)
-      .eq('account_id', accountId);
-
-    if (error) {
+    try {
+      await this.db
+        .delete(agentMemories)
+        .where(
+          and(
+            eq(agentMemories.id, id),
+            eq(agentMemories.accountId, accountId),
+          ),
+        );
+    } catch (error: any) {
       this.logger.error(`forget() failed: ${error.message}`);
       throw new Error(`Memory delete failed: ${error.message}`);
     }
@@ -180,15 +180,11 @@ export class DefaultMemoryAdapter implements MemoryAdapter {
   ): Promise<MemoryHealthResult> {
     const start = Date.now();
     try {
-      const client = this.supabaseAdmin.getClient();
-      const { error } = await client
-        .from('agent_memories')
-        .select('id')
+      await this.db
+        .select({ id: agentMemories.id })
+        .from(agentMemories)
         .limit(1);
 
-      if (error) {
-        return { healthy: false, error: error.message };
-      }
       return { healthy: true, latencyMs: Date.now() - start };
     } catch (err: any) {
       return { healthy: false, error: err.message };
@@ -220,13 +216,12 @@ export class DefaultMemoryAdapter implements MemoryAdapter {
     content: string,
   ): Promise<void> {
     const embedding = await this.embeddingService.generateEmbedding(content);
-    const client = this.supabaseAdmin.getClient();
-    const { error } = await client
-      .from('agent_memories')
-      .update({ content_embedding: embedding })
-      .eq('id', memoryId);
-
-    if (error) {
+    try {
+      await this.db
+        .update(agentMemories)
+        .set({ contentEmbedding: embedding })
+        .where(eq(agentMemories.id, memoryId));
+    } catch (error: any) {
       throw new Error(`Failed to store embedding: ${error.message}`);
     }
     this.logger.debug(`Embedding stored for memory ${memoryId}`);
@@ -235,19 +230,19 @@ export class DefaultMemoryAdapter implements MemoryAdapter {
   private mapRow(row: any): MemoryEntry {
     return {
       id: row.id,
-      account_id: row.account_id,
+      account_id: row.account_id ?? row.accountId,
       content: row.content,
       type: row.type,
       source: row.source,
       salience: row.salience ?? 1.0,
-      task_id: row.task_id || null,
-      conversation_id: row.conversation_id || null,
-      board_instance_id: row.board_instance_id || null,
-      category_id: row.category_id || null,
+      task_id: row.task_id ?? row.taskId ?? null,
+      conversation_id: row.conversation_id ?? row.conversationId ?? null,
+      board_instance_id: row.board_instance_id ?? row.boardInstanceId ?? null,
+      category_id: row.category_id ?? row.categoryId ?? null,
       metadata: row.metadata || {},
-      created_at: row.created_at,
-      valid_from: row.valid_from,
-      valid_to: row.valid_to || null,
+      created_at: row.created_at ?? row.createdAt,
+      valid_from: row.valid_from ?? row.validFrom,
+      valid_to: row.valid_to ?? row.validTo ?? null,
     };
   }
 }

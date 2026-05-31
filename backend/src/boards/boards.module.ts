@@ -5,11 +5,10 @@ import { BoardTemplatesService } from './board-templates.service';
 import { BundleImportService } from './bundle-import.service';
 import { BoardsController } from './boards.controller';
 import { BoardTemplatesController } from './board-templates.controller';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule],
+  imports: [ CommonModule],
   controllers: [BoardsController, BoardTemplatesController],
   providers: [
     BoardsService,

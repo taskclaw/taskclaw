@@ -1,30 +1,25 @@
 import { NotFoundException } from '@nestjs/common';
 import { BackboneRouterService } from './backbone-router.service';
 import { backboneConnectionFixture } from '../__test__/fixtures/backbone.fixture';
+import { createDrizzleMock } from '../__test__/mocks/drizzle.mock';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Build a chainable Supabase query mock that resolves with a maybeSingle result */
-function makeQueryChain(result: any) {
-  const chain: any = {};
-  ['select', 'eq', 'order', 'limit'].forEach((m) => {
-    chain[m] = jest.fn().mockReturnValue(chain);
-  });
-  chain.maybeSingle = jest
-    .fn()
-    .mockResolvedValue({ data: result, error: null });
-  chain.single = jest.fn().mockResolvedValue({ data: result, error: null });
-  return chain;
-}
-
-/** Build a SupabaseAdminService mock where each table returns configurable data */
-function makeSupabaseAdmin(tableData: Record<string, any> = {}) {
+/**
+ * Drizzle-shaped backbone_connections row (camelCase columns) as `loadConnection`
+ * reads them. `loadConnection` re-keys `backboneType` → `backbone_type` so callers
+ * keep the snake_case raw-row shape.
+ */
+function drizzleBackboneRow(overrides: Partial<any> = {}) {
   return {
-    getClient: jest.fn().mockReturnValue({
-      from: jest.fn((table: string) =>
-        makeQueryChain(tableData[table] ?? null),
-      ),
-    }),
+    id: 'backbone-conn-uuid-001',
+    accountId: 'account-uuid-001',
+    backboneType: 'anthropic',
+    name: 'Test Anthropic Connection',
+    isActive: true,
+    isDefault: false,
+    config: { api_key: 'encrypted-key' },
+    ...overrides,
   };
 }
 
@@ -77,24 +72,21 @@ describe('BackboneRouterService', () => {
 
   describe('resolve() — cascade order', () => {
     it('returns task-level connection when task has backbone_connection_id', async () => {
-      const activeConn = backboneConnectionFixture({ id: 'task-conn' });
-      const supabaseAdmin = makeSupabaseAdmin({
-        tasks: { backbone_connection_id: 'task-conn' },
-        backbone_connections: activeConn,
-      });
-      // Override from() to return active conn for backbone_connections table
-      const client = supabaseAdmin.getClient();
-      client.from.mockImplementation((table: string) => {
-        if (table === 'tasks')
-          return makeQueryChain({ backbone_connection_id: 'task-conn' });
-        if (table === 'backbone_connections') return makeQueryChain(activeConn);
-        return makeQueryChain(null);
-      });
+      const drizzle = createDrizzleMock();
+      // 1st select: tasks lookup → has a backbone_connection_id
+      // 2nd select: loadConnection → active backbone_connections row
+      drizzle.select
+        .mockReturnValueOnce(
+          drizzle.makeBuilder([{ backboneConnectionId: 'task-conn' }]),
+        )
+        .mockReturnValueOnce(
+          drizzle.makeBuilder([drizzleBackboneRow({ id: 'task-conn' })]),
+        );
 
       const registry = makeRegistry();
       const connections = makeConnections();
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         registry as any,
         connections as any,
         makeTokenUsage() as any,
@@ -102,25 +94,27 @@ describe('BackboneRouterService', () => {
 
       const result = await service.resolve(ACCOUNT_ID, { taskId: 'task-1' });
       expect(result.resolvedFrom).toBe('task');
+      expect(result.connection.id).toBe('task-conn');
     });
 
     it('skips task level and uses step level when task has no backbone', async () => {
-      const stepConn = backboneConnectionFixture({ id: 'step-conn' });
-      const supabaseAdmin = { getClient: jest.fn() };
-      const client = {
-        from: jest.fn((table: string) => {
-          if (table === 'tasks')
-            return makeQueryChain({ backbone_connection_id: null });
-          if (table === 'board_steps')
-            return makeQueryChain({ backbone_connection_id: 'step-conn' });
-          if (table === 'backbone_connections') return makeQueryChain(stepConn);
-          return makeQueryChain(null);
-        }),
-      };
-      supabaseAdmin.getClient.mockReturnValue(client);
+      const drizzle = createDrizzleMock();
+      // 1st select: tasks → no backbone
+      // 2nd select: board_steps → has backbone
+      // 3rd select: loadConnection → active row
+      drizzle.select
+        .mockReturnValueOnce(
+          drizzle.makeBuilder([{ backboneConnectionId: null }]),
+        )
+        .mockReturnValueOnce(
+          drizzle.makeBuilder([{ backboneConnectionId: 'step-conn' }]),
+        )
+        .mockReturnValueOnce(
+          drizzle.makeBuilder([drizzleBackboneRow({ id: 'step-conn' })]),
+        );
 
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         makeRegistry() as any,
         makeConnections() as any,
         makeTokenUsage() as any,
@@ -134,15 +128,12 @@ describe('BackboneRouterService', () => {
     });
 
     it('falls through to account_default when all explicit levels are null', async () => {
+      const drizzle = createDrizzleMock();
+      // No options passed → no select calls before account default.
       const defaultConn = backboneConnectionFixture({ id: 'default-conn' });
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue(makeQueryChain(null)),
-        }),
-      };
       const connections = makeConnections(defaultConn);
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         makeRegistry() as any,
         connections as any,
         makeTokenUsage() as any,
@@ -154,15 +145,11 @@ describe('BackboneRouterService', () => {
     });
 
     it('falls through to legacy_fallback and logs warning when no default exists', async () => {
+      const drizzle = createDrizzleMock();
       const fallbackConn = backboneConnectionFixture({ id: 'fallback-conn' });
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue(makeQueryChain(null)),
-        }),
-      };
       const connections = makeConnections(null, [fallbackConn]);
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         makeRegistry() as any,
         connections as any,
         makeTokenUsage() as any,
@@ -173,14 +160,10 @@ describe('BackboneRouterService', () => {
     });
 
     it('throws NotFoundException when no backbone found at any level', async () => {
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue(makeQueryChain(null)),
-        }),
-      };
+      const drizzle = createDrizzleMock();
       const connections = makeConnections(null, []); // no fallback either
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         makeRegistry() as any,
         connections as any,
         makeTokenUsage() as any,
@@ -196,22 +179,19 @@ describe('BackboneRouterService', () => {
 
   describe('inactive connection handling', () => {
     it('skips task-level connection when is_active=false and cascades down', async () => {
-      // backbone_connections returns null (filtered by is_active=true in loadConnection)
-      const supabaseAdmin = { getClient: jest.fn() };
-      const client = {
-        from: jest.fn((table: string) => {
-          if (table === 'tasks')
-            return makeQueryChain({ backbone_connection_id: 'inactive-conn' });
-          if (table === 'backbone_connections') return makeQueryChain(null); // inactive → filtered out
-          return makeQueryChain(null);
-        }),
-      };
-      supabaseAdmin.getClient.mockReturnValue(client);
+      const drizzle = createDrizzleMock();
+      // 1st select: tasks → points to an inactive connection
+      // 2nd select: loadConnection → no row (filtered by is_active=true) → null
+      drizzle.select
+        .mockReturnValueOnce(
+          drizzle.makeBuilder([{ backboneConnectionId: 'inactive-conn' }]),
+        )
+        .mockReturnValueOnce(drizzle.makeBuilder([])); // inactive → filtered out
 
       const defaultConn = backboneConnectionFixture({ id: 'default-conn' });
       const connections = makeConnections(defaultConn);
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         makeRegistry() as any,
         connections as any,
         makeTokenUsage() as any,
@@ -227,15 +207,11 @@ describe('BackboneRouterService', () => {
 
   describe('config decryption', () => {
     it('calls decryptConfig() on the resolved connection config', async () => {
+      const drizzle = createDrizzleMock();
       const defaultConn = backboneConnectionFixture();
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue(makeQueryChain(null)),
-        }),
-      };
       const connections = makeConnections(defaultConn);
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         makeRegistry() as any,
         connections as any,
         makeTokenUsage() as any,
@@ -252,18 +228,14 @@ describe('BackboneRouterService', () => {
 
   describe('send() — skill injection into system prompt', () => {
     it('injects skills into system prompt when adapter does not support native skill injection', async () => {
+      const drizzle = createDrizzleMock();
       const defaultConn = backboneConnectionFixture();
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue(makeQueryChain(null)),
-        }),
-      };
       const connections = makeConnections(defaultConn);
       const registry = makeRegistry({
         supportsNativeSkillInjection: jest.fn().mockReturnValue(false),
       });
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         registry as any,
         connections as any,
         makeTokenUsage() as any,
@@ -288,18 +260,14 @@ describe('BackboneRouterService', () => {
     });
 
     it('passes skills natively when adapter supports native skill injection', async () => {
+      const drizzle = createDrizzleMock();
       const defaultConn = backboneConnectionFixture();
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue(makeQueryChain(null)),
-        }),
-      };
       const connections = makeConnections(defaultConn);
       const registry = makeRegistry({
         supportsNativeSkillInjection: jest.fn().mockReturnValue(true),
       });
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         registry as any,
         connections as any,
         makeTokenUsage() as any,
@@ -321,15 +289,11 @@ describe('BackboneRouterService', () => {
 
   describe('send() — usage tracking', () => {
     it('calls trackUsage fire-and-forget when tokens are returned', async () => {
+      const drizzle = createDrizzleMock();
       const defaultConn = backboneConnectionFixture();
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue(makeQueryChain(null)),
-        }),
-      };
       const connections = makeConnections(defaultConn);
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         makeRegistry() as any,
         connections as any,
         makeTokenUsage() as any,
@@ -344,16 +308,12 @@ describe('BackboneRouterService', () => {
     });
 
     it('does not block when trackUsage rejects', async () => {
+      const drizzle = createDrizzleMock();
       const defaultConn = backboneConnectionFixture();
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue(makeQueryChain(null)),
-        }),
-      };
       const connections = makeConnections(defaultConn);
       connections.trackUsage.mockRejectedValue(new Error('tracking failed'));
       const service = new BackboneRouterService(
-        supabaseAdmin as any,
+        drizzle.db,
         makeRegistry() as any,
         connections as any,
         makeTokenUsage() as any,

@@ -1,6 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, asc, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  pods,
+  boardInstances,
+  tasks,
+  boardSteps,
+  agents,
+  agentSkills,
+} from '../db/schema';
 
 // ─── Shared type exported for backbone adapter prompt caching (F011) ───────
 export interface CacheableBlock {
@@ -57,7 +66,7 @@ export class WorkspaceContextService {
   /** In-memory cache: account_id → { hash, block } */
   private readonly contextCache = new Map<string, CacheEntry>();
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   // ─────────────────────────────────────────────────────────────────────────
   // F007 — Snapshot assembly
@@ -73,21 +82,22 @@ export class WorkspaceContextService {
     accountId: string,
   ): Promise<WorkspaceContextSnapshot> {
     const start = Date.now();
-    const client = this.supabaseAdmin.getClient();
 
     // ── 1. Fetch all pods ──────────────────────────────────────────────────
-    const { data: pods, error: podsError } = await client
-      .from('pods')
-      .select('id, slug, name, description, autonomy_level, pilot_agent_id')
-      .eq('account_id', accountId)
-      .order('position', { ascending: true });
+    const podRows = await this.db
+      .select({
+        id: pods.id,
+        slug: pods.slug,
+        name: pods.name,
+        description: pods.description,
+        autonomy_level: pods.autonomyLevel,
+        pilot_agent_id: pods.pilotAgentId,
+      })
+      .from(pods)
+      .where(eq(pods.accountId, accountId))
+      .orderBy(asc(pods.position));
 
-    if (podsError) {
-      this.logger.error(`Failed to fetch pods: ${podsError.message}`);
-      throw new Error(`WorkspaceContextService: ${podsError.message}`);
-    }
-
-    if (!pods || pods.length === 0) {
+    if (!podRows || podRows.length === 0) {
       const snapshot: WorkspaceContextSnapshot = {
         account_id: accountId,
         assembled_at: new Date(),
@@ -96,44 +106,50 @@ export class WorkspaceContextService {
         total_boards: 0,
         total_agents: 0,
       };
-      this.logger.debug(`Snapshot assembled in ${Date.now() - start}ms (0 pods)`);
+      this.logger.debug(
+        `Snapshot assembled in ${Date.now() - start}ms (0 pods)`,
+      );
       return snapshot;
     }
 
-    const podIds = pods.map((p) => p.id);
+    const podIds = podRows.map((p) => p.id);
 
     // ── 2. Fetch all boards for these pods + active task counts ────────────
-    const { data: boards, error: boardsError } = await client
-      .from('board_instances')
-      .select('id, name, description, pod_id')
-      .in('pod_id', podIds)
-      .eq('account_id', accountId);
+    const boardRows = await this.db
+      .select({
+        id: boardInstances.id,
+        name: boardInstances.name,
+        description: boardInstances.description,
+        pod_id: boardInstances.podId,
+      })
+      .from(boardInstances)
+      .where(
+        and(
+          inArray(boardInstances.podId, podIds),
+          eq(boardInstances.accountId, accountId),
+        ),
+      );
 
-    if (boardsError) {
-      this.logger.warn(`Failed to fetch boards: ${boardsError.message}`);
-    }
-
-    const boardRows = boards ?? [];
     const boardIds = boardRows.map((b) => b.id);
 
     // ── 3. Active task counts per board ────────────────────────────────────
-    let taskCounts: Record<string, number> = {};
+    const taskCounts: Record<string, number> = {};
     if (boardIds.length > 0) {
-      const { data: taskData, error: taskError } = await client
-        .from('tasks')
-        .select('board_instance_id')
-        .in('board_instance_id', boardIds)
-        .eq('account_id', accountId)
-        .in('status', ['pending', 'in_progress', 'active']);
+      const taskData = await this.db
+        .select({ board_instance_id: tasks.boardInstanceId })
+        .from(tasks)
+        .where(
+          and(
+            inArray(tasks.boardInstanceId, boardIds),
+            eq(tasks.accountId, accountId),
+            inArray(tasks.status, ['pending', 'in_progress', 'active']),
+          ),
+        );
 
-      if (taskError) {
-        this.logger.warn(`Failed to fetch task counts: ${taskError.message}`);
-      } else if (taskData) {
-        for (const t of taskData) {
-          if (t.board_instance_id) {
-            taskCounts[t.board_instance_id] =
-              (taskCounts[t.board_instance_id] || 0) + 1;
-          }
+      for (const t of taskData) {
+        if (t.board_instance_id) {
+          taskCounts[t.board_instance_id] =
+            (taskCounts[t.board_instance_id] || 0) + 1;
         }
       }
     }
@@ -143,7 +159,7 @@ export class WorkspaceContextService {
     const agentIdSet = new Set<string>();
     const pilotAgentIdByPod: Record<string, string | null> = {};
 
-    for (const pod of pods) {
+    for (const pod of podRows) {
       pilotAgentIdByPod[pod.id] = pod.pilot_agent_id ?? null;
       if (pod.pilot_agent_id) {
         agentIdSet.add(pod.pilot_agent_id);
@@ -151,73 +167,78 @@ export class WorkspaceContextService {
     }
 
     // Also collect default_agent_ids from board_steps for boards in these pods
-    let stepAgentsByBoard: Record<string, Set<string>> = {};
+    const stepAgentsByBoard: Record<string, Set<string>> = {};
     if (boardIds.length > 0) {
-      const { data: steps, error: stepsError } = await client
-        .from('board_steps')
-        .select('board_instance_id, default_agent_id')
-        .in('board_instance_id', boardIds)
-        .not('default_agent_id', 'is', null);
+      const steps = await this.db
+        .select({
+          board_instance_id: boardSteps.boardInstanceId,
+          default_agent_id: boardSteps.defaultAgentId,
+        })
+        .from(boardSteps)
+        .where(
+          and(
+            inArray(boardSteps.boardInstanceId, boardIds),
+            isNotNull(boardSteps.defaultAgentId),
+          ),
+        );
 
-      if (stepsError) {
-        this.logger.warn(`Failed to fetch board steps: ${stepsError.message}`);
-      } else if (steps) {
-        for (const step of steps) {
-          if (step.default_agent_id) {
-            agentIdSet.add(step.default_agent_id);
-            if (!stepAgentsByBoard[step.board_instance_id]) {
-              stepAgentsByBoard[step.board_instance_id] = new Set();
-            }
-            stepAgentsByBoard[step.board_instance_id].add(
-              step.default_agent_id,
-            );
+      for (const step of steps) {
+        if (step.default_agent_id) {
+          agentIdSet.add(step.default_agent_id);
+          if (!stepAgentsByBoard[step.board_instance_id]) {
+            stepAgentsByBoard[step.board_instance_id] = new Set();
           }
+          stepAgentsByBoard[step.board_instance_id].add(step.default_agent_id);
         }
       }
     }
 
     // ── 5. Fetch agent rows ────────────────────────────────────────────────
     const agentIds = Array.from(agentIdSet);
-    let agentMap: Record<string, { id: string; name: string; status: string }> =
-      {};
+    const agentMap: Record<
+      string,
+      { id: string; name: string; status: string }
+    > = {};
 
     if (agentIds.length > 0) {
-      const { data: agentRows, error: agentsError } = await client
-        .from('agents')
-        .select('id, name, status')
-        .in('id', agentIds)
-        .eq('account_id', accountId)
-        .eq('is_active', true);
+      const agentRows = await this.db
+        .select({
+          id: agents.id,
+          name: agents.name,
+          status: agents.status,
+        })
+        .from(agents)
+        .where(
+          and(
+            inArray(agents.id, agentIds),
+            eq(agents.accountId, accountId),
+            eq(agents.isActive, true),
+          ),
+        );
 
-      if (agentsError) {
-        this.logger.warn(`Failed to fetch agents: ${agentsError.message}`);
-      } else if (agentRows) {
-        for (const a of agentRows) {
-          agentMap[a.id] = a;
-        }
+      for (const a of agentRows) {
+        agentMap[a.id] = a;
       }
     }
 
     // ── 6. Fetch skill names per agent ────────────────────────────────────
-    let skillsByAgent: Record<string, string[]> = {};
+    const skillsByAgent: Record<string, string[]> = {};
     if (agentIds.length > 0) {
-      const { data: agentSkills, error: skillsError } = await client
-        .from('agent_skills')
-        .select('agent_id, skill:skills!skill_id(name)')
-        .in('agent_id', agentIds)
-        .eq('is_active', true);
+      const agentSkillRows = await this.db.query.agentSkills.findMany({
+        where: and(
+          inArray(agentSkills.agentId, agentIds),
+          eq(agentSkills.isActive, true),
+        ),
+        with: { skill: { columns: { name: true } } },
+      });
 
-      if (skillsError) {
-        this.logger.warn(`Failed to fetch agent skills: ${skillsError.message}`);
-      } else if (agentSkills) {
-        for (const as of agentSkills) {
-          if (!skillsByAgent[as.agent_id]) {
-            skillsByAgent[as.agent_id] = [];
-          }
-          const skillName = (as.skill as any)?.name;
-          if (skillName) {
-            skillsByAgent[as.agent_id].push(skillName);
-          }
+      for (const as of agentSkillRows) {
+        if (!skillsByAgent[as.agentId]) {
+          skillsByAgent[as.agentId] = [];
+        }
+        const skillName = (as.skill as any)?.name;
+        if (skillName) {
+          skillsByAgent[as.agentId].push(skillName);
         }
       }
     }
@@ -226,6 +247,7 @@ export class WorkspaceContextService {
     // Board map by pod_id
     const boardsByPod: Record<string, BoardSummary[]> = {};
     for (const board of boardRows) {
+      if (!board.pod_id) continue;
       if (!boardsByPod[board.pod_id]) {
         boardsByPod[board.pod_id] = [];
       }
@@ -239,7 +261,7 @@ export class WorkspaceContextService {
 
     // Agent ID set per pod (pilot + step agents for boards in this pod)
     const agentsByPod: Record<string, Set<string>> = {};
-    for (const pod of pods) {
+    for (const pod of podRows) {
       agentsByPod[pod.id] = new Set<string>();
       if (pilotAgentIdByPod[pod.id]) {
         agentsByPod[pod.id].add(pilotAgentIdByPod[pod.id]!);
@@ -256,7 +278,7 @@ export class WorkspaceContextService {
       }
     }
 
-    const podSummaries: PodSummary[] = pods.map((pod) => {
+    const podSummaries: PodSummary[] = podRows.map((pod) => {
       const podAgentIds = Array.from(agentsByPod[pod.id] ?? []);
       const agents: AgentSummary[] = podAgentIds
         .filter((aid) => agentMap[aid])
@@ -306,37 +328,32 @@ export class WorkspaceContextService {
    * Returns 16 hex chars of SHA-256. Runs in a single query each time.
    */
   async computeContextHash(accountId: string): Promise<string> {
-    const client = this.supabaseAdmin.getClient();
-
     // Fetch MAX updated_at from the three key tables
     const [podsResult, boardsResult, agentsResult] = await Promise.all([
-      client
-        .from('pods')
-        .select('updated_at')
-        .eq('account_id', accountId)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .single(),
-      client
-        .from('board_instances')
-        .select('updated_at')
-        .eq('account_id', accountId)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .single(),
-      client
-        .from('agents')
-        .select('updated_at')
-        .eq('account_id', accountId)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .single(),
+      this.db
+        .select({ updated_at: pods.updatedAt })
+        .from(pods)
+        .where(eq(pods.accountId, accountId))
+        .orderBy(desc(pods.updatedAt))
+        .limit(1),
+      this.db
+        .select({ updated_at: boardInstances.updatedAt })
+        .from(boardInstances)
+        .where(eq(boardInstances.accountId, accountId))
+        .orderBy(desc(boardInstances.updatedAt))
+        .limit(1),
+      this.db
+        .select({ updated_at: agents.updatedAt })
+        .from(agents)
+        .where(eq(agents.accountId, accountId))
+        .orderBy(desc(agents.updatedAt))
+        .limit(1),
     ]);
 
     const timestamps = [
-      podsResult.data?.updated_at ?? '0',
-      boardsResult.data?.updated_at ?? '0',
-      agentsResult.data?.updated_at ?? '0',
+      podsResult[0]?.updated_at ?? '0',
+      boardsResult[0]?.updated_at ?? '0',
+      agentsResult[0]?.updated_at ?? '0',
     ].join('|');
 
     return createHash('sha256').update(timestamps).digest('hex').slice(0, 16);
@@ -371,7 +388,9 @@ export class WorkspaceContextService {
   /**
    * Render a WorkspaceContextSnapshot into a formatted CacheableBlock.
    */
-  private renderContextBlock(snapshot: WorkspaceContextSnapshot): CacheableBlock {
+  private renderContextBlock(
+    snapshot: WorkspaceContextSnapshot,
+  ): CacheableBlock {
     const lines: string[] = [];
 
     lines.push(`<workspace_context>`);
@@ -387,8 +406,12 @@ export class WorkspaceContextService {
     for (let i = 0; i < snapshot.pods.length; i++) {
       const pod = snapshot.pods[i];
       lines.push(``);
-      lines.push(`${i + 1}. ${pod.name}${pod.description ? ` — ${pod.description}` : ''}`);
-      lines.push(`   pod_id: ${pod.id}${pod.slug ? ` (slug: ${pod.slug})` : ''}`);
+      lines.push(
+        `${i + 1}. ${pod.name}${pod.description ? ` — ${pod.description}` : ''}`,
+      );
+      lines.push(
+        `   pod_id: ${pod.id}${pod.slug ? ` (slug: ${pod.slug})` : ''}`,
+      );
       lines.push(
         `   Autonomy Level: ${pod.autonomy_level} (${this.autonomyLabel(pod.autonomy_level)})`,
       );
@@ -454,30 +477,29 @@ export class WorkspaceContextService {
    * of the pod itself, its boards, tasks, and agents.
    */
   async computePodContextHash(podId: string): Promise<string> {
-    const client = this.supabaseAdmin.getClient();
-
     const [podResult, boardsResult] = await Promise.all([
-      client
-        .from('pods')
-        .select('updated_at')
-        .eq('id', podId)
-        .limit(1)
-        .single(),
-      client
-        .from('board_instances')
-        .select('updated_at')
-        .eq('pod_id', podId)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .single(),
+      this.db
+        .select({ updated_at: pods.updatedAt })
+        .from(pods)
+        .where(eq(pods.id, podId))
+        .limit(1),
+      this.db
+        .select({ updated_at: boardInstances.updatedAt })
+        .from(boardInstances)
+        .where(eq(boardInstances.podId, podId))
+        .orderBy(desc(boardInstances.updatedAt))
+        .limit(1),
     ]);
 
     const timestamps = [
-      podResult.data?.updated_at ?? '0',
-      boardsResult.data?.updated_at ?? '0',
+      podResult[0]?.updated_at ?? '0',
+      boardsResult[0]?.updated_at ?? '0',
     ].join('|');
 
-    return createHash('sha256').update(`pod:${podId}:${timestamps}`).digest('hex').slice(0, 16);
+    return createHash('sha256')
+      .update(`pod:${podId}:${timestamps}`)
+      .digest('hex')
+      .slice(0, 16);
   }
 
   /**
@@ -490,11 +512,15 @@ export class WorkspaceContextService {
     const cached = this.podContextCache.get(podId);
 
     if (cached && cached.hash === currentHash) {
-      this.logger.debug(`PodContext cache HIT for pod ${podId} (hash=${currentHash})`);
+      this.logger.debug(
+        `PodContext cache HIT for pod ${podId} (hash=${currentHash})`,
+      );
       return cached.block;
     }
 
-    this.logger.debug(`PodContext cache MISS for pod ${podId} (hash=${currentHash})`);
+    this.logger.debug(
+      `PodContext cache MISS for pod ${podId} (hash=${currentHash})`,
+    );
 
     const block = await this.assemblePodContextBlock(podId);
     this.podContextCache.set(podId, { hash: currentHash, block });
@@ -504,94 +530,120 @@ export class WorkspaceContextService {
   /**
    * Assemble a <pod_context> XML block with boards, columns, task counts, and agents.
    */
-  private async assemblePodContextBlock(podId: string): Promise<CacheableBlock> {
+  private async assemblePodContextBlock(
+    podId: string,
+  ): Promise<CacheableBlock> {
     const start = Date.now();
-    const client = this.supabaseAdmin.getClient();
 
     // ── 1. Fetch pod ────────────────────────────────────────────────────────
-    const { data: pod, error: podError } = await client
-      .from('pods')
-      .select('id, name, description, autonomy_level, pilot_agent_id, account_id')
-      .eq('id', podId)
-      .single();
+    const pod = await this.db.query.pods.findFirst({
+      columns: {
+        id: true,
+        name: true,
+        description: true,
+        autonomyLevel: true,
+        pilotAgentId: true,
+        accountId: true,
+      },
+      where: eq(pods.id, podId),
+    });
 
-    if (podError || !pod) {
-      this.logger.error(`Failed to fetch pod ${podId}: ${podError?.message}`);
+    if (!pod) {
+      this.logger.error(`Failed to fetch pod ${podId}: not found`);
       throw new Error(`PodContextService: pod ${podId} not found`);
     }
 
     // ── 2. Fetch boards for this pod ────────────────────────────────────────
-    const { data: boards, error: boardsError } = await client
-      .from('board_instances')
-      .select('id, name, description')
-      .eq('pod_id', podId)
-      .eq('account_id', pod.account_id)
-      .eq('is_archived', false);
+    const boardRows = await this.db
+      .select({
+        id: boardInstances.id,
+        name: boardInstances.name,
+        description: boardInstances.description,
+      })
+      .from(boardInstances)
+      .where(
+        and(
+          eq(boardInstances.podId, podId),
+          eq(boardInstances.accountId, pod.accountId),
+          eq(boardInstances.isArchived, false),
+        ),
+      );
 
-    if (boardsError) {
-      this.logger.warn(`Failed to fetch boards for pod ${podId}: ${boardsError.message}`);
-    }
-
-    const boardRows = boards ?? [];
     const boardIds = boardRows.map((b) => b.id);
 
     // ── 3. Fetch columns (board_steps) per board ────────────────────────────
-    let stepsByBoard: Record<string, Array<{ name: string; position: number }>> = {};
+    const stepsByBoard: Record<
+      string,
+      Array<{ name: string; position: number }>
+    > = {};
     if (boardIds.length > 0) {
-      const { data: steps, error: stepsError } = await client
-        .from('board_steps')
-        .select('board_instance_id, name, position')
-        .in('board_instance_id', boardIds)
-        .order('position', { ascending: true });
+      const steps = await this.db
+        .select({
+          board_instance_id: boardSteps.boardInstanceId,
+          name: boardSteps.name,
+          position: boardSteps.position,
+        })
+        .from(boardSteps)
+        .where(inArray(boardSteps.boardInstanceId, boardIds))
+        .orderBy(asc(boardSteps.position));
 
-      if (stepsError) {
-        this.logger.warn(`Failed to fetch board steps for pod ${podId}: ${stepsError.message}`);
-      } else if (steps) {
-        for (const step of steps) {
-          if (!stepsByBoard[step.board_instance_id]) {
-            stepsByBoard[step.board_instance_id] = [];
-          }
-          stepsByBoard[step.board_instance_id].push({ name: step.name, position: step.position });
+      for (const step of steps) {
+        if (!stepsByBoard[step.board_instance_id]) {
+          stepsByBoard[step.board_instance_id] = [];
         }
+        stepsByBoard[step.board_instance_id].push({
+          name: step.name,
+          position: step.position,
+        });
       }
     }
 
     // ── 4. Active task counts per board ─────────────────────────────────────
-    let taskCounts: Record<string, number> = {};
+    const taskCounts: Record<string, number> = {};
     if (boardIds.length > 0) {
-      const { data: taskData, error: taskError } = await client
-        .from('tasks')
-        .select('board_instance_id')
-        .in('board_instance_id', boardIds)
-        .eq('account_id', pod.account_id)
-        .in('status', ['pending', 'in_progress', 'active', 'To-Do', 'AI Running', 'In Review']);
+      const taskData = await this.db
+        .select({ board_instance_id: tasks.boardInstanceId })
+        .from(tasks)
+        .where(
+          and(
+            inArray(tasks.boardInstanceId, boardIds),
+            eq(tasks.accountId, pod.accountId),
+            inArray(tasks.status, [
+              'pending',
+              'in_progress',
+              'active',
+              'To-Do',
+              'AI Running',
+              'In Review',
+            ]),
+          ),
+        );
 
-      if (taskError) {
-        this.logger.warn(`Failed to fetch task counts for pod ${podId}: ${taskError.message}`);
-      } else if (taskData) {
-        for (const t of taskData) {
-          if (t.board_instance_id) {
-            taskCounts[t.board_instance_id] = (taskCounts[t.board_instance_id] || 0) + 1;
-          }
+      for (const t of taskData) {
+        if (t.board_instance_id) {
+          taskCounts[t.board_instance_id] =
+            (taskCounts[t.board_instance_id] || 0) + 1;
         }
       }
     }
 
     // ── 5. Collect agent IDs (pilot + board_step default agents) ────────────
     const agentIdSet = new Set<string>();
-    if (pod.pilot_agent_id) agentIdSet.add(pod.pilot_agent_id);
+    if (pod.pilotAgentId) agentIdSet.add(pod.pilotAgentId);
 
     if (boardIds.length > 0) {
-      const { data: stepAgents, error: stepAgentError } = await client
-        .from('board_steps')
-        .select('default_agent_id')
-        .in('board_instance_id', boardIds)
-        .not('default_agent_id', 'is', null);
+      const stepAgents = await this.db
+        .select({ default_agent_id: boardSteps.defaultAgentId })
+        .from(boardSteps)
+        .where(
+          and(
+            inArray(boardSteps.boardInstanceId, boardIds),
+            isNotNull(boardSteps.defaultAgentId),
+          ),
+        );
 
-      if (!stepAgentError && stepAgents) {
-        for (const sa of stepAgents) {
-          if (sa.default_agent_id) agentIdSet.add(sa.default_agent_id);
-        }
+      for (const sa of stepAgents) {
+        if (sa.default_agent_id) agentIdSet.add(sa.default_agent_id);
       }
     }
 
@@ -600,28 +652,36 @@ export class WorkspaceContextService {
     let agentSummaries: AgentSummary[] = [];
 
     if (agentIds.length > 0) {
-      const { data: agentRows, error: agentsError } = await client
-        .from('agents')
-        .select('id, name, status')
-        .in('id', agentIds)
-        .eq('account_id', pod.account_id)
-        .eq('is_active', true);
+      const agentRows = await this.db
+        .select({
+          id: agents.id,
+          name: agents.name,
+          status: agents.status,
+        })
+        .from(agents)
+        .where(
+          and(
+            inArray(agents.id, agentIds),
+            eq(agents.accountId, pod.accountId),
+            eq(agents.isActive, true),
+          ),
+        );
 
-      if (!agentsError && agentRows) {
+      if (agentRows.length > 0) {
         // Fetch skills
-        const { data: agentSkills } = await client
-          .from('agent_skills')
-          .select('agent_id, skill:skills!skill_id(name)')
-          .in('agent_id', agentIds)
-          .eq('is_active', true);
+        const agentSkillRows = await this.db.query.agentSkills.findMany({
+          where: and(
+            inArray(agentSkills.agentId, agentIds),
+            eq(agentSkills.isActive, true),
+          ),
+          with: { skill: { columns: { name: true } } },
+        });
 
         const skillsByAgent: Record<string, string[]> = {};
-        if (agentSkills) {
-          for (const as of agentSkills) {
-            if (!skillsByAgent[as.agent_id]) skillsByAgent[as.agent_id] = [];
-            const skillName = (as.skill as any)?.name;
-            if (skillName) skillsByAgent[as.agent_id].push(skillName);
-          }
+        for (const as of agentSkillRows) {
+          if (!skillsByAgent[as.agentId]) skillsByAgent[as.agentId] = [];
+          const skillName = (as.skill as any)?.name;
+          if (skillName) skillsByAgent[as.agentId].push(skillName);
         }
 
         agentSummaries = agentRows.map((a) => ({
@@ -660,7 +720,10 @@ export class WorkspaceContextService {
     lines.push(`AGENTS:`);
     if (agentSummaries.length > 0) {
       for (const agent of agentSummaries) {
-        const skillsStr = agent.skills.length > 0 ? ` — Skills: ${agent.skills.join(', ')}` : '';
+        const skillsStr =
+          agent.skills.length > 0
+            ? ` — Skills: ${agent.skills.join(', ')}`
+            : '';
         lines.push(`- ${agent.name} (${agent.status})${skillsStr}`);
       }
     } else {
@@ -669,7 +732,7 @@ export class WorkspaceContextService {
 
     lines.push(``);
     lines.push(
-      `Your autonomy level: ${pod.autonomy_level ?? 1} (${this.autonomyLabel(pod.autonomy_level ?? 1)})`,
+      `Your autonomy level: ${pod.autonomyLevel ?? 1} (${this.autonomyLabel(pod.autonomyLevel ?? 1)})`,
     );
     lines.push(
       `You can use the tools below to create tasks, trigger boards, and escalate to the workspace.`,

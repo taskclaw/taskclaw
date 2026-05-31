@@ -1,10 +1,13 @@
 import {
   Injectable,
+  Inject,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Queue } from 'bullmq';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { heartbeatConfigs, tasks } from '../db/schema';
 import { CircuitBreakerService } from './circuit-breaker.service';
 import { ExecutionLogService } from './execution-log.service';
 import { HEARTBEAT_QUEUE_NAME } from './heartbeat-queue.module';
@@ -19,10 +22,40 @@ export class HeartbeatService {
   private backboneDispatchQueue?: Queue;
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly circuitBreaker: CircuitBreakerService,
     private readonly executionLog: ExecutionLogService,
   ) {}
+
+  /**
+   * Drizzle returns camelCase columns; callers (and the previous PostgREST
+   * response shape) depend on snake_case keys. Re-key every heartbeat_configs
+   * row to the snake_case shape so behavior is unchanged.
+   */
+  private present(row: typeof heartbeatConfigs.$inferSelect) {
+    return {
+      id: row.id,
+      account_id: row.accountId,
+      pod_id: row.podId,
+      board_id: row.boardId,
+      name: row.name,
+      schedule: row.schedule,
+      prompt: row.prompt,
+      is_active: row.isActive,
+      dry_run: row.dryRun,
+      max_tasks_per_run: row.maxTasksPerRun,
+      circuit_breaker_threshold: row.circuitBreakerThreshold,
+      consecutive_failures: row.consecutiveFailures,
+      last_run_at: row.lastRunAt,
+      last_run_status: row.lastRunStatus,
+      last_run_summary: row.lastRunSummary,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
+      pilot_enabled: row.pilotEnabled,
+      execution_mode: row.executionMode,
+      concurrency_policy: row.concurrencyPolicy,
+    };
+  }
 
   /**
    * Called by HeartbeatModule.onModuleInit to inject the BullMQ queue
@@ -57,18 +90,19 @@ export class HeartbeatService {
   async scheduleAll() {
     if (!this.heartbeatQueue) return;
 
-    const { data: configs } = await this.supabaseAdmin
-      .getClient()
-      .from('heartbeat_configs')
-      .select('*')
-      .eq('is_active', true);
+    const rows = await this.db
+      .select()
+      .from(heartbeatConfigs)
+      .where(eq(heartbeatConfigs.isActive, true));
 
-    for (const config of configs ?? []) {
+    const configs = rows.map((r) => this.present(r));
+
+    for (const config of configs) {
       await this.scheduleConfig(config);
     }
 
     this.logger.log(
-      `Scheduled ${configs?.length ?? 0} active heartbeat configs`,
+      `Scheduled ${configs.length} active heartbeat configs`,
     );
   }
 
@@ -102,62 +136,61 @@ export class HeartbeatService {
   }
 
   async findAll(accountId: string) {
-    const { data, error } = await this.supabaseAdmin
-      .getClient()
-      .from('heartbeat_configs')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
+    try {
+      const rows = await this.db
+        .select()
+        .from(heartbeatConfigs)
+        .where(eq(heartbeatConfigs.accountId, accountId))
+        .orderBy(desc(heartbeatConfigs.createdAt));
 
-    if (error) {
+      return rows.map((r) => this.present(r));
+    } catch (error) {
       throw new Error(
-        `Failed to fetch heartbeat configs: ${error.message}`,
+        `Failed to fetch heartbeat configs: ${(error as Error).message}`,
       );
     }
-
-    return data;
   }
 
   async findOne(id: string) {
-    const { data, error } = await this.supabaseAdmin
-      .getClient()
-      .from('heartbeat_configs')
-      .select('*')
-      .eq('id', id)
-      .single();
+    const [row] = await this.db
+      .select()
+      .from(heartbeatConfigs)
+      .where(eq(heartbeatConfigs.id, id))
+      .limit(1);
 
-    if (error || !data) {
+    if (!row) {
       throw new NotFoundException(`Heartbeat config ${id} not found`);
     }
 
-    return data;
+    return this.present(row);
   }
 
   async create(accountId: string, dto: CreateHeartbeatDto) {
-    const { data, error } = await this.supabaseAdmin
-      .getClient()
-      .from('heartbeat_configs')
-      .insert({
-        account_id: accountId,
-        name: dto.name,
-        schedule: dto.schedule ?? '0 */4 * * *',
-        prompt:
-          dto.prompt ??
-          'Review pending tasks and take appropriate actions.',
-        is_active: dto.is_active ?? false,
-        dry_run: dto.dry_run ?? false,
-        max_tasks_per_run: dto.max_tasks_per_run ?? 5,
-        pod_id: dto.pod_id ?? null,
-        board_id: dto.board_id ?? null,
-      })
-      .select()
-      .single();
-
-    if (error) {
+    let row: typeof heartbeatConfigs.$inferSelect;
+    try {
+      [row] = await this.db
+        .insert(heartbeatConfigs)
+        .values({
+          accountId: accountId,
+          name: dto.name,
+          schedule: dto.schedule ?? '0 */4 * * *',
+          prompt:
+            dto.prompt ??
+            'Review pending tasks and take appropriate actions.',
+          isActive: dto.is_active ?? false,
+          dryRun: dto.dry_run ?? false,
+          maxTasksPerRun: dto.max_tasks_per_run ?? 5,
+          podId: dto.pod_id ?? null,
+          boardId: dto.board_id ?? null,
+        })
+        .returning();
+    } catch (error) {
       throw new Error(
-        `Failed to create heartbeat config: ${error.message}`,
+        `Failed to create heartbeat config: ${(error as Error).message}`,
       );
     }
+
+    const data = this.present(row);
 
     // Schedule if active
     if (data.is_active) {
@@ -170,22 +203,34 @@ export class HeartbeatService {
   async update(id: string, dto: UpdateHeartbeatDto) {
     await this.findOne(id);
 
-    const { data, error } = await this.supabaseAdmin
-      .getClient()
-      .from('heartbeat_configs')
-      .update({
-        ...dto,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
+    // Map the snake_case DTO to camelCase columns (only defined fields).
+    const patch: Partial<typeof heartbeatConfigs.$inferInsert> = {
+      updatedAt: new Date().toISOString(),
+    };
+    if (dto.name !== undefined) patch.name = dto.name;
+    if (dto.schedule !== undefined) patch.schedule = dto.schedule;
+    if (dto.prompt !== undefined) patch.prompt = dto.prompt;
+    if (dto.is_active !== undefined) patch.isActive = dto.is_active;
+    if (dto.dry_run !== undefined) patch.dryRun = dto.dry_run;
+    if (dto.max_tasks_per_run !== undefined)
+      patch.maxTasksPerRun = dto.max_tasks_per_run;
+    if (dto.pod_id !== undefined) patch.podId = dto.pod_id;
+    if (dto.board_id !== undefined) patch.boardId = dto.board_id;
 
-    if (error) {
+    let row: typeof heartbeatConfigs.$inferSelect;
+    try {
+      [row] = await this.db
+        .update(heartbeatConfigs)
+        .set(patch)
+        .where(eq(heartbeatConfigs.id, id))
+        .returning();
+    } catch (error) {
       throw new Error(
-        `Failed to update heartbeat config: ${error.message}`,
+        `Failed to update heartbeat config: ${(error as Error).message}`,
       );
     }
+
+    const data = this.present(row);
 
     // Re-schedule if schedule or active state changed
     if (dto.schedule !== undefined || dto.is_active !== undefined) {
@@ -208,15 +253,13 @@ export class HeartbeatService {
       }
     }
 
-    const { error } = await this.supabaseAdmin
-      .getClient()
-      .from('heartbeat_configs')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
+    try {
+      await this.db
+        .delete(heartbeatConfigs)
+        .where(eq(heartbeatConfigs.id, id));
+    } catch (error) {
       throw new Error(
-        `Failed to delete heartbeat config: ${error.message}`,
+        `Failed to delete heartbeat config: ${(error as Error).message}`,
       );
     }
 
@@ -226,22 +269,23 @@ export class HeartbeatService {
   async toggle(id: string, isActive: boolean) {
     await this.findOne(id);
 
-    const { data, error } = await this.supabaseAdmin
-      .getClient()
-      .from('heartbeat_configs')
-      .update({
-        is_active: isActive,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
+    let row: typeof heartbeatConfigs.$inferSelect;
+    try {
+      [row] = await this.db
+        .update(heartbeatConfigs)
+        .set({
+          isActive: isActive,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(heartbeatConfigs.id, id))
+        .returning();
+    } catch (error) {
       throw new Error(
-        `Failed to toggle heartbeat config: ${error.message}`,
+        `Failed to toggle heartbeat config: ${(error as Error).message}`,
       );
     }
+
+    const data = this.present(row);
 
     await this.scheduleConfig(data);
 
@@ -274,18 +318,17 @@ export class HeartbeatService {
       const idempotencyKey = `heartbeat-exec-${configId}-${Date.now()}`;
       // Resolve account_id so the dispatch processor can shadow-write a
       // task_runs row (PRD §10.1, gated by FEATURE_TASK_RUNS_V2).
-      const { data: cfg } = await this.supabaseAdmin
-        .getClient()
-        .from('heartbeat_configs')
-        .select('account_id')
-        .eq('id', configId)
-        .maybeSingle();
+      const [cfg] = await this.db
+        .select({ accountId: heartbeatConfigs.accountId })
+        .from(heartbeatConfigs)
+        .where(eq(heartbeatConfigs.id, configId))
+        .limit(1);
       await this.backboneDispatchQueue.add(
         'dispatch',
         {
           type: 'heartbeat',
           heartbeatConfigId: configId,
-          accountId: cfg?.account_id ?? undefined,
+          accountId: cfg?.accountId ?? undefined,
           priority: 5,
           idempotencyKey,
         },
@@ -326,24 +369,23 @@ export class HeartbeatService {
         `Circuit breaker open for heartbeat "${config.name}" — skipping`,
       );
 
-      await this.supabaseAdmin
-        .getClient()
-        .from('heartbeat_configs')
-        .update({
-          last_run_at: new Date().toISOString(),
-          last_run_status: 'skipped',
-          last_run_summary:
+      await this.db
+        .update(heartbeatConfigs)
+        .set({
+          lastRunAt: new Date().toISOString(),
+          lastRunStatus: 'skipped',
+          lastRunSummary:
             'Circuit breaker open — too many consecutive failures',
         })
-        .eq('id', configId);
+        .where(eq(heartbeatConfigs.id, configId));
 
       await this.executionLog.create({
         account_id: config.account_id,
         trigger_type: 'heartbeat',
         status: 'skipped',
         heartbeat_config_id: configId,
-        pod_id: config.pod_id,
-        board_id: config.board_id,
+        pod_id: config.pod_id ?? undefined,
+        board_id: config.board_id ?? undefined,
         summary: 'Circuit breaker open',
         duration_ms: Date.now() - startTime,
       });
@@ -352,56 +394,61 @@ export class HeartbeatService {
     }
 
     // Mark as running
-    await this.supabaseAdmin
-      .getClient()
-      .from('heartbeat_configs')
-      .update({
-        last_run_at: new Date().toISOString(),
-        last_run_status: 'running',
+    await this.db
+      .update(heartbeatConfigs)
+      .set({
+        lastRunAt: new Date().toISOString(),
+        lastRunStatus: 'running',
       })
-      .eq('id', configId);
+      .where(eq(heartbeatConfigs.id, configId));
 
     const logEntry = await this.executionLog.create({
       account_id: config.account_id,
       trigger_type: 'heartbeat',
       status: 'running',
       heartbeat_config_id: configId,
-      pod_id: config.pod_id,
-      board_id: config.board_id,
+      pod_id: config.pod_id ?? undefined,
+      board_id: config.board_id ?? undefined,
     });
 
     try {
       // Fetch pending tasks for the scope
-      const client = this.supabaseAdmin.getClient();
-      let tasksQuery = client
-        .from('tasks')
-        .select('id, title, status, priority, notes')
-        .eq('account_id', config.account_id)
-        .eq('completed', false)
-        .limit(config.max_tasks_per_run ?? 5);
+      const conditions = [
+        eq(tasks.accountId, config.account_id),
+        eq(tasks.completed, false),
+      ];
 
       if (config.board_id) {
-        tasksQuery = tasksQuery.eq('board_instance_id', config.board_id);
+        conditions.push(eq(tasks.boardInstanceId, config.board_id));
       }
 
-      const { data: tasks } = await tasksQuery;
+      const taskRows = await this.db
+        .select({
+          id: tasks.id,
+          title: tasks.title,
+          status: tasks.status,
+          priority: tasks.priority,
+          notes: tasks.notes,
+        })
+        .from(tasks)
+        .where(and(...conditions))
+        .limit(config.max_tasks_per_run ?? 5);
 
       const summary = config.dry_run
-        ? `[DRY RUN] Would process ${tasks?.length ?? 0} tasks`
-        : `Processed ${tasks?.length ?? 0} tasks`;
+        ? `[DRY RUN] Would process ${taskRows.length} tasks`
+        : `Processed ${taskRows.length} tasks`;
 
       // Update config with success
       await this.circuitBreaker.recordSuccess(configId);
 
-      await this.supabaseAdmin
-        .getClient()
-        .from('heartbeat_configs')
-        .update({
-          last_run_status: 'success',
-          last_run_summary: summary,
-          consecutive_failures: 0,
+      await this.db
+        .update(heartbeatConfigs)
+        .set({
+          lastRunStatus: 'success',
+          lastRunSummary: summary,
+          consecutiveFailures: 0,
         })
-        .eq('id', configId);
+        .where(eq(heartbeatConfigs.id, configId));
 
       if (logEntry) {
         await this.executionLog.complete(logEntry.id, {
@@ -420,15 +467,14 @@ export class HeartbeatService {
         config.circuit_breaker_threshold ?? 3,
       );
 
-      await this.supabaseAdmin
-        .getClient()
-        .from('heartbeat_configs')
-        .update({
-          last_run_status: 'error',
-          last_run_summary: errorMessage.slice(0, 500),
-          consecutive_failures: (config.consecutive_failures ?? 0) + 1,
+      await this.db
+        .update(heartbeatConfigs)
+        .set({
+          lastRunStatus: 'error',
+          lastRunSummary: errorMessage.slice(0, 500),
+          consecutiveFailures: (config.consecutive_failures ?? 0) + 1,
         })
-        .eq('id', configId);
+        .where(eq(heartbeatConfigs.id, configId));
 
       if (logEntry) {
         await this.executionLog.complete(logEntry.id, {

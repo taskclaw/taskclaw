@@ -1,8 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Inject, Logger, OnModuleInit } from '@nestjs/common';
+import { and, eq } from 'drizzle-orm';
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
-import { SupabaseAdminService } from '../../supabase/supabase-admin.service';
+import { DB, type Db } from '../../db';
+import { skills } from '../../db/schema';
 import {
   DEFAULT_LOCAL_SKILL_PATHS,
   LocalFolderSyncConfigSchema,
@@ -52,7 +54,7 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
   private readonly logger = new Logger(SkillsLocalFolderRunner.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly syncs: SyncsService,
   ) {}
 
@@ -88,21 +90,31 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
     );
 
     // Upsert into DB.
-    const client = this.supabaseAdmin.getClient();
 
     // 1. Existing rows owned BY THIS SYNC, keyed by source_uri. Earlier we
     //    looked at every disk-scan row in the account, which meant scans of
     //    one sync clobbered the locally_available flag on rows owned by
     //    OTHER syncs. Scope tight.
-    const { data: existing } = await client
-      .from('skills')
-      .select('id, source_uri, source_version, name, description, locally_available')
-      .eq('account_id', sync.account_id)
-      .eq('source_type', 'disk-scan')
-      .eq('source_sync_id', sync.id);
+    const existing = await this.db
+      .select({
+        id: skills.id,
+        sourceUri: skills.sourceUri,
+        sourceVersion: skills.sourceVersion,
+        name: skills.name,
+        description: skills.description,
+        locallyAvailable: skills.locallyAvailable,
+      })
+      .from(skills)
+      .where(
+        and(
+          eq(skills.accountId, sync.account_id),
+          eq(skills.sourceType, 'disk-scan'),
+          eq(skills.sourceSyncId, sync.id),
+        ),
+      );
 
     const existingByUri = new Map(
-      (existing ?? []).map((row: any) => [row.source_uri as string, row]),
+      existing.map((row) => [row.sourceUri as string, row]),
     );
 
     // 2. Upsert each found skill.
@@ -114,58 +126,62 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
         // Insert new row. Conflict on (account_id, name) unique constraint
         // is possible if the user already has a custom skill with the same
         // name; in that case, we suffix with an index to make it unique.
-        const safeName = await this.uniqueName(client, sync.account_id, sanitizedName);
-        const { error: insertErr } = await client.from('skills').insert({
-          account_id: sync.account_id,
-          name: safeName,
-          description: parsed.description ?? null,
-          // skills.instructions has a 50KB CHECK constraint; SKILL.md bodies
-          // sometimes exceed it. Truncate with a marker so the row still
-          // inserts and the user sees what was clipped.
-          instructions: this.clampInstructions(parsed.body),
-          is_active: true,
-          source_type: 'disk-scan',
-          source_uri: parsed.source_uri,
-          source_sync_id: sync.id,
-          source_version: parsed.version ?? null,
-          locally_available: true,
-          skill_type: 'general',
-        });
-        if (insertErr) {
-          errors.push(`Insert ${parsed.source_uri}: ${insertErr.message}`);
-        } else {
+        const safeName = await this.uniqueName(sync.account_id, sanitizedName);
+        try {
+          await this.db.insert(skills).values({
+            accountId: sync.account_id,
+            name: safeName,
+            description: parsed.description ?? null,
+            // skills.instructions has a 50KB CHECK constraint; SKILL.md bodies
+            // sometimes exceed it. Truncate with a marker so the row still
+            // inserts and the user sees what was clipped.
+            instructions: this.clampInstructions(parsed.body),
+            isActive: true,
+            sourceType: 'disk-scan',
+            sourceUri: parsed.source_uri,
+            sourceSyncId: sync.id,
+            sourceVersion: parsed.version ?? null,
+            locallyAvailable: true,
+            skillType: 'general',
+          });
           added += 1;
+        } catch (insertErr) {
+          errors.push(
+            `Insert ${parsed.source_uri}: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`,
+          );
         }
         continue;
       }
 
       const versionChanged =
-        (previous.source_version ?? null) !== (parsed.version ?? null);
+        (previous.sourceVersion ?? null) !== (parsed.version ?? null);
       const descriptionChanged =
         (previous.description ?? '') !== (parsed.description ?? '');
 
       if (versionChanged || descriptionChanged) {
-        const { error: updateErr } = await client
-          .from('skills')
-          .update({
-            description: parsed.description ?? null,
-            instructions: this.clampInstructions(parsed.body),
-            source_version: parsed.version ?? null,
-            source_sync_id: sync.id,
-            locally_available: true,
-          })
-          .eq('id', previous.id);
-        if (updateErr) {
-          errors.push(`Update ${parsed.source_uri}: ${updateErr.message}`);
-        } else {
+        try {
+          await this.db
+            .update(skills)
+            .set({
+              description: parsed.description ?? null,
+              instructions: this.clampInstructions(parsed.body),
+              sourceVersion: parsed.version ?? null,
+              sourceSyncId: sync.id,
+              locallyAvailable: true,
+            })
+            .where(eq(skills.id, previous.id));
           updated += 1;
+        } catch (updateErr) {
+          errors.push(
+            `Update ${parsed.source_uri}: ${updateErr instanceof Error ? updateErr.message : String(updateErr)}`,
+          );
         }
-      } else if (!previous.locally_available) {
+      } else if (!previous.locallyAvailable) {
         // Disk file reappeared after going missing — flip flag back on.
-        await client
-          .from('skills')
-          .update({ locally_available: true })
-          .eq('id', previous.id);
+        await this.db
+          .update(skills)
+          .set({ locallyAvailable: true })
+          .where(eq(skills.id, previous.id));
         updated += 1;
       }
     }
@@ -174,15 +190,21 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
     const foundUris = new Set(found.map((p) => p.source_uri));
     for (const [uri, row] of existingByUri) {
       if (!foundUris.has(uri)) {
-        const { error: removeErr } = await client
-          .from('skills')
-          .update({ locally_available: false })
-          .eq('id', (row as any).id)
-          .eq('locally_available', true); // only if currently true
-        if (removeErr) {
-          errors.push(`Mark removed ${uri}: ${removeErr.message}`);
-        } else {
+        try {
+          await this.db
+            .update(skills)
+            .set({ locallyAvailable: false })
+            .where(
+              and(
+                eq(skills.id, row.id),
+                eq(skills.locallyAvailable, true), // only if currently true
+              ),
+            );
           removed += 1;
+        } catch (removeErr) {
+          errors.push(
+            `Mark removed ${uri}: ${removeErr instanceof Error ? removeErr.message : String(removeErr)}`,
+          );
         }
       }
     }
@@ -432,16 +454,15 @@ export class SkillsLocalFolderRunner implements OnModuleInit, SyncRunner {
     return cleaned || 'unnamed-skill';
   }
 
-  private async uniqueName(client: any, accountId: string, candidate: string): Promise<string> {
+  private async uniqueName(accountId: string, candidate: string): Promise<string> {
     let attempt = candidate;
     let suffix = 1;
     while (true) {
-      const { data } = await client
-        .from('skills')
-        .select('id')
-        .eq('account_id', accountId)
-        .eq('name', attempt)
-        .maybeSingle();
+      const [data] = await this.db
+        .select({ id: skills.id })
+        .from(skills)
+        .where(and(eq(skills.accountId, accountId), eq(skills.name, attempt)))
+        .limit(1);
       if (!data) return attempt;
       suffix += 1;
       attempt = `${candidate}-disk-${suffix}`;

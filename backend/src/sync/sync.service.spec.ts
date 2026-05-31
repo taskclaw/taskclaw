@@ -1,60 +1,53 @@
 import { SyncService } from './sync.service';
-import { sourceFixture } from '../__test__/fixtures/source.fixture';
+import { sourceFixture, type SourceRow } from '../__test__/fixtures/source.fixture';
 import { createBullQueueMock } from '../__test__/mocks/bullmq.mock';
+import { createDrizzleMock, type DrizzleMock } from '../__test__/mocks/drizzle.mock';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeQueryChain(result: any) {
-  const chain: any = {};
-  ['select', 'eq', 'neq', 'update', 'insert'].forEach((m) => {
-    chain[m] = jest.fn().mockReturnValue(chain);
-  });
-  chain.single = jest.fn().mockResolvedValue(result);
-  chain.then = (resolve: any) => Promise.resolve(result).then(resolve);
-  return chain;
-}
-
-function makeSupabaseAdmin(tableResults: Record<string, any> = {}) {
+/**
+ * The Drizzle `sources` row is camelCase, whereas the PostgREST fixture is
+ * snake_case. Re-key so the rows the mocked `db.select()` hands back match the
+ * shape the converted service reads (`source.accountId`, `source.syncIntervalMinutes`,
+ * `source.lastSyncedAt`, …).
+ */
+function toDrizzleSource(row: SourceRow) {
   return {
-    getClient: jest.fn().mockReturnValue({
-      from: jest.fn((table: string) =>
-        makeQueryChain(tableResults[table] ?? { data: null, error: null }),
-      ),
-    }),
+    id: row.id,
+    accountId: row.account_id,
+    categoryId: 'category-uuid-001',
+    provider: row.provider,
+    config: {},
+    syncStatus: row.sync_status,
+    lastSyncedAt: row.last_synced_at,
+    lastSyncError: row.last_sync_error,
+    syncIntervalMinutes: row.sync_interval_minutes,
+    isActive: row.is_active,
+    syncFilters: [],
+    categoryProperty: null,
+    connectionId: null,
   };
 }
 
 function makeAdapterRegistry() {
   return {
     getAdapter: jest.fn().mockReturnValue({
-      sync: jest.fn().mockResolvedValue({
-        tasks_synced: 3,
-        tasks_created: 2,
-        tasks_updated: 1,
-        tasks_deleted: 0,
-        errors: [],
-      }),
+      fetchTasks: jest.fn().mockResolvedValue([]),
     }),
   };
 }
 
 function buildService(
   options: {
-    sourceResult?: any;
-    syncJobResult?: any;
+    db?: DrizzleMock;
     bullQueueAvailable?: boolean;
     queue?: any;
   } = {},
 ) {
-  const source = sourceFixture();
-  const supabaseAdmin = makeSupabaseAdmin({
-    sources: options.sourceResult ?? { data: source, error: null },
-    sync_jobs: options.syncJobResult ?? { data: { id: 'job-1' }, error: null },
-  });
-
+  const drizzle = options.db ?? createDrizzleMock();
   const adapterRegistry = makeAdapterRegistry();
   const service = new SyncService(
-    supabaseAdmin as any,
+    drizzle.db as any,
     adapterRegistry as any,
     options.bullQueueAvailable ?? false,
   );
@@ -63,7 +56,7 @@ function buildService(
     service.setBullQueue(options.queue);
   }
 
-  return { service, supabaseAdmin, adapterRegistry };
+  return { service, db: drizzle, adapterRegistry };
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -130,11 +123,7 @@ describe('SyncService', () => {
 
   describe('syncSource() — concurrent sync prevention', () => {
     it('throws when sync is already in progress for the same source', async () => {
-      const source = sourceFixture({ id: 'locked-source' });
-      const { service } = buildService({
-        sourceResult: { data: source, error: null },
-        syncJobResult: { data: { id: 'job-1' }, error: null },
-      });
+      const { service } = buildService();
 
       // Simulate lock already set
       (service as any).syncLocks.set('locked-source', true);
@@ -145,34 +134,13 @@ describe('SyncService', () => {
     });
 
     it('releases the lock in finally block after success', async () => {
-      const source = sourceFixture({ id: 'source-lock-test' });
-      const supabaseAdmin = { getClient: jest.fn() };
+      const source = toDrizzleSource(sourceFixture({ id: 'source-lock-test' }));
+      const db = createDrizzleMock();
+      // syncSource: select source → [source]; insert sync_job → returning [job]
+      db.select.mockReturnValueOnce(db.makeBuilder([source]));
+      db.insert.mockReturnValueOnce(db.makeBuilder([{ id: 'job-1' }]));
 
-      // Build chain that tracks multiple table calls
-      const mockClient = {
-        from: jest.fn((table: string) => {
-          if (table === 'sources') {
-            return {
-              select: jest.fn().mockReturnThis(),
-              eq: jest.fn().mockReturnThis(),
-              update: jest.fn().mockReturnThis(),
-              single: jest
-                .fn()
-                .mockResolvedValue({ data: source, error: null }),
-              then: (resolve: any) =>
-                Promise.resolve({ data: source, error: null }).then(resolve),
-            };
-          }
-          return makeQueryChain({ data: { id: 'job-1' }, error: null });
-        }),
-      };
-      supabaseAdmin.getClient.mockReturnValue(mockClient);
-
-      const service = new SyncService(
-        supabaseAdmin as any,
-        makeAdapterRegistry() as any,
-        false,
-      );
+      const { service } = buildService({ db });
       jest.spyOn(service as any, 'performInboundSync').mockResolvedValue({
         tasks_synced: 1,
         tasks_created: 1,
@@ -188,32 +156,12 @@ describe('SyncService', () => {
     });
 
     it('releases the lock even when sync throws an error', async () => {
-      const source = sourceFixture({ id: 'error-source' });
-      const supabaseAdmin = { getClient: jest.fn() };
-      const mockClient = {
-        from: jest.fn((table: string) => {
-          if (table === 'sources') {
-            return {
-              select: jest.fn().mockReturnThis(),
-              eq: jest.fn().mockReturnThis(),
-              update: jest.fn().mockReturnThis(),
-              single: jest
-                .fn()
-                .mockResolvedValue({ data: source, error: null }),
-              then: (resolve: any) =>
-                Promise.resolve({ data: source, error: null }).then(resolve),
-            };
-          }
-          return makeQueryChain({ data: { id: 'job-1' }, error: null });
-        }),
-      };
-      supabaseAdmin.getClient.mockReturnValue(mockClient);
+      const source = toDrizzleSource(sourceFixture({ id: 'error-source' }));
+      const db = createDrizzleMock();
+      db.select.mockReturnValueOnce(db.makeBuilder([source]));
+      db.insert.mockReturnValueOnce(db.makeBuilder([{ id: 'job-1' }]));
 
-      const service = new SyncService(
-        supabaseAdmin as any,
-        makeAdapterRegistry() as any,
-        false,
-      );
+      const { service } = buildService({ db });
       jest
         .spyOn(service as any, 'performInboundSync')
         .mockRejectedValue(new Error('adapter error'));
@@ -229,9 +177,11 @@ describe('SyncService', () => {
 
   describe('syncSource() — error handling', () => {
     it('throws when source is not found', async () => {
-      const { service } = buildService({
-        sourceResult: { data: null, error: { message: 'not found' } },
-      });
+      const db = createDrizzleMock();
+      // select source → [] (no row found)
+      db.select.mockReturnValueOnce(db.makeBuilder([]));
+
+      const { service } = buildService({ db });
 
       await expect(service.syncSource('missing-source')).rejects.toThrow(
         'Source missing-source not found',
@@ -239,49 +189,14 @@ describe('SyncService', () => {
     });
 
     it('throws when sync job record creation fails', async () => {
-      const source = sourceFixture();
-      const supabaseAdmin = { getClient: jest.fn() };
-      const mockClient = {
-        from: jest.fn((table: string) => {
-          if (table === 'sources') {
-            return {
-              select: jest.fn().mockReturnThis(),
-              eq: jest.fn().mockReturnThis(),
-              update: jest.fn().mockReturnThis(),
-              single: jest
-                .fn()
-                .mockResolvedValue({ data: source, error: null }),
-              then: (resolve: any) =>
-                Promise.resolve({ data: source, error: null }).then(resolve),
-            };
-          }
-          if (table === 'sync_jobs') {
-            return {
-              insert: jest.fn().mockReturnThis(),
-              select: jest.fn().mockReturnThis(),
-              update: jest.fn().mockReturnThis(),
-              eq: jest.fn().mockReturnThis(),
-              single: jest.fn().mockResolvedValue({
-                data: null,
-                error: { message: 'insert failed' },
-              }),
-              then: (resolve: any) =>
-                Promise.resolve({
-                  data: null,
-                  error: { message: 'insert failed' },
-                }).then(resolve),
-            };
-          }
-          return makeQueryChain({ data: null, error: null });
-        }),
-      };
-      supabaseAdmin.getClient.mockReturnValue(mockClient);
+      const source = toDrizzleSource(sourceFixture());
+      const db = createDrizzleMock();
+      // select source → [source]; insert sync_job returning → [] (insert produced no row)
+      db.select.mockReturnValueOnce(db.makeBuilder([source]));
+      db.insert.mockReturnValueOnce(db.makeBuilder([]));
 
-      const service = new SyncService(
-        supabaseAdmin as any,
-        makeAdapterRegistry() as any,
-        false,
-      );
+      const { service } = buildService({ db });
+
       await expect(service.syncSource(source.id)).rejects.toThrow(
         'Failed to create sync job',
       );
@@ -292,31 +207,19 @@ describe('SyncService', () => {
 
   describe('handleScheduledSync() — cron scheduling', () => {
     it('enqueues sources that are past their sync_interval_minutes threshold', async () => {
-      const overdueSource = sourceFixture({
-        id: 'overdue-source',
-        sync_interval_minutes: 30,
-        last_synced_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 60 min ago
-      });
-
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue({
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            neq: jest.fn().mockReturnThis(),
-            then: (resolve: any) =>
-              Promise.resolve({ data: [overdueSource], error: null }).then(
-                resolve,
-              ),
-          }),
+      const overdueSource = toDrizzleSource(
+        sourceFixture({
+          id: 'overdue-source',
+          sync_interval_minutes: 30,
+          last_synced_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 60 min ago
         }),
-      };
-
-      const service = new SyncService(
-        supabaseAdmin as any,
-        makeAdapterRegistry() as any,
-        false,
       );
+
+      const db = createDrizzleMock();
+      // handleScheduledSync: single select of active sources
+      db.select.mockReturnValueOnce(db.makeBuilder([overdueSource]));
+
+      const { service } = buildService({ db });
       const addJobSpy = jest
         .spyOn(service, 'addSyncJob')
         .mockResolvedValue({ queued: false });
@@ -325,37 +228,24 @@ describe('SyncService', () => {
 
       expect(addJobSpy).toHaveBeenCalledWith(
         overdueSource.id,
-        overdueSource.account_id,
+        overdueSource.accountId,
         'cron',
       );
     });
 
     it('skips sources that are not yet due for sync', async () => {
-      const recentSource = sourceFixture({
-        id: 'recent-source',
-        sync_interval_minutes: 30,
-        last_synced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 min ago, interval is 30
-      });
-
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue({
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            neq: jest.fn().mockReturnThis(),
-            then: (resolve: any) =>
-              Promise.resolve({ data: [recentSource], error: null }).then(
-                resolve,
-              ),
-          }),
+      const recentSource = toDrizzleSource(
+        sourceFixture({
+          id: 'recent-source',
+          sync_interval_minutes: 30,
+          last_synced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 min ago, interval is 30
         }),
-      };
-
-      const service = new SyncService(
-        supabaseAdmin as any,
-        makeAdapterRegistry() as any,
-        false,
       );
+
+      const db = createDrizzleMock();
+      db.select.mockReturnValueOnce(db.makeBuilder([recentSource]));
+
+      const { service } = buildService({ db });
       const addJobSpy = jest
         .spyOn(service, 'addSyncJob')
         .mockResolvedValue({ queued: false });
@@ -365,31 +255,18 @@ describe('SyncService', () => {
     });
 
     it('syncs source with no last_synced_at (treats as epoch → always due)', async () => {
-      const neverSynced = sourceFixture({
-        id: 'never-synced',
-        last_synced_at: null,
-        sync_interval_minutes: 30,
-      });
-
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue({
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            neq: jest.fn().mockReturnThis(),
-            then: (resolve: any) =>
-              Promise.resolve({ data: [neverSynced], error: null }).then(
-                resolve,
-              ),
-          }),
+      const neverSynced = toDrizzleSource(
+        sourceFixture({
+          id: 'never-synced',
+          last_synced_at: null,
+          sync_interval_minutes: 30,
         }),
-      };
-
-      const service = new SyncService(
-        supabaseAdmin as any,
-        makeAdapterRegistry() as any,
-        false,
       );
+
+      const db = createDrizzleMock();
+      db.select.mockReturnValueOnce(db.makeBuilder([neverSynced]));
+
+      const { service } = buildService({ db });
       const addJobSpy = jest
         .spyOn(service, 'addSyncJob')
         .mockResolvedValue({ queued: false });
@@ -397,32 +274,20 @@ describe('SyncService', () => {
       await service.handleScheduledSync();
       expect(addJobSpy).toHaveBeenCalledWith(
         neverSynced.id,
-        neverSynced.account_id,
+        neverSynced.accountId,
         'cron',
       );
     });
 
     it('handles sources fetch error gracefully (no throw)', async () => {
-      const supabaseAdmin = {
-        getClient: jest.fn().mockReturnValue({
-          from: jest.fn().mockReturnValue({
-            select: jest.fn().mockReturnThis(),
-            eq: jest.fn().mockReturnThis(),
-            neq: jest.fn().mockReturnThis(),
-            then: (resolve: any) =>
-              Promise.resolve({
-                data: null,
-                error: { message: 'DB error' },
-              }).then(resolve),
-          }),
-        }),
-      };
+      const db = createDrizzleMock();
+      // Drizzle throws (rejects) instead of returning {error}; the cron must swallow it.
+      const rejectingBuilder = db.makeBuilder();
+      rejectingBuilder.then = (_resolve: any, reject: any) =>
+        Promise.reject(new Error('DB error')).then(_resolve, reject);
+      db.select.mockReturnValueOnce(rejectingBuilder);
 
-      const service = new SyncService(
-        supabaseAdmin as any,
-        makeAdapterRegistry() as any,
-        false,
-      );
+      const { service } = buildService({ db });
       await expect(service.handleScheduledSync()).resolves.toBeUndefined();
     });
   });

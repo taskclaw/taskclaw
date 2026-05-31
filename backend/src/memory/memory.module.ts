@@ -1,6 +1,5 @@
 import { Module, OnModuleInit, Logger } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { AiAssistantModule } from '../ai-assistant/ai-assistant.module';
 
 import { MemoryAdapterRegistry } from './adapters/memory-adapter.registry';
@@ -21,7 +20,7 @@ import { MemoryCronService } from './memory-cron.service';
  * - Runs salience decay cron via MemoryCronService (BE08)
  */
 @Module({
-  imports: [SupabaseModule, AiAssistantModule],
+  imports: [ AiAssistantModule],
   controllers: [MemoryController],
   providers: [
     MemoryAdapterRegistry,

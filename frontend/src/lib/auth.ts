@@ -50,6 +50,54 @@ export async function clearAuthToken() {
     cookieStore.delete('auth_token')
 }
 
+// ── Refresh token (local auth) ───────────────────────────────────────────────
+// Stored in its own httpOnly cookie. The opaque refresh token rotates on each use.
+
+export async function getRefreshToken() {
+    const cookieStore = await cookies()
+    return cookieStore.get('refresh_token')?.value
+}
+
+export async function setRefreshToken(token: string) {
+    const cookieStore = await cookies()
+    const cookieSecure =
+        process.env.COOKIE_SECURE !== undefined
+            ? process.env.COOKIE_SECURE === 'true'
+            : process.env.NODE_ENV === 'production'
+    cookieStore.set('refresh_token', token, {
+        httpOnly: true,
+        secure: cookieSecure,
+        path: '/',
+        maxAge: 60 * 60 * 24 * 30, // 30 days
+    })
+}
+
+export async function clearRefreshToken() {
+    const cookieStore = await cookies()
+    cookieStore.delete('refresh_token')
+}
+
+/** Rotate the refresh token for a fresh access token. Returns the new session or null. */
+export async function refreshSession() {
+    const refresh_token = await getRefreshToken()
+    if (!refresh_token) return null
+
+    const res = await fetch(`${API_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token }),
+    })
+    if (!res.ok) {
+        await clearAuthToken()
+        await clearRefreshToken()
+        return null
+    }
+    const session = await res.json()
+    await setAuthToken(session.access_token)
+    if (session.refresh_token) await setRefreshToken(session.refresh_token)
+    return session
+}
+
 export async function login(data: any) {
     const res = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
@@ -82,16 +130,20 @@ export async function signup(data: any) {
 
 export async function logout() {
     const token = await getAuthToken()
-    if (!token) return
-
-    await fetch(`${API_URL}/auth/logout`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`
-        }
-    })
+    const refresh_token = await getRefreshToken()
+    if (token) {
+        await fetch(`${API_URL}/auth/logout`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ refresh_token }),
+        })
+    }
 
     await clearAuthToken()
+    await clearRefreshToken()
 }
 
 export async function updatePassword(password: string) {
@@ -119,12 +171,28 @@ export async function forgotPassword(email: string) {
     const res = await fetch(`${API_URL}/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback?next=/update-password` }),
+        body: JSON.stringify({ email, redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/update-password` }),
     })
 
     if (!res.ok) {
         const error = await res.json()
         throw new Error(error.message || 'Failed to send reset email')
+    }
+
+    return res.json()
+}
+
+/** Reset a password using the token from the email link (unauthenticated flow). */
+export async function resetPassword(token: string, password: string) {
+    const res = await fetch(`${API_URL}/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password }),
+    })
+
+    if (!res.ok) {
+        const error = await res.json()
+        throw new Error(error.message || 'Failed to reset password')
     }
 
     return res.json()

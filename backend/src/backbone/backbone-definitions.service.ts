@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { asc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { backboneDefinitions } from '../db/schema';
 import { BackboneAdapterRegistry } from './adapters/backbone-adapter.registry';
 
 /**
@@ -75,7 +77,7 @@ export class BackboneDefinitionsService {
 
   constructor(
     private readonly registry: BackboneAdapterRegistry,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
   ) {}
 
   /**
@@ -117,19 +119,11 @@ export class BackboneDefinitionsService {
    */
   private async loadFromDb(): Promise<BackboneDefinition[]> {
     try {
-      const client = this.supabaseAdmin.getClient();
-      const { data, error } = await client
-        .from('backbone_definitions')
-        .select('*')
-        .eq('is_active', true)
-        .order('name', { ascending: true });
-
-      if (error) {
-        this.logger.warn(
-          `backbone_definitions table unavailable, using fallback: ${error.message}`,
-        );
-        return FALLBACK_DEFINITIONS;
-      }
+      const data = await this.db
+        .select()
+        .from(backboneDefinitions)
+        .where(eq(backboneDefinitions.isActive, true))
+        .orderBy(asc(backboneDefinitions.name));
 
       if (!data || data.length === 0) {
         this.logger.warn(
@@ -152,16 +146,18 @@ export class BackboneDefinitionsService {
    * The config_schema in the DB is JSON Schema; we convert required[] + properties
    * into the BackboneConfigField[] format the frontend expects.
    */
-  private rowToDefinition(row: any): BackboneDefinition {
-    const configSchema = this.parseConfigSchema(row.config_schema);
+  private rowToDefinition(
+    row: typeof backboneDefinitions.$inferSelect,
+  ): BackboneDefinition {
+    const configSchema = this.parseConfigSchema(row.configSchema);
 
     return {
-      slug: row.slug as string,
-      label: row.name as string,
-      description: (row.description as string) || '',
-      protocol: row.protocol as string | undefined,
-      icon: row.icon as string | undefined,
-      color: row.color as string | undefined,
+      slug: row.slug,
+      label: row.name,
+      description: row.description || '',
+      protocol: row.protocol,
+      icon: row.icon,
+      color: row.color,
       configSchema,
     };
   }
@@ -174,14 +170,15 @@ export class BackboneDefinitionsService {
    *
    * We convert to BackboneConfigField[] for the frontend.
    */
-  private parseConfigSchema(schema: any): BackboneConfigField[] {
+  private parseConfigSchema(schema: unknown): BackboneConfigField[] {
     if (!schema || typeof schema !== 'object') return [];
 
-    const properties = schema.properties as Record<string, any> | undefined;
+    const schemaObj = schema as Record<string, any>;
+    const properties = schemaObj.properties as Record<string, any> | undefined;
     if (!properties) return [];
 
-    const required: string[] = Array.isArray(schema.required)
-      ? (schema.required as string[])
+    const required: string[] = Array.isArray(schemaObj.required)
+      ? (schemaObj.required as string[])
       : [];
 
     return Object.entries(properties).map(([key, prop]) => {

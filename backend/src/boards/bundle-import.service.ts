@@ -1,5 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { and, eq, count } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  pods,
+  backboneConnections,
+  integrationDefinitions,
+  categories,
+  skills,
+  knowledgeDocs,
+} from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { BoardTemplatesService } from './board-templates.service';
 
@@ -20,7 +29,7 @@ export class BundleImportService {
   private readonly logger = new Logger(BundleImportService.name);
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControl: AccessControlHelper,
     private readonly boardTemplatesService: BoardTemplatesService,
   ) {}
@@ -30,8 +39,7 @@ export class BundleImportService {
     accountId: string,
     bundle: any,
   ): Promise<BundleImportResult> {
-    const client = this.supabaseAdmin.getClient();
-    await this.accessControl.verifyAccountAccess(client, accountId, userId);
+    await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     const result: BundleImportResult = {
       categories_created: 0,
@@ -50,7 +58,7 @@ export class BundleImportService {
     if (bundle.backbones && bundle.backbones.length > 0) {
       for (const bb of bundle.backbones) {
         try {
-          const id = await this.declareBackbone(client, accountId, bb);
+          const id = await this.declareBackbone(accountId, bb);
           if (bb.slug) backboneSlugToId[bb.slug] = id;
           result.backbones_declared++;
         } catch (error: any) {
@@ -66,7 +74,7 @@ export class BundleImportService {
     if (bundle.integrations && bundle.integrations.length > 0) {
       for (const integration of bundle.integrations) {
         try {
-          await this.declareIntegration(client, accountId, integration);
+          await this.declareIntegration(integration);
           result.integrations_declared++;
         } catch (error: any) {
           this.logger.warn(
@@ -84,14 +92,15 @@ export class BundleImportService {
 
     if (bundle.categories && bundle.categories.length > 0) {
       try {
-        const countsBefore = await this.countEntities(client, accountId);
+        const countsBefore = await this.countEntities(accountId);
+        // provisionCategories now ignores its first arg (Drizzle-backed); pass null.
         categorySlugToId = await this.boardTemplatesService.provisionCategories(
-          client,
+          null,
           accountId,
           userId,
           bundle.categories,
         );
-        const countsAfter = await this.countEntities(client, accountId);
+        const countsAfter = await this.countEntities(accountId);
 
         result.categories_created =
           countsAfter.categories - countsBefore.categories;
@@ -112,7 +121,6 @@ export class BundleImportService {
       // Single pod definition
       try {
         const podId = await this.upsertPod(
-          client,
           accountId,
           bundle.pod,
           backboneSlugToId,
@@ -130,7 +138,6 @@ export class BundleImportService {
       for (const podDef of bundle.pods) {
         try {
           const podId = await this.upsertPod(
-            client,
             accountId,
             podDef,
             backboneSlugToId,
@@ -186,7 +193,6 @@ export class BundleImportService {
    * Matches by slug — if exists, updates metadata but never overwrites backbone if already set.
    */
   private async upsertPod(
-    client: any,
     accountId: string,
     podDef: any,
     backboneSlugToId: Record<string, string>,
@@ -205,50 +211,45 @@ export class BundleImportService {
       : null;
 
     // Check if pod already exists for this account
-    const { data: existing } = await client
-      .from('pods')
-      .select('id, backbone_connection_id')
-      .eq('account_id', accountId)
-      .eq('slug', slug)
-      .maybeSingle();
+    const existing = await this.db.query.pods.findFirst({
+      columns: { id: true, backboneConnectionId: true },
+      where: and(eq(pods.accountId, accountId), eq(pods.slug, slug)),
+    });
 
     if (existing) {
       // Update metadata but preserve existing backbone if not explicitly set
-      const updateData: any = {
+      const updateData: Partial<typeof pods.$inferInsert> = {
         name: podDef.name,
         description: podDef.description || null,
         icon: podDef.icon || 'layers',
         color: podDef.color || '#6366f1',
-        agent_config: podDef.agent_config || {},
-        updated_at: new Date().toISOString(),
+        agentConfig: podDef.agent_config || {},
+        updatedAt: new Date().toISOString(),
       };
       if (backboneConnectionId) {
-        updateData.backbone_connection_id = backboneConnectionId;
+        updateData.backboneConnectionId = backboneConnectionId;
       }
-      await client.from('pods').update(updateData).eq('id', existing.id);
+      await this.db.update(pods).set(updateData).where(eq(pods.id, existing.id));
       this.logger.log(`Pod "${slug}" already exists, updated metadata`);
       return existing.id;
     }
 
-    const { data: newPod, error } = await client
-      .from('pods')
-      .insert({
-        account_id: accountId,
+    const newPodRows = await this.db
+      .insert(pods)
+      .values({
+        accountId,
         name: podDef.name,
         slug,
         description: podDef.description || null,
         icon: podDef.icon || 'layers',
         color: podDef.color || '#6366f1',
-        backbone_connection_id: backboneConnectionId,
-        agent_config: podDef.agent_config || {},
+        backboneConnectionId: backboneConnectionId,
+        agentConfig: podDef.agent_config || {},
         position: podDef.position ?? 0,
       })
-      .select('id')
-      .single();
+      .returning({ id: pods.id });
 
-    if (error) {
-      throw new Error(`Failed to create pod: ${error.message}`);
-    }
+    const newPod = newPodRows[0];
 
     this.logger.log(`Pod created: ${newPod.id} (${slug})`);
     return newPod.id;
@@ -260,18 +261,18 @@ export class BundleImportService {
    * Returns the connection ID.
    */
   private async declareBackbone(
-    client: any,
     accountId: string,
     bbDef: any,
   ): Promise<string> {
     // Check if backbone connection already exists (match by type + name)
-    const { data: existing } = await client
-      .from('backbone_connections')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('backbone_type', bbDef.backbone_type)
-      .eq('name', bbDef.name)
-      .maybeSingle();
+    const existing = await this.db.query.backboneConnections.findFirst({
+      columns: { id: true },
+      where: and(
+        eq(backboneConnections.accountId, accountId),
+        eq(backboneConnections.backboneType, bbDef.backbone_type),
+        eq(backboneConnections.name, bbDef.name),
+      ),
+    });
 
     if (existing) {
       this.logger.log(
@@ -281,25 +282,22 @@ export class BundleImportService {
     }
 
     // Create a placeholder backbone connection (no credentials — user must configure)
-    const { data: newBb, error } = await client
-      .from('backbone_connections')
-      .insert({
-        account_id: accountId,
-        backbone_type: bbDef.backbone_type,
+    const newBbRows = await this.db
+      .insert(backboneConnections)
+      .values({
+        accountId,
+        backboneType: bbDef.backbone_type,
         name: bbDef.name,
         description:
           bbDef.description ||
           `Declared by bundle import — configure credentials to activate`,
         config: bbDef.config || {},
-        is_default: bbDef.is_default || false,
-        is_active: false, // inactive until user configures credentials
+        isDefault: bbDef.is_default || false,
+        isActive: false, // inactive until user configures credentials
       })
-      .select('id')
-      .single();
+      .returning({ id: backboneConnections.id });
 
-    if (error) {
-      throw new Error(`Failed to declare backbone: ${error.message}`);
-    }
+    const newBb = newBbRows[0];
 
     this.logger.log(
       `Backbone declared: ${newBb.id} (${bbDef.backbone_type}/${bbDef.name}) — needs credentials`,
@@ -311,17 +309,12 @@ export class BundleImportService {
    * Declare an integration definition from a bundle integration definition.
    * Upserts by slug. These are definitions only — no credentials stored here.
    */
-  private async declareIntegration(
-    client: any,
-    accountId: string,
-    integrationDef: any,
-  ): Promise<void> {
+  private async declareIntegration(integrationDef: any): Promise<void> {
     // Check if integration definition already exists
-    const { data: existing } = await client
-      .from('integration_definitions')
-      .select('id')
-      .eq('slug', integrationDef.slug)
-      .maybeSingle();
+    const existing = await this.db.query.integrationDefinitions.findFirst({
+      columns: { id: true },
+      where: eq(integrationDefinitions.slug, integrationDef.slug),
+    });
 
     if (existing) {
       this.logger.log(
@@ -330,21 +323,20 @@ export class BundleImportService {
       return;
     }
 
-    const { error } = await client.from('integration_definitions').insert({
-      slug: integrationDef.slug,
-      name: integrationDef.name,
-      description: integrationDef.description || null,
-      icon: integrationDef.icon || null,
-      categories: integrationDef.categories || [],
-      auth_type: integrationDef.auth_type || 'api_key',
-      auth_config: integrationDef.auth_config || {},
-      config_fields: integrationDef.config_fields || [],
-      setup_guide: integrationDef.setup_guide || null,
-      is_system: false,
-      is_published: false,
-    });
-
-    if (error) {
+    try {
+      await this.db.insert(integrationDefinitions).values({
+        slug: integrationDef.slug,
+        name: integrationDef.name,
+        description: integrationDef.description || null,
+        icon: integrationDef.icon || null,
+        categories: integrationDef.categories || [],
+        authType: integrationDef.auth_type || 'api_key',
+        authConfig: integrationDef.auth_config || {},
+        configFields: integrationDef.config_fields || [],
+        setupGuide: integrationDef.setup_guide || null,
+        isSystem: false,
+      });
+    } catch (error: any) {
       // Non-fatal — integration may be a system integration we can't insert
       this.logger.warn(
         `Integration definition "${integrationDef.slug}" skipped: ${error.message}`,
@@ -352,33 +344,30 @@ export class BundleImportService {
     }
   }
 
-  private async countEntities(
-    client: any,
-    accountId: string,
-  ): Promise<{
+  private async countEntities(accountId: string): Promise<{
     categories: number;
     skills: number;
     knowledge_docs: number;
   }> {
     const [categoriesRes, skillsRes, knowledgeRes] = await Promise.all([
-      client
-        .from('categories')
-        .select('id', { count: 'exact', head: true })
-        .eq('account_id', accountId),
-      client
-        .from('skills')
-        .select('id', { count: 'exact', head: true })
-        .eq('account_id', accountId),
-      client
-        .from('knowledge_docs')
-        .select('id', { count: 'exact', head: true })
-        .eq('account_id', accountId),
+      this.db
+        .select({ value: count() })
+        .from(categories)
+        .where(eq(categories.accountId, accountId)),
+      this.db
+        .select({ value: count() })
+        .from(skills)
+        .where(eq(skills.accountId, accountId)),
+      this.db
+        .select({ value: count() })
+        .from(knowledgeDocs)
+        .where(eq(knowledgeDocs.accountId, accountId)),
     ]);
 
     return {
-      categories: categoriesRes.count || 0,
-      skills: skillsRes.count || 0,
-      knowledge_docs: knowledgeRes.count || 0,
+      categories: categoriesRes[0]?.value || 0,
+      skills: skillsRes[0]?.value || 0,
+      knowledge_docs: knowledgeRes[0]?.value || 0,
     };
   }
 }

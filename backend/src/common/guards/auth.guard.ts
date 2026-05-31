@@ -3,22 +3,36 @@ import {
   ExecutionContext,
   Injectable,
   UnauthorizedException,
+  Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SupabaseService } from '../../supabase/supabase.service';
+import { JwtService } from '@nestjs/jwt';
+import { eq } from 'drizzle-orm';
 import { ApiKeysService } from '../../auth/api-keys/api-keys.service';
 import { CacheService } from '../cache.service';
+import { DB, type Db } from '../../db';
+import { users } from '../../db/schema';
 
 // Cache user active-status for 5 minutes to avoid a DB query on every request
 const USER_STATUS_TTL_SECONDS = 300;
 
+/**
+ * Auth guard (Epic 1).
+ *
+ * - API-key path: unchanged (X-API-Key / Bearer tc_live_*).
+ * - JWT path: local `jwt.verify` with the shared JWT_SECRET. This validates BOTH
+ *   locally-issued tokens and any in-flight GoTrue tokens (same secret), so no flag
+ *   branch is needed here during the cutover.
+ * - Status gate: reads public.users.status via Drizzle, cached 5 min.
+ */
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
-    private readonly supabaseService: SupabaseService,
+    private readonly jwt: JwtService,
     private readonly configService: ConfigService,
     private readonly apiKeysService: ApiKeysService,
     private readonly cacheService: CacheService,
+    @Inject(DB) private readonly db: Db,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -32,62 +46,42 @@ export class AuthGuard implements CanActivate {
 
     // Fall back to JWT Bearer token
     const token = this.extractTokenFromHeader(request);
-
     if (!token) {
       throw new UnauthorizedException();
     }
 
-    const supabase = this.supabaseService.getClient();
-
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser(token);
-
-    if (error || !user) {
-      console.error('AuthGuard Error:', error);
+    let payload: { sub?: string; email?: string };
+    try {
+      payload = await this.jwt.verifyAsync(token, {
+        secret: this.configService.get<string>('JWT_SECRET'),
+      });
+    } catch {
+      throw new UnauthorizedException();
+    }
+    if (!payload?.sub) {
       throw new UnauthorizedException();
     }
 
-    // Attach user and token to request object
-    request['user'] = user;
+    // Preserve the downstream contract exactly: request.user.id
+    request['user'] = { id: payload.sub, email: payload.email };
     request['accessToken'] = token;
 
-    // Enforce user approval status (public.users.status)
-    // Cache the result for USER_STATUS_TTL_SECONDS to avoid a DB query on every request.
-    const cacheKey = `user:${user.id}:status`;
+    // Enforce user approval status (public.users.status), cached to avoid a per-request query.
+    const cacheKey = `user:${payload.sub}:status`;
     let cachedStatus = this.cacheService.get<string>(cacheKey);
 
     if (!cachedStatus) {
-      try {
-        const adminSupabase = this.supabaseService.getAdminClient();
-        const { data: profile, error: profileError } = await adminSupabase
-          .from('users')
-          .select('status')
-          .eq('id', user.id)
-          .single();
+      const [profile] = await this.db
+        .select({ status: users.status })
+        .from(users)
+        .where(eq(users.id, payload.sub))
+        .limit(1);
 
-        if (!profileError) {
-          cachedStatus = String(profile?.status || 'active').toLowerCase();
-          this.cacheService.set(
-            cacheKey,
-            cachedStatus,
-            USER_STATUS_TTL_SECONDS,
-          );
-        } else {
-          // Backwards-compat if migration wasn't applied yet
-          const msg = (profileError as any)?.message?.toLowerCase?.() || '';
-          if (!msg.includes('status')) {
-            console.error('AuthGuard status lookup error:', profileError);
-            throw new UnauthorizedException();
-          }
-          cachedStatus = 'active'; // assume active if column doesn't exist yet
-        }
-      } catch (e) {
-        if (e instanceof UnauthorizedException) throw e;
-        console.error('AuthGuard status check failed:', e);
+      if (!profile) {
         throw new UnauthorizedException();
       }
+      cachedStatus = String(profile.status || 'active').toLowerCase();
+      this.cacheService.set(cacheKey, cachedStatus, USER_STATUS_TTL_SECONDS);
     }
 
     if (cachedStatus !== 'active') {

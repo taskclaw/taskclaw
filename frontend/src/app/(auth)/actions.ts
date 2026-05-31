@@ -4,7 +4,7 @@ import { serverApiBase } from '@/lib/api-base'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
-import { login as authLogin, signup as authSignup, logout as authLogout, forgotPassword as authForgotPassword, updatePassword as authUpdatePassword, setAuthToken, getAuthToken } from '@/lib/auth'
+import { login as authLogin, signup as authSignup, logout as authLogout, forgotPassword as authForgotPassword, updatePassword as authUpdatePassword, resetPassword as authResetPassword, setAuthToken, setRefreshToken, getAuthToken } from '@/lib/auth'
 
 const API_URL = serverApiBase()
 
@@ -15,7 +15,8 @@ export async function login(prevState: { error: string } | null, formData: FormD
     try {
         const session = await authLogin({ email, password })
         await setAuthToken(session.access_token)
-        
+        if (session.refresh_token) await setRefreshToken(session.refresh_token)
+
         // Set default account cookie after login
         const token = await getAuthToken()
         if (token) {
@@ -85,12 +86,19 @@ export async function forgotPassword(prevState: { error: string, success?: boole
 
 export async function updatePassword(prevState: { error: string, success?: boolean } | null, formData: FormData) {
     const password = formData.get('password') as string
+    const token = formData.get('token') as string | null
 
     try {
-        await authUpdatePassword(password)
+        if (token) {
+            // Unauthenticated reset-via-email flow (token from the reset link)
+            await authResetPassword(token, password)
+        } else {
+            // Authenticated password change
+            await authUpdatePassword(password)
+        }
     } catch (error: any) {
         return { error: error.message }
     }
 
-    redirect('/dashboard')
+    redirect(token ? '/login' : '/dashboard')
 }

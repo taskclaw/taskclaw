@@ -1,86 +1,63 @@
 import {
   BadRequestException,
   Injectable,
-  InternalServerErrorException,
+  Inject,
   ForbiddenException,
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import { SupabaseService } from '../supabase/supabase.service';
+import { and, desc, eq } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  accountUsers,
+  invitations,
+  users,
+  accounts,
+} from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 
 @Injectable()
 export class TeamsService {
   constructor(
-    private readonly supabaseService: SupabaseService,
+    @Inject(DB) private readonly db: Db,
     private readonly accessControlHelper: AccessControlHelper,
   ) {}
 
   async getAccountMembers(
     accountId: string,
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // Verify user belongs to account
-    await this.accessControlHelper.verifyAccountAccess(
-      supabase,
-      accountId,
-      userId,
-    );
+    await this.accessControlHelper.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await supabase
-      .from('account_users')
-      .select(
-        `
-        role,
-        user:users (
-          id,
-          name,
-          email
-        )
-      `,
-      )
-      .eq('account_id', accountId);
+    // Drizzle's relational query returns the joined row under the relation name
+    // (`user`), which already matches the PostgREST alias used here (`user:users`).
+    const rows = await this.db.query.accountUsers.findMany({
+      where: eq(accountUsers.accountId, accountId),
+      with: { user: true },
+    });
 
-    if (error) {
-      throw new InternalServerErrorException(error.message);
-    }
-
-    return data.map((item: any) => ({
-      id: item.user.id,
-      name: item.user.name,
-      email: item.user.email,
-      role: item.role,
-    }));
+    return rows.map((item) => {
+      // Drizzle can infer a `one` relation as `T | T[]`; normalize.
+      const u = Array.isArray(item.user) ? item.user[0] : item.user;
+      return { id: u?.id, name: u?.name, email: u?.email, role: item.role };
+    });
   }
 
   async getAccountInvitations(
     accountId: string,
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // Verify user belongs to account
-    await this.accessControlHelper.verifyAccountAccess(
-      supabase,
-      accountId,
-      userId,
-    );
+    await this.accessControlHelper.verifyAccountAccess(null, accountId, userId);
 
-    const { data, error } = await supabase
-      .from('invitations')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw new InternalServerErrorException(error.message);
-    }
-
-    return data;
+    return this.db
+      .select()
+      .from(invitations)
+      .where(eq(invitations.accountId, accountId))
+      .orderBy(desc(invitations.createdAt));
   }
 
   async inviteUser(
@@ -88,38 +65,35 @@ export class TeamsService {
     email: string,
     role: string,
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // Verify user is owner/admin
-    await this.accessControlHelper.verifyAccountAccess(
-      supabase,
-      accountId,
-      userId,
-      ['owner', 'admin'],
-    );
+    await this.accessControlHelper.verifyAccountAccess(null, accountId, userId, [
+      'owner',
+      'admin',
+    ]);
 
-    // Check if user is already a member
-    // We need to find the user by email first.
-    // Since we are using service role key, we can query the users table (if it's in public schema or we have access)
-    // BUT Supabase Auth users are in auth.users which is not directly accessible via PostgREST usually.
-    // However, we might have a public.users table that syncs with auth.users.
-    // Looking at the code: `supabase.from('users').select('id').eq('email', email)` implies public.users.
-
-    const { data: user } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', email)
-      .single();
+    // Check if user is already a member.
+    // Migration note: previously this could have used GoTrue admin lookup; we
+    // resolve the invitee against public.users by email (the canonical user
+    // table now that GoTrue is removed).
+    const [user] = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
 
     if (user) {
-      const { data: existingMember } = await supabase
-        .from('account_users')
-        .select('id')
-        .eq('account_id', accountId)
-        .eq('user_id', user.id)
-        .single();
+      const [existingMember] = await this.db
+        .select({ id: accountUsers.id })
+        .from(accountUsers)
+        .where(
+          and(
+            eq(accountUsers.accountId, accountId),
+            eq(accountUsers.userId, user.id),
+          ),
+        )
+        .limit(1);
 
       if (existingMember) {
         throw new BadRequestException(
@@ -129,12 +103,16 @@ export class TeamsService {
     }
 
     // Check if invitation already exists
-    const { data: existingInvite } = await supabase
-      .from('invitations')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('email', email)
-      .single();
+    const [existingInvite] = await this.db
+      .select({ id: invitations.id })
+      .from(invitations)
+      .where(
+        and(
+          eq(invitations.accountId, accountId),
+          eq(invitations.email, email),
+        ),
+      )
+      .limit(1);
 
     if (existingInvite) {
       throw new ConflictException('Invitation already sent to this email.');
@@ -144,16 +122,12 @@ export class TeamsService {
       Math.random().toString(36).substring(2, 15) +
       Math.random().toString(36).substring(2, 15);
 
-    const { error } = await supabase.from('invitations').insert({
-      account_id: accountId,
+    await this.db.insert(invitations).values({
+      accountId,
       email,
       role,
       token,
     });
-
-    if (error) {
-      throw new InternalServerErrorException(error.message);
-    }
 
     // TODO: Send email via Resend
     console.log(`Invitation link: http://localhost:3002/invite?token=${token}`);
@@ -165,17 +139,13 @@ export class TeamsService {
     accountId: string,
     memberId: string,
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // Verify caller is owner/admin
-    await this.accessControlHelper.verifyAccountAccess(
-      supabase,
-      accountId,
-      userId,
-      ['owner', 'admin'],
-    );
+    await this.accessControlHelper.verifyAccountAccess(null, accountId, userId, [
+      'owner',
+      'admin',
+    ]);
 
     // Cannot remove yourself
     if (memberId === userId) {
@@ -183,37 +153,40 @@ export class TeamsService {
     }
 
     // Cannot remove the account owner
-    const { data: account } = await supabase
-      .from('accounts')
-      .select('owner_user_id')
-      .eq('id', accountId)
-      .single();
+    const [account] = await this.db
+      .select({ ownerUserId: accounts.ownerUserId })
+      .from(accounts)
+      .where(eq(accounts.id, accountId))
+      .limit(1);
 
-    if (account && account.owner_user_id === memberId) {
+    if (account && account.ownerUserId === memberId) {
       throw new BadRequestException('Cannot remove the account owner');
     }
 
     // Verify member exists
-    const { data: member } = await supabase
-      .from('account_users')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('user_id', memberId)
-      .single();
+    const [member] = await this.db
+      .select({ id: accountUsers.id })
+      .from(accountUsers)
+      .where(
+        and(
+          eq(accountUsers.accountId, accountId),
+          eq(accountUsers.userId, memberId),
+        ),
+      )
+      .limit(1);
 
     if (!member) {
       throw new NotFoundException('Member not found in this account');
     }
 
-    const { error } = await supabase
-      .from('account_users')
-      .delete()
-      .eq('account_id', accountId)
-      .eq('user_id', memberId);
-
-    if (error) {
-      throw new InternalServerErrorException(error.message);
-    }
+    await this.db
+      .delete(accountUsers)
+      .where(
+        and(
+          eq(accountUsers.accountId, accountId),
+          eq(accountUsers.userId, memberId),
+        ),
+      );
 
     return { success: true };
   }
@@ -222,57 +195,69 @@ export class TeamsService {
     accountId: string,
     invitationId: string,
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // Fetch invitation
-    const { data: invitation, error: invError } = await supabase
-      .from('invitations')
-      .select('*')
-      .eq('id', invitationId)
-      .eq('account_id', accountId)
-      .single();
+    const [invitation] = await this.db
+      .select()
+      .from(invitations)
+      .where(
+        and(
+          eq(invitations.id, invitationId),
+          eq(invitations.accountId, accountId),
+        ),
+      )
+      .limit(1);
 
-    if (invError || !invitation) {
+    if (!invitation) {
       throw new NotFoundException('Invitation not found');
     }
 
-    // Verify the invitation belongs to the current user (by email)
-    const { data: authUser } = await supabase.auth.getUser();
-    if (!authUser?.user?.email || authUser.user.email !== invitation.email) {
+    // Verify the invitation belongs to the current user (by email).
+    // Migration note: previously this used `supabase.auth.getUser()` (GoTrue) to
+    // read the caller's email; GoTrue is gone, so we resolve the caller's email
+    // from public.users by their authenticated userId instead.
+    const [authUser] = await this.db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!authUser?.email || authUser.email !== invitation.email) {
       throw new ForbiddenException(
         'This invitation is not for your email address',
       );
     }
 
     // Check if already a member
-    const { data: existingMember } = await supabase
-      .from('account_users')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('user_id', userId)
-      .single();
+    const [existingMember] = await this.db
+      .select({ id: accountUsers.id })
+      .from(accountUsers)
+      .where(
+        and(
+          eq(accountUsers.accountId, accountId),
+          eq(accountUsers.userId, userId),
+        ),
+      )
+      .limit(1);
 
     if (existingMember) {
       // Already a member, just delete the invitation
-      await supabase.from('invitations').delete().eq('id', invitationId);
+      await this.db
+        .delete(invitations)
+        .where(eq(invitations.id, invitationId));
       return { success: true, message: 'Already a member' };
     }
 
     // Add user to account
-    const { error: addError } = await supabase.from('account_users').insert({
-      account_id: accountId,
-      user_id: userId,
+    await this.db.insert(accountUsers).values({
+      accountId,
+      userId,
       role: invitation.role || 'member',
     });
 
-    if (addError) {
-      throw new InternalServerErrorException(addError.message);
-    }
-
     // Delete the invitation
-    await supabase.from('invitations').delete().eq('id', invitationId);
+    await this.db.delete(invitations).where(eq(invitations.id, invitationId));
 
     return { success: true };
   }
@@ -280,16 +265,14 @@ export class TeamsService {
   async deleteInvitation(
     invitationId: string,
     userId: string,
-    accessToken?: string,
+    _accessToken?: string,
   ) {
-    const supabase = this.supabaseService.getClient(accessToken);
-
     // We need to find the account_id of the invitation to verify access
-    const { data: invitation } = await supabase
-      .from('invitations')
-      .select('account_id')
-      .eq('id', invitationId)
-      .single();
+    const [invitation] = await this.db
+      .select({ accountId: invitations.accountId })
+      .from(invitations)
+      .where(eq(invitations.id, invitationId))
+      .limit(1);
 
     if (!invitation) {
       throw new NotFoundException('Invitation not found');
@@ -297,20 +280,15 @@ export class TeamsService {
 
     // Verify user is owner/admin of the account
     await this.accessControlHelper.verifyAccountAccess(
-      supabase,
-      invitation.account_id,
+      null,
+      invitation.accountId!,
       userId,
       ['owner', 'admin'],
     );
 
-    const { error } = await supabase
-      .from('invitations')
-      .delete()
-      .eq('id', invitationId);
-
-    if (error) {
-      throw new InternalServerErrorException(error.message);
-    }
+    await this.db
+      .delete(invitations)
+      .where(eq(invitations.id, invitationId));
 
     return { success: true };
   }

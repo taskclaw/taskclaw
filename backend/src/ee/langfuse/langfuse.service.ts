@@ -1,6 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { and, eq, gte } from 'drizzle-orm';
 import Langfuse from 'langfuse';
+import { DB, type Db } from '../../db';
+import { messages } from '../../db/schema';
 
 /**
  * Known model pricing (USD per token).
@@ -26,6 +29,27 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   // Defaults
   default: { input: 0.000001, output: 0.000002 },
 };
+
+/**
+ * Loosely-typed shapes for the usage aggregation queries. Drizzle's relational
+ * query API widens `one` relations to a union here (the schema namespace merge
+ * doesn't narrow `conversation`/`task`), so we describe just the columns the
+ * aggregation reads and cast the result rows at the boundary.
+ */
+interface UsageConversationRow {
+  metadata: unknown;
+  createdAt: string | null;
+  conversation: {
+    accountId: string;
+    taskId: string | null;
+    task?: {
+      id: string;
+      title: string | null;
+      categoryId: string | null;
+      category_categoryId?: { name: string | null } | null;
+    } | null;
+  } | null;
+}
 
 export interface TraceGenerationParams {
   /** Unique name for the trace (e.g., 'chat-message', 'title-generation') */
@@ -66,7 +90,10 @@ export class LangfuseService implements OnModuleDestroy {
   private readonly logger = new Logger(LangfuseService.name);
   private readonly enabled: boolean;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    @Inject(DB) private readonly db: Db,
+  ) {
     const publicKey = this.configService.get<string>('LANGFUSE_PUBLIC_KEY');
     const secretKey = this.configService.get<string>('LANGFUSE_SECRET_KEY');
     const baseUrl =
@@ -173,6 +200,22 @@ export class LangfuseService implements OnModuleDestroy {
   }
 
   /**
+   * Coerce a message's `metadata` jsonb column (typed `unknown` by Drizzle)
+   * into the loosely-typed record the aggregation logic reads.
+   */
+  private readMetadata(metadata: unknown): {
+    tokens_used?: number;
+    totalTokens?: number;
+    model?: string;
+  } {
+    return (metadata ?? {}) as {
+      tokens_used?: number;
+      totalTokens?: number;
+      model?: string;
+    };
+  }
+
+  /**
    * Flush all pending events (useful before shutdown)
    */
   async flush(): Promise<void> {
@@ -187,7 +230,6 @@ export class LangfuseService implements OnModuleDestroy {
    */
   async getUsageSummary(
     accountId: string,
-    supabaseClient: any,
     days: number = 30,
   ): Promise<{
     totalMessages: number;
@@ -203,24 +245,22 @@ export class LangfuseService implements OnModuleDestroy {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    // Query messages with AI metadata for token counts
-    const { data: messages, error } = await supabaseClient
-      .from('messages')
-      .select(
-        `
-        created_at,
-        metadata,
-        conversation:conversations!inner(account_id)
-      `,
-      )
-      .eq('conversations.account_id', accountId)
-      .eq('role', 'assistant')
-      .gte('created_at', since.toISOString())
-      .order('created_at', { ascending: true });
+    // Query messages with AI metadata for token counts.
+    // PostgREST filtered on the embedded conversation's account_id; Drizzle's
+    // relational query can't filter on a nested relation column, so we load the
+    // conversation (re-keyed from `conversation`) and gate on account_id in code.
+    const rows = (await this.db.query.messages.findMany({
+      where: and(
+        eq(messages.role, 'assistant'),
+        gte(messages.createdAt, since.toISOString()),
+      ),
+      orderBy: (m, { asc }) => [asc(m.createdAt)],
+      with: { conversation: true },
+    })) as unknown as UsageConversationRow[];
 
-    if (error || !messages) {
-      return { totalMessages: 0, totalTokens: 0, estimatedCost: 0, byDay: [] };
-    }
+    const filtered = rows.filter(
+      (m) => m.conversation?.accountId === accountId,
+    );
 
     // Aggregate by day
     const dayMap = new Map<
@@ -230,11 +270,13 @@ export class LangfuseService implements OnModuleDestroy {
     let totalTokens = 0;
     let totalCost = 0;
 
-    for (const msg of messages) {
-      const date = new Date(msg.created_at).toISOString().split('T')[0];
-      const tokens =
-        msg.metadata?.tokens_used || msg.metadata?.totalTokens || 0;
-      const model = msg.metadata?.model || 'default';
+    for (const msg of filtered) {
+      const date = new Date(msg.createdAt as string)
+        .toISOString()
+        .split('T')[0];
+      const meta = this.readMetadata(msg.metadata);
+      const tokens = meta.tokens_used || meta.totalTokens || 0;
+      const model = meta.model || 'default';
       const pricing = this.getModelPricing(model);
       // Rough estimate: 30% input, 70% output for assistant messages
       const cost = tokens * (pricing.input * 0.3 + pricing.output * 0.7);
@@ -250,7 +292,7 @@ export class LangfuseService implements OnModuleDestroy {
     }
 
     return {
-      totalMessages: messages.length,
+      totalMessages: filtered.length,
       totalTokens,
       estimatedCost: Math.round(totalCost * 1000000) / 1000000,
       byDay: Array.from(dayMap.entries()).map(([date, data]) => ({
@@ -266,7 +308,6 @@ export class LangfuseService implements OnModuleDestroy {
    */
   async getUsageBreakdown(
     accountId: string,
-    supabaseClient: any,
     days: number = 30,
   ): Promise<{
     byTask: Array<{
@@ -290,26 +331,30 @@ export class LangfuseService implements OnModuleDestroy {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    // Query messages joined with conversations → tasks → categories
-    const { data: messages, error } = await supabaseClient
-      .from('messages')
-      .select(
-        `
-        metadata,
-        conversation:conversations!inner(
-          account_id,
-          task_id,
-          task:tasks(id, title, category_id, categories(id, name))
-        )
-      `,
-      )
-      .eq('conversations.account_id', accountId)
-      .eq('role', 'assistant')
-      .gte('created_at', since.toISOString());
+    // Query messages joined with conversations → tasks → categories.
+    // Relation re-keys vs PostgREST: conversation.task is the `task` relation
+    // (one task), and the category embed `categories(id, name)` is the task's
+    // `category_categoryId` relation (FK `tasks.category_id`). Account scoping
+    // is applied in code since relational queries can't filter nested columns.
+    const rows = (await this.db.query.messages.findMany({
+      where: and(
+        eq(messages.role, 'assistant'),
+        gte(messages.createdAt, since.toISOString()),
+      ),
+      with: {
+        conversation: {
+          with: {
+            task: {
+              with: { category_categoryId: true },
+            },
+          },
+        },
+      },
+    })) as unknown as UsageConversationRow[];
 
-    if (error || !messages) {
-      return { byTask: [], byCategory: [] };
-    }
+    const filtered = rows.filter(
+      (m) => m.conversation?.accountId === accountId,
+    );
 
     // Aggregate by task
     const taskMap = new Map<
@@ -325,21 +370,21 @@ export class LangfuseService implements OnModuleDestroy {
       }
     >();
 
-    for (const msg of messages) {
+    for (const msg of filtered) {
       const task = msg.conversation?.task;
       if (!task) continue;
 
-      const tokens =
-        msg.metadata?.tokens_used || msg.metadata?.totalTokens || 0;
-      const model = msg.metadata?.model || 'default';
+      const meta = this.readMetadata(msg.metadata);
+      const tokens = meta.tokens_used || meta.totalTokens || 0;
+      const model = meta.model || 'default';
       const pricing = this.getModelPricing(model);
       const cost = tokens * (pricing.input * 0.3 + pricing.output * 0.7);
 
       const existing = taskMap.get(task.id) || {
         task_id: task.id,
         task_title: task.title || 'Untitled',
-        category_id: task.category_id || null,
-        category_name: task.categories?.name || null,
+        category_id: task.categoryId || null,
+        category_name: task.category_categoryId?.name || null,
         messages: 0,
         tokens: 0,
         cost: 0,
@@ -406,38 +451,34 @@ export class LangfuseService implements OnModuleDestroy {
   async getTaskUsage(
     accountId: string,
     taskId: string,
-    supabaseClient: any,
   ): Promise<{ messages: number; tokens: number; cost: number }> {
-    const { data: messages, error } = await supabaseClient
-      .from('messages')
-      .select(
-        `
-        metadata,
-        conversation:conversations!inner(account_id, task_id)
-      `,
-      )
-      .eq('conversations.account_id', accountId)
-      .eq('conversations.task_id', taskId)
-      .eq('role', 'assistant');
+    // PostgREST scoped on the embedded conversation's account_id + task_id;
+    // re-key the `conversation` relation and gate on both in code.
+    const rows = (await this.db.query.messages.findMany({
+      where: eq(messages.role, 'assistant'),
+      with: { conversation: true },
+    })) as unknown as UsageConversationRow[];
 
-    if (error || !messages) {
-      return { messages: 0, tokens: 0, cost: 0 };
-    }
+    const filtered = rows.filter(
+      (m) =>
+        m.conversation?.accountId === accountId &&
+        m.conversation?.taskId === taskId,
+    );
 
     let totalTokens = 0;
     let totalCost = 0;
 
-    for (const msg of messages) {
-      const tokens =
-        msg.metadata?.tokens_used || msg.metadata?.totalTokens || 0;
-      const model = msg.metadata?.model || 'default';
+    for (const msg of filtered) {
+      const meta = this.readMetadata(msg.metadata);
+      const tokens = meta.tokens_used || meta.totalTokens || 0;
+      const model = meta.model || 'default';
       const pricing = this.getModelPricing(model);
       totalTokens += tokens;
       totalCost += tokens * (pricing.input * 0.3 + pricing.output * 0.7);
     }
 
     return {
-      messages: messages.length,
+      messages: filtered.length,
       tokens: totalTokens,
       cost: Math.round(totalCost * 1000000) / 1000000,
     };

@@ -20,7 +20,10 @@ import type {
 } from './memory-connections.service';
 import { MemoryRouterService } from './memory-router.service';
 import { MemoryAdapterRegistry } from './adapters/memory-adapter.registry';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { DB, type Db } from '../db';
+import { agentMemories } from '../db/schema';
+import { and, desc, eq, isNull } from 'drizzle-orm';
+import { Inject } from '@nestjs/common';
 
 /**
  * MemoryController (BE05)
@@ -42,7 +45,7 @@ export class MemoryController {
     private readonly connectionsService: MemoryConnectionsService,
     private readonly memoryRouter: MemoryRouterService,
     private readonly registry: MemoryAdapterRegistry,
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
   ) {}
 
   // ── Memory Connections ──────────────────────────────────────
@@ -97,20 +100,20 @@ export class MemoryController {
     @Query('task_id') taskId?: string,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit = 50,
   ) {
-    const client = this.supabaseAdmin.getClient();
-    let q = client
-      .from('agent_memories')
-      .select('*')
-      .eq('account_id', accountId)
-      .is('valid_to', null)
-      .order('created_at', { ascending: false })
+    const conditions = [
+      eq(agentMemories.accountId, accountId),
+      isNull(agentMemories.validTo),
+    ];
+    if (type) conditions.push(eq(agentMemories.type, type));
+    if (taskId) conditions.push(eq(agentMemories.taskId, taskId));
+
+    const data = await this.db
+      .select()
+      .from(agentMemories)
+      .where(and(...conditions))
+      .orderBy(desc(agentMemories.createdAt))
       .limit(limit);
 
-    if (type) q = q.eq('type', type);
-    if (taskId) q = q.eq('task_id', taskId);
-
-    const { data, error } = await q;
-    if (error) throw new Error(error.message);
     return data || [];
   }
 

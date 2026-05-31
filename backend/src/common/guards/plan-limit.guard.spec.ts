@@ -1,6 +1,7 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PlanLimitGuard, PLAN_RESOURCE_KEY } from './plan-limit.guard';
+import { PlanLimitGuard } from './plan-limit.guard';
+import { createDrizzleMock, type DrizzleMock } from '../../__test__/mocks/drizzle.mock';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -17,38 +18,33 @@ function makeReflector(resource: string | undefined): Reflector {
   } as unknown as Reflector;
 }
 
-function makeSupabaseAdmin(
+/**
+ * Build a Drizzle mock wired for the guard's two queries:
+ *   1. `db.query.subscriptions.findFirst` → the active subscription (or undefined)
+ *   2. `db.select({ value: count() }).from(table).where(...)` → [{ value }]
+ *      (or throws, to exercise the fail-open path).
+ */
+function makeDrizzle(
   planName: string | null,
   resourceCount: number,
   countError?: any,
-) {
-  const subQuery = {
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    single: jest.fn().mockResolvedValue({
-      data: planName ? { plan: { name: planName } } : null,
-      error: null,
-    }),
-  };
+): DrizzleMock {
+  const mock = createDrizzleMock();
 
-  const countQuery = {
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn().mockReturnThis(),
-    // Resolves with count result
-    then: (resolve: any) =>
-      Promise.resolve({ count: resourceCount, error: countError ?? null }).then(
-        resolve,
-      ),
-  };
+  mock.query('subscriptions').findFirst.mockResolvedValue(
+    planName ? { plan: { name: planName } } : undefined,
+  );
 
-  const mockClient = {
-    from: jest.fn((table: string) => {
-      if (table === 'subscriptions') return subQuery;
-      return countQuery;
-    }),
-  };
+  if (countError) {
+    mock.select.mockReturnValue({
+      from: jest.fn().mockReturnThis(),
+      where: jest.fn(() => Promise.reject(countError)),
+    } as any);
+  } else {
+    mock.select.mockReturnValue(mock.makeBuilder([{ value: resourceCount }]));
+  }
 
-  return { getClient: jest.fn().mockReturnValue(mockClient) };
+  return mock;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -67,7 +63,7 @@ describe('PlanLimitGuard', () => {
       process.env.EDITION = 'community';
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        makeSupabaseAdmin('Hobby', 10) as any,
+        makeDrizzle('Hobby', 10).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -77,7 +73,7 @@ describe('PlanLimitGuard', () => {
       delete process.env.EDITION;
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        makeSupabaseAdmin('Hobby', 10) as any,
+        makeDrizzle('Hobby', 10).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -91,7 +87,7 @@ describe('PlanLimitGuard', () => {
       process.env.EDITION = 'cloud';
       const guard = new PlanLimitGuard(
         makeReflector(undefined),
-        makeSupabaseAdmin('Hobby', 0) as any,
+        makeDrizzle('Hobby', 0).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -105,7 +101,7 @@ describe('PlanLimitGuard', () => {
       process.env.EDITION = 'cloud';
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        makeSupabaseAdmin('Hobby', 0) as any,
+        makeDrizzle('Hobby', 0).db,
       );
       const context = buildContext({}); // no accountId
       await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -122,7 +118,7 @@ describe('PlanLimitGuard', () => {
     it('blocks creation when sources count is at the Hobby limit (2)', async () => {
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        makeSupabaseAdmin('Hobby', 2) as any,
+        makeDrizzle('Hobby', 2).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).rejects.toThrow(
@@ -133,7 +129,7 @@ describe('PlanLimitGuard', () => {
     it('allows creation when sources count is below the Hobby limit', async () => {
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        makeSupabaseAdmin('Hobby', 1) as any,
+        makeDrizzle('Hobby', 1).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -142,7 +138,7 @@ describe('PlanLimitGuard', () => {
     it('blocks when tasks count is at the Hobby limit (500)', async () => {
       const guard = new PlanLimitGuard(
         makeReflector('tasks'),
-        makeSupabaseAdmin('Hobby', 500) as any,
+        makeDrizzle('Hobby', 500).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).rejects.toThrow(
@@ -153,7 +149,7 @@ describe('PlanLimitGuard', () => {
     it('error message includes plan name and resource limit', async () => {
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        makeSupabaseAdmin('Hobby', 2) as any,
+        makeDrizzle('Hobby', 2).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       const err = await guard.canActivate(context).catch((e) => e);
@@ -173,7 +169,7 @@ describe('PlanLimitGuard', () => {
     it('allows unlimited conversations on Pro plan (-1)', async () => {
       const guard = new PlanLimitGuard(
         makeReflector('conversations'),
-        makeSupabaseAdmin('Pro', 9999) as any,
+        makeDrizzle('Pro', 9999).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -182,7 +178,7 @@ describe('PlanLimitGuard', () => {
     it('blocks sources when at Pro limit (10)', async () => {
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        makeSupabaseAdmin('Pro', 10) as any,
+        makeDrizzle('Pro', 10).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).rejects.toThrow(
@@ -202,7 +198,7 @@ describe('PlanLimitGuard', () => {
       for (const resource of ['sources', 'categories', 'tasks', 'skills']) {
         const guard = new PlanLimitGuard(
           makeReflector(resource),
-          makeSupabaseAdmin('Enterprise', 99999) as any,
+          makeDrizzle('Enterprise', 99999).db,
         );
         const context = buildContext({ accountId: 'account-1' });
         await expect(guard.canActivate(context)).resolves.toBe(true);
@@ -220,7 +216,7 @@ describe('PlanLimitGuard', () => {
     it('defaults to Hobby plan when no subscription found', async () => {
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        makeSupabaseAdmin(null, 2) as any,
+        makeDrizzle(null, 2).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       // Hobby limit for sources = 2, count = 2 → should block
@@ -238,12 +234,9 @@ describe('PlanLimitGuard', () => {
     });
 
     it('returns true (fail-open) when the resource count query fails', async () => {
-      const supabaseAdmin = makeSupabaseAdmin('Hobby', 0, {
-        message: 'DB error',
-      });
       const guard = new PlanLimitGuard(
         makeReflector('sources'),
-        supabaseAdmin as any,
+        makeDrizzle('Hobby', 0, new Error('DB error')).db,
       );
       const context = buildContext({ accountId: 'account-1' });
       await expect(guard.canActivate(context)).resolves.toBe(true);

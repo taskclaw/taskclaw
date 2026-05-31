@@ -1,5 +1,4 @@
 import { Module, forwardRef, OnModuleInit, Logger } from '@nestjs/common';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { BackboneModule } from '../backbone/backbone.module';
 import { BoardRoutingQueueModule } from './board-routing-queue.module';
@@ -21,7 +20,6 @@ import { BoardRoutingController } from './board-routing.controller';
  */
 @Module({
   imports: [
-    SupabaseModule,
     CommonModule,
     forwardRef(() => BackboneModule),
     BoardRoutingQueueModule.register(),

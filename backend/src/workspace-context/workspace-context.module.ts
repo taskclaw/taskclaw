@@ -1,9 +1,8 @@
 import { Module } from '@nestjs/common';
 import { WorkspaceContextService } from './workspace-context.service';
-import { SupabaseModule } from '../supabase/supabase.module';
 
 @Module({
-  imports: [SupabaseModule],
+  imports: [],
   providers: [WorkspaceContextService],
   exports: [WorkspaceContextService],
 })

@@ -106,7 +106,8 @@ export class SourcesController {
     }
 
     try {
-      return await adapter.getProperties(source.config);
+      // config is jsonb (typed `unknown` by Drizzle); the adapter re-validates it.
+      return await adapter.getProperties(source.config as Record<string, any>);
     } catch (error: any) {
       return {
         error: error.message || `Failed to fetch ${source.provider} properties`,

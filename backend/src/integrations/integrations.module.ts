@@ -1,5 +1,4 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { IntegrationsService } from './integrations.service';
 import { ToolRegistryService } from './tool-registry.service';
@@ -12,7 +11,7 @@ import { OAuthService } from './oauth/oauth.service';
 import { AiProviderModule } from '../ai-provider/ai-provider.module';
 
 @Module({
-  imports: [SupabaseModule, CommonModule, forwardRef(() => AiProviderModule)],
+  imports: [ CommonModule, forwardRef(() => AiProviderModule)],
   controllers: [
     IntegrationsController,
     BoardIntegrationRefsController,

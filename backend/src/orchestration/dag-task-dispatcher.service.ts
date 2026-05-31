@@ -1,6 +1,18 @@
 import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Queue } from 'bullmq';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { and, asc, eq, gt, inArray } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  orchestratedTasks,
+  orchestratedTaskDeps,
+  pods,
+  boardInstances,
+  boardSteps,
+  tasks as tasksTable,
+  semaphoreLeases,
+  agentApprovalRequests,
+} from '../db/schema';
 import { BackboneRouterService } from '../backbone/backbone-router.service';
 import { ExecutionLogService } from '../heartbeat/execution-log.service';
 import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
@@ -27,7 +39,7 @@ export class DagTaskDispatcher {
   private backboneDispatchQueue?: Queue;
 
   constructor(
-    private readonly supabaseAdmin: SupabaseAdminService,
+    @Inject(DB) private readonly db: Db,
     @Inject(forwardRef(() => BackboneRouterService))
     private readonly backboneRouter: BackboneRouterService,
     private readonly executionLogService: ExecutionLogService,
@@ -58,15 +70,15 @@ export class DagTaskDispatcher {
       `[DAG] Task ${taskId} completed — checking for newly-unblocked tasks`,
     );
 
-    const client = this.supabaseAdmin.getClient();
-
-    // Call the SQL function that finds tasks whose all deps are now completed
-    const { data: rows, error } = await client.rpc(
-      'get_newly_unblocked_tasks',
-      { p_completed_task_id: taskId },
-    );
-
-    if (error) {
+    // Call the SQL function that finds tasks whose all deps are now completed.
+    // DAG functions STAY as SQL — keep the function call, read `.rows`.
+    let rows: Array<{ task_id: string }> = [];
+    try {
+      const result = await this.db.execute(
+        sql`select * from get_newly_unblocked_tasks(${taskId})`,
+      );
+      rows = result.rows as Array<{ task_id: string }>;
+    } catch (error: any) {
       this.logger.error(
         `[DAG] get_newly_unblocked_tasks failed for task ${taskId}: ${error.message}`,
       );
@@ -86,15 +98,23 @@ export class DagTaskDispatcher {
 
     for (const unblockedTaskId of unblocked) {
       // Fetch the task to decide routing
-      const { data: task, error: taskError } = await client
-        .from('orchestrated_tasks')
-        .select('id, account_id, pod_id, goal, autonomy_level, parent_orchestrated_task_id')
-        .eq('id', unblockedTaskId)
-        .single();
+      const [task] = await this.db
+        .select({
+          id: orchestratedTasks.id,
+          account_id: orchestratedTasks.accountId,
+          pod_id: orchestratedTasks.podId,
+          goal: orchestratedTasks.goal,
+          autonomy_level: orchestratedTasks.autonomyLevel,
+          parent_orchestrated_task_id:
+            orchestratedTasks.parentOrchestratedTaskId,
+        })
+        .from(orchestratedTasks)
+        .where(eq(orchestratedTasks.id, unblockedTaskId))
+        .limit(1);
 
-      if (taskError || !task) {
+      if (!task) {
         this.logger.warn(
-          `[DAG] Could not fetch task ${unblockedTaskId}: ${taskError?.message}`,
+          `[DAG] Could not fetch task ${unblockedTaskId}`,
         );
         continue;
       }
@@ -122,15 +142,17 @@ export class DagTaskDispatcher {
    * Transitions the task to 'pending' then enqueues it with priority 1 (user just acted).
    */
   async approveTask(taskId: string): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
-    const { error } = await client
-      .from('orchestrated_tasks')
-      .update({ status: 'pending', updated_at: new Date().toISOString() })
-      .eq('id', taskId)
-      .eq('status', 'pending_approval');
-
-    if (error) {
+    try {
+      await this.db
+        .update(orchestratedTasks)
+        .set({ status: 'pending', updatedAt: new Date().toISOString() })
+        .where(
+          and(
+            eq(orchestratedTasks.id, taskId),
+            eq(orchestratedTasks.status, 'pending_approval'),
+          ),
+        );
+    } catch (error: any) {
       throw new Error(`Failed to approve task ${taskId}: ${error.message}`);
     }
 
@@ -152,12 +174,11 @@ export class DagTaskDispatcher {
    */
   async enqueueTask(taskId: string, priority = 2): Promise<void> {
     // Fetch account_id for the job payload
-    const client = this.supabaseAdmin.getClient();
-    const { data: task } = await client
-      .from('orchestrated_tasks')
-      .select('account_id')
-      .eq('id', taskId)
-      .single();
+    const [task] = await this.db
+      .select({ account_id: orchestratedTasks.accountId })
+      .from(orchestratedTasks)
+      .where(eq(orchestratedTasks.id, taskId))
+      .limit(1);
 
     const accountId = task?.account_id ?? 'unknown';
     const jobId = `orch-task-${taskId}`;
@@ -201,35 +222,45 @@ export class DagTaskDispatcher {
    * directly as fallback when backbone-dispatch queue is unavailable.
    */
   async dispatchTask(taskId: string): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
     // 1. Fetch the orchestrated task
-    const { data: task, error: taskError } = await client
-      .from('orchestrated_tasks')
-      .select('*')
-      .eq('id', taskId)
-      .single();
+    const [task] = await this.db
+      .select()
+      .from(orchestratedTasks)
+      .where(eq(orchestratedTasks.id, taskId))
+      .limit(1);
 
-    if (taskError || !task) {
-      this.logger.error(
-        `[DAG] dispatchTask: task ${taskId} not found: ${taskError?.message}`,
-      );
+    if (!task) {
+      this.logger.error(`[DAG] dispatchTask: task ${taskId} not found`);
       return;
     }
 
-    const accountId: string = task.account_id;
+    const accountId: string = task.accountId;
     const startTime = Date.now();
 
-    // 2. Fetch upstream completed task results
-    const { data: upstreamRows } = await client
-      .from('orchestrated_task_deps')
-      .select(
-        'orchestrated_tasks!upstream_task_id(goal, result_summary, structured_output)',
-      )
-      .eq('downstream_task_id', taskId);
+    // 2. Fetch upstream completed task results.
+    //    PostgREST embedded `orchestrated_tasks!upstream_task_id(...)`; Drizzle's
+    //    relation for that FK is `orchestratedTask_upstreamTaskId` — re-key it back
+    //    to `orchestrated_tasks` so the downstream mapping is unchanged.
+    const upstreamRows = await this.db.query.orchestratedTaskDeps.findMany({
+      where: eq(orchestratedTaskDeps.downstreamTaskId, taskId),
+      with: {
+        orchestratedTask_upstreamTaskId: {
+          columns: { goal: true, resultSummary: true, structuredOutput: true },
+        },
+      },
+    });
 
-    const upstreamTasks = (upstreamRows ?? [])
-      .map((r: any) => r.orchestrated_tasks)
+    const upstreamTasks = upstreamRows
+      .map((r: any) => {
+        const u = r.orchestratedTask_upstreamTaskId;
+        if (!u) return null;
+        // Re-key camelCase relation columns to the snake_case shape callers use.
+        return {
+          goal: u.goal,
+          result_summary: u.resultSummary,
+          structured_output: u.structuredOutput,
+        };
+      })
       .filter(Boolean)
       .filter((t: any) => t.result_summary !== null);
 
@@ -255,13 +286,13 @@ ${parts}
     }
 
     // 4. Resolve pod name for logging
-    let podName = task.pod_id ?? 'Unknown Pod';
-    if (task.pod_id) {
-      const { data: pod } = await client
-        .from('pods')
-        .select('name')
-        .eq('id', task.pod_id)
-        .single();
+    let podName = task.podId ?? 'Unknown Pod';
+    if (task.podId) {
+      const [pod] = await this.db
+        .select({ name: pods.name })
+        .from(pods)
+        .where(eq(pods.id, task.podId))
+        .limit(1);
       if (pod?.name) podName = pod.name;
     }
 
@@ -272,12 +303,12 @@ ${parts}
       account_id: accountId,
       trigger_type: 'coordinator',
       status: 'running',
-      pod_id: task.pod_id ?? undefined,
+      pod_id: task.podId ?? undefined,
       summary: `DAG task: ${task.goal} (pod: ${podName})`,
       metadata: {
         orchestrated_task_id: taskId,
-        pod_id: task.pod_id,
-        orchestration_id: task.parent_orchestrated_task_id,
+        pod_id: task.podId,
+        orchestration_id: task.parentOrchestratedTaskId,
       },
     });
     const execLogId = execLog?.id ?? null;
@@ -296,20 +327,23 @@ ${parts}
 
     try {
       // 7. Update task status to running
-      await client
-        .from('orchestrated_tasks')
-        .update({ status: 'running', updated_at: new Date().toISOString() })
-        .eq('id', taskId);
+      await this.db
+        .update(orchestratedTasks)
+        .set({ status: 'running', updatedAt: new Date().toISOString() })
+        .where(eq(orchestratedTasks.id, taskId));
 
       // 8. Fetch pod boards with descriptions for the decomposition prompt
       let boards: Array<{ id: string; name: string; description: string | null }> = [];
-      if (task.pod_id) {
-        const { data: boardRows } = await client
-          .from('board_instances')
-          .select('id, name, description')
-          .eq('pod_id', task.pod_id)
+      if (task.podId) {
+        boards = await this.db
+          .select({
+            id: boardInstances.id,
+            name: boardInstances.name,
+            description: boardInstances.description,
+          })
+          .from(boardInstances)
+          .where(eq(boardInstances.podId, task.podId))
           .limit(10);
-        boards = boardRows ?? [];
       }
 
       const boardListJson = boards.map((b) => ({
@@ -345,7 +379,7 @@ Rules:
 
       const result = await this.backboneRouter.send({
         accountId,
-        podId: task.pod_id ?? undefined,
+        podId: task.podId ?? undefined,
         sendOptions: {
           message: task.goal,
           systemPrompt,
@@ -377,7 +411,7 @@ Rules:
           decomposition.tasks,
           accountId,
           taskId,
-          task.pod_id,
+          task.podId,
         );
       } else {
         this.logger.warn(
@@ -454,20 +488,21 @@ Rules:
     orchestratedTaskId: string,
     podId: string | null,
   ): Promise<number> {
-    const client = this.supabaseAdmin.getClient();
-
     // Pre-fetch first board step for each unique board_id in one round-trip
     const boardIds = [...new Set(tasks.map((t) => t.board_id).filter(Boolean))];
     const firstStepByBoard: Record<string, { id: string; name: string; default_agent_id: string | null }> = {};
 
     for (const boardId of boardIds) {
-      const { data: firstStep } = await client
-        .from('board_steps')
-        .select('id, name, default_agent_id')
-        .eq('board_instance_id', boardId)
-        .order('position', { ascending: true })
-        .limit(1)
-        .single();
+      const [firstStep] = await this.db
+        .select({
+          id: boardSteps.id,
+          name: boardSteps.name,
+          default_agent_id: boardSteps.defaultAgentId,
+        })
+        .from(boardSteps)
+        .where(eq(boardSteps.boardInstanceId, boardId))
+        .orderBy(asc(boardSteps.position))
+        .limit(1);
       if (firstStep) firstStepByBoard[boardId] = firstStep;
     }
 
@@ -483,27 +518,33 @@ Rules:
       const status = step?.name ?? 'To-Do';
       const defaultAgentId = step?.default_agent_id ?? null;
 
-      const { data: inserted, error } = await client
-        .from('tasks')
-        .insert({
-          account_id: accountId,
-          title: params.title,
-          notes: params.description ?? '',
-          priority: params.priority ?? 'Medium',
-          status,
-          board_instance_id: params.board_id,
-          current_step_id: stepId,
-          assignee_type: defaultAgentId ? 'agent' : 'none',
-          assignee_id: defaultAgentId,
-          completed: false,
-          card_data: {},
-          metadata: { orchestration_id: orchestratedTaskId, pod_id: podId },
-        })
-        .select('id')
-        .single();
-
-      if (error || !inserted) {
+      let inserted: { id: string } | undefined;
+      try {
+        const insertedRows = await this.db
+          .insert(tasksTable)
+          .values({
+            accountId,
+            title: params.title,
+            notes: params.description ?? '',
+            priority: params.priority ?? 'Medium',
+            status,
+            boardInstanceId: params.board_id,
+            currentStepId: stepId,
+            assigneeType: defaultAgentId ? 'agent' : 'none',
+            assigneeId: defaultAgentId,
+            completed: false,
+            cardData: {},
+            metadata: { orchestration_id: orchestratedTaskId, pod_id: podId },
+          })
+          .returning({ id: tasksTable.id });
+        inserted = insertedRows[0];
+      } catch (error: any) {
         this.logger.error(`[DAGTasks] Insert failed for "${params.title}": ${error?.message}`);
+        continue;
+      }
+
+      if (!inserted) {
+        this.logger.error(`[DAGTasks] Insert failed for "${params.title}": no row returned`);
         continue;
       }
 
@@ -527,33 +568,36 @@ Rules:
     accountId: string,
     holderId: string,
   ): Promise<boolean> {
-    const client = this.supabaseAdmin.getClient();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // +5 min
 
     // Try INSERT — will fail on unique violation only if same holderId exists
-    const { error: insertError } = await client
-      .from('semaphore_leases')
-      .insert({
-        account_id: accountId,
-        resource_key: 'backbone_calls',
-        holder_id: holderId,
-        expires_at: expiresAt,
+    try {
+      await this.db.insert(semaphoreLeases).values({
+        accountId,
+        resourceKey: 'backbone_calls',
+        holderId,
+        expiresAt,
       });
-
-    if (!insertError) {
       // Inserted successfully
       return true;
+    } catch {
+      // Insert failed — fall through to capacity check below
     }
 
     // Insert failed — check current active lease count
-    const { data: activeLeases, error: countError } = await client
-      .from('semaphore_leases')
-      .select('holder_id')
-      .eq('account_id', accountId)
-      .eq('resource_key', 'backbone_calls')
-      .gt('expires_at', new Date().toISOString());
-
-    if (countError) {
+    let activeLeases: Array<{ holder_id: string }>;
+    try {
+      activeLeases = await this.db
+        .select({ holder_id: semaphoreLeases.holderId })
+        .from(semaphoreLeases)
+        .where(
+          and(
+            eq(semaphoreLeases.accountId, accountId),
+            eq(semaphoreLeases.resourceKey, 'backbone_calls'),
+            gt(semaphoreLeases.expiresAt, new Date().toISOString()),
+          ),
+        );
+    } catch (countError: any) {
       this.logger.error(
         `[Semaphore] Failed to count leases for ${accountId}: ${countError.message}`,
       );
@@ -570,16 +614,14 @@ Rules:
     }
 
     // Under capacity — retry insert (different holder_id so no unique conflict)
-    const { error: retryError } = await client
-      .from('semaphore_leases')
-      .insert({
-        account_id: accountId,
-        resource_key: 'backbone_calls',
-        holder_id: holderId,
-        expires_at: expiresAt,
+    try {
+      await this.db.insert(semaphoreLeases).values({
+        accountId,
+        resourceKey: 'backbone_calls',
+        holderId,
+        expiresAt,
       });
-
-    if (retryError) {
+    } catch (retryError: any) {
       this.logger.warn(
         `[Semaphore] Retry insert failed for holder ${holderId}: ${retryError.message}`,
       );
@@ -596,15 +638,16 @@ Rules:
     accountId: string,
     holderId: string,
   ): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
-    const { error } = await client
-      .from('semaphore_leases')
-      .delete()
-      .eq('account_id', accountId)
-      .eq('holder_id', holderId);
-
-    if (error) {
+    try {
+      await this.db
+        .delete(semaphoreLeases)
+        .where(
+          and(
+            eq(semaphoreLeases.accountId, accountId),
+            eq(semaphoreLeases.holderId, holderId),
+          ),
+        );
+    } catch (error: any) {
       this.logger.warn(
         `[Semaphore] Failed to release lease for ${holderId}: ${error.message}`,
       );
@@ -619,36 +662,32 @@ Rules:
     task: any,
     accountId: string,
   ): Promise<void> {
-    const client = this.supabaseAdmin.getClient();
-
     // Insert into agent_approval_requests with the orchestrated_task_id
     let approvalRequestId: string | null = null;
-    const { data: approvalRow, error: approvalError } = await client
-      .from('agent_approval_requests')
-      .insert({
-        orchestrated_task_id: task.id,
-        reason: `DAG task requires approval before execution: ${task.goal}`,
-        status: 'pending',
-      })
-      .select('id')
-      .single();
-
-    if (approvalError) {
+    try {
+      const approvalRows = await this.db
+        .insert(agentApprovalRequests)
+        .values({
+          orchestratedTaskId: task.id,
+          reason: `DAG task requires approval before execution: ${task.goal}`,
+          status: 'pending',
+        })
+        .returning({ id: agentApprovalRequests.id });
+      approvalRequestId = approvalRows[0]?.id ?? null;
+    } catch (approvalError: any) {
       this.logger.warn(
         `[DAG] Failed to insert agent_approval_requests for task ${task.id}: ${approvalError.message}`,
       );
-    } else {
-      approvalRequestId = approvalRow?.id ?? null;
     }
 
     // Update task status to pending_approval
-    await client
-      .from('orchestrated_tasks')
-      .update({
+    await this.db
+      .update(orchestratedTasks)
+      .set({
         status: 'pending_approval',
-        updated_at: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       })
-      .eq('id', task.id);
+      .where(eq(orchestratedTasks.id, task.id));
 
     // Emit webhook event for frontend
     await this.webhookEmitter.emit(accountId, 'dag.approval_required', {

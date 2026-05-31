@@ -1,5 +1,21 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
+import { and, count, desc, eq, sql } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import {
+  pods,
+  orchestratedTasks,
+  agentApprovalRequests,
+  agents,
+  dagApprovals,
+  taskDags,
+  tasks,
+  boardInstances,
+} from '../db/schema';
 
 export type InboxKind =
   | 'orchestration_pending_approval'
@@ -45,28 +61,37 @@ export interface InboxSummary {
 export class InboxService {
   private readonly logger = new Logger(InboxService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   async getInbox(accountId: string, limit = 100): Promise<InboxSummary> {
-    const client = this.supabaseAdmin.getClient();
     const items: InboxItem[] = [];
 
     // Pod name lookup once for all rows that have a pod_id.
-    const { data: podRows } = await client
-      .from('pods')
-      .select('id, name, slug')
-      .eq('account_id', accountId);
+    const podRows = await this.db
+      .select({ id: pods.id, name: pods.name, slug: pods.slug })
+      .from(pods)
+      .where(eq(pods.accountId, accountId));
     const podName = new Map<string, { name: string; slug: string }>(
       (podRows ?? []).map((p: any) => [p.id, { name: p.name, slug: p.slug }]),
     );
 
     // 1. orchestrated_tasks pending_approval — highest priority.
-    const { data: pendingOrch } = await client
-      .from('orchestrated_tasks')
-      .select('id, goal, pod_id, created_at, autonomy_level')
-      .eq('account_id', accountId)
-      .eq('status', 'pending_approval')
-      .order('created_at', { ascending: false })
+    const pendingOrch = await this.db
+      .select({
+        id: orchestratedTasks.id,
+        goal: orchestratedTasks.goal,
+        pod_id: orchestratedTasks.podId,
+        created_at: orchestratedTasks.createdAt,
+        autonomy_level: orchestratedTasks.autonomyLevel,
+      })
+      .from(orchestratedTasks)
+      .where(
+        and(
+          eq(orchestratedTasks.accountId, accountId),
+          eq(orchestratedTasks.status, 'pending_approval'),
+        ),
+      )
+      .orderBy(desc(orchestratedTasks.createdAt))
       .limit(limit);
     for (const r of pendingOrch ?? []) {
       const pod = r.pod_id ? podName.get(r.pod_id as string) : null;
@@ -87,15 +112,56 @@ export class InboxService {
     }
 
     // 2. agent_approval_requests pending — usually in-flight pauses.
-    const { data: agentReqs } = await client
-      .from('agent_approval_requests')
-      .select(
-        'id, reason, status, created_at, orchestrated_task_id, requested_by_agent_id, agents:agents(name, slug), orchestrated_tasks:orchestrated_tasks!inner(account_id, pod_id, goal)',
+    // PostgREST embedded `agents:agents(name, slug)` and
+    // `orchestrated_tasks:orchestrated_tasks!inner(account_id, pod_id, goal)`
+    // with the account filter on the inner-joined task. Drizzle's relational
+    // `with` can't filter the parent by a related column, so this is an
+    // explicit inner join; the joined rows are re-keyed to `agents` /
+    // `orchestrated_tasks` to preserve the response shape.
+    const agentReqRows = await this.db
+      .select({
+        id: agentApprovalRequests.id,
+        reason: agentApprovalRequests.reason,
+        status: agentApprovalRequests.status,
+        created_at: agentApprovalRequests.createdAt,
+        orchestrated_task_id: agentApprovalRequests.orchestratedTaskId,
+        requested_by_agent_id: agentApprovalRequests.requestedByAgentId,
+        agent_name: agents.name,
+        agent_slug: agents.slug,
+        ot_account_id: orchestratedTasks.accountId,
+        ot_pod_id: orchestratedTasks.podId,
+        ot_goal: orchestratedTasks.goal,
+      })
+      .from(agentApprovalRequests)
+      .innerJoin(
+        orchestratedTasks,
+        eq(agentApprovalRequests.orchestratedTaskId, orchestratedTasks.id),
       )
-      .eq('orchestrated_tasks.account_id', accountId)
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
+      .leftJoin(agents, eq(agentApprovalRequests.requestedByAgentId, agents.id))
+      .where(
+        and(
+          eq(orchestratedTasks.accountId, accountId),
+          eq(agentApprovalRequests.status, 'pending'),
+        ),
+      )
+      .orderBy(desc(agentApprovalRequests.createdAt))
       .limit(limit);
+    const agentReqs = (agentReqRows ?? []).map((r: any) => ({
+      id: r.id,
+      reason: r.reason,
+      status: r.status,
+      created_at: r.created_at,
+      orchestrated_task_id: r.orchestrated_task_id,
+      requested_by_agent_id: r.requested_by_agent_id,
+      agents: r.agent_name != null || r.agent_slug != null
+        ? { name: r.agent_name, slug: r.agent_slug }
+        : null,
+      orchestrated_tasks: {
+        account_id: r.ot_account_id,
+        pod_id: r.ot_pod_id,
+        goal: r.ot_goal,
+      },
+    }));
     for (const r of agentReqs ?? []) {
       const ot: any = r.orchestrated_tasks;
       const agent: any = r.agents;
@@ -121,16 +187,39 @@ export class InboxService {
     }
 
     // 3. dag_approvals pending — DAG plans waiting for sign-off.
-    const { data: dagApprovals } = await client
-      .from('dag_approvals')
-      .select(
-        'id, dag_id, notes, created_at, task_dags:task_dags!inner(account_id, pod_id, goal_summary)',
+    // PostgREST embedded `task_dags:task_dags!inner(account_id, pod_id, goal_summary)`
+    // with the account filter on the inner-joined dag. Explicit inner join;
+    // the joined row is re-keyed to `task_dags` to preserve the response shape.
+    const dagApprovalRows = await this.db
+      .select({
+        id: dagApprovals.id,
+        dag_id: dagApprovals.dagId,
+        notes: dagApprovals.notes,
+        created_at: dagApprovals.createdAt,
+        td_account_id: taskDags.accountId,
+        td_pod_id: taskDags.podId,
+      })
+      .from(dagApprovals)
+      .innerJoin(taskDags, eq(dagApprovals.dagId, taskDags.id))
+      .where(
+        and(
+          eq(taskDags.accountId, accountId),
+          eq(dagApprovals.status, 'pending'),
+        ),
       )
-      .eq('task_dags.account_id', accountId)
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false })
+      .orderBy(desc(dagApprovals.createdAt))
       .limit(limit);
-    for (const r of dagApprovals ?? []) {
+    const dagApprovalsList = (dagApprovalRows ?? []).map((r: any) => ({
+      id: r.id,
+      dag_id: r.dag_id,
+      notes: r.notes,
+      created_at: r.created_at,
+      task_dags: {
+        account_id: r.td_account_id,
+        pod_id: r.td_pod_id,
+      },
+    }));
+    for (const r of dagApprovalsList ?? []) {
       const dag: any = r.task_dags;
       const pod = dag?.pod_id ? podName.get(dag.pod_id) : null;
       items.push({
@@ -149,16 +238,36 @@ export class InboxService {
 
     // 4. mention-spawned tasks still open — someone @-mentioned an agent and
     //    nothing has happened yet. Lower priority than direct approvals.
-    const { data: openMentions } = await client
-      .from('tasks')
-      .select(
-        'id, title, board_instance_id, input_context, created_at, board_instances:board_instances(name)',
-      )
-      .eq('account_id', accountId)
-      .eq('completed', false)
-      .filter('input_context->>trigger', 'eq', 'mention')
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    // PostgREST embedded `board_instances:board_instances(name)`; Drizzle's
+    // relation name is `boardInstance` → re-key to `board_instances`.
+    const openMentionRows = await this.db.query.tasks.findMany({
+      columns: {
+        id: true,
+        title: true,
+        boardInstanceId: true,
+        inputContext: true,
+        createdAt: true,
+      },
+      where: and(
+        eq(tasks.accountId, accountId),
+        eq(tasks.completed, false),
+        sql`${tasks.inputContext}->>'trigger' = 'mention'`,
+      ),
+      orderBy: desc(tasks.createdAt),
+      limit,
+      with: { boardInstance: { columns: { name: true } } },
+    });
+    const openMentions = (openMentionRows ?? []).map((r: any) => {
+      const { boardInstance, boardInstanceId, inputContext, createdAt, ...rest } =
+        r;
+      return {
+        ...rest,
+        board_instance_id: boardInstanceId,
+        input_context: inputContext,
+        created_at: createdAt,
+        board_instances: boardInstance ?? null,
+      };
+    });
     for (const r of openMentions ?? []) {
       const board: any = r.board_instances;
       items.push({
@@ -200,20 +309,30 @@ export class InboxService {
    * priority queues.
    */
   async getCount(accountId: string): Promise<number> {
-    const client = this.supabaseAdmin.getClient();
-
-    const [{ count: orch }, { count: dag }] = await Promise.all([
-      client
-        .from('orchestrated_tasks')
-        .select('id', { count: 'exact', head: true })
-        .eq('account_id', accountId)
-        .eq('status', 'pending_approval'),
-      client
-        .from('dag_approvals')
-        .select('id, task_dags!inner(account_id)', { count: 'exact', head: true })
-        .eq('task_dags.account_id', accountId)
-        .eq('status', 'pending'),
+    const [orchRows, dagRows] = await Promise.all([
+      this.db
+        .select({ value: count() })
+        .from(orchestratedTasks)
+        .where(
+          and(
+            eq(orchestratedTasks.accountId, accountId),
+            eq(orchestratedTasks.status, 'pending_approval'),
+          ),
+        ),
+      this.db
+        .select({ value: count() })
+        .from(dagApprovals)
+        .innerJoin(taskDags, eq(dagApprovals.dagId, taskDags.id))
+        .where(
+          and(
+            eq(taskDags.accountId, accountId),
+            eq(dagApprovals.status, 'pending'),
+          ),
+        ),
     ]);
+
+    const orch = orchRows[0]?.value ?? null;
+    const dag = dagRows[0]?.value ?? null;
 
     if (orch === null && dag === null) {
       throw new BadRequestException('Failed to query approval counts');
@@ -221,3 +340,4 @@ export class InboxService {
     return (orch ?? 0) + (dag ?? 0);
   }
 }
+

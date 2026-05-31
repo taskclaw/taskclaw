@@ -6,7 +6,6 @@ import { SyncService } from './sync.service';
 import { OutboundSyncService } from './outbound-sync.service';
 import { SyncProcessor, SyncJobData } from './sync.processor';
 import { SyncController } from './sync.controller';
-import { SupabaseModule } from '../supabase/supabase.module';
 import { CommonModule } from '../common/common.module';
 import { AdaptersModule } from '../adapters/adapters.module';
 import { SyncQueueModule, SYNC_QUEUE_NAME } from './sync-queue.module';
@@ -22,7 +21,6 @@ import { getQueueToken } from '@nestjs/bullmq';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-    SupabaseModule,
     CommonModule,
     AdaptersModule,
     SyncQueueModule.register(),

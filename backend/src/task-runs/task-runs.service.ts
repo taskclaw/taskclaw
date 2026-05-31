@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { SupabaseAdminService } from '../supabase/supabase-admin.service';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { and, desc, eq, gte } from 'drizzle-orm';
+import { DB, type Db } from '../db';
+import { taskRuns } from '../db/schema';
 
 export type TaskRunStatus =
   | 'queued'
@@ -65,7 +67,7 @@ const FEATURE_FLAG_ENV = 'FEATURE_TASK_RUNS_V2';
 export class TaskRunsService {
   private readonly logger = new Logger(TaskRunsService.name);
 
-  constructor(private readonly supabaseAdmin: SupabaseAdminService) {}
+  constructor(@Inject(DB) private readonly db: Db) {}
 
   isEnabled(): boolean {
     return process.env[FEATURE_FLAG_ENV] === 'true';
@@ -77,29 +79,34 @@ export class TaskRunsService {
    */
   async begin(input: BeginRunInput): Promise<string | null> {
     if (!this.isEnabled()) return null;
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('task_runs')
-      .insert({
-        account_id: input.account_id,
-        task_id: input.task_id ?? null,
-        orchestrated_task_id: input.orchestrated_task_id ?? null,
-        pod_id: input.pod_id ?? null,
-        agent_id: input.agent_id ?? null,
-        status: 'queued',
-        attempt: input.attempt ?? 1,
-        max_attempts: input.max_attempts ?? 2,
-        parent_run_id: input.parent_run_id ?? null,
-        trigger: input.trigger,
-        metadata: input.metadata ?? {},
-      })
-      .select('id')
-      .single();
-    if (error || !data) {
-      this.logger.warn(`task_runs begin failed: ${error?.message ?? 'unknown'}`);
+    try {
+      const [row] = await this.db
+        .insert(taskRuns)
+        .values({
+          accountId: input.account_id,
+          taskId: input.task_id ?? null,
+          orchestratedTaskId: input.orchestrated_task_id ?? null,
+          podId: input.pod_id ?? null,
+          agentId: input.agent_id ?? null,
+          status: 'queued',
+          attempt: input.attempt ?? 1,
+          maxAttempts: input.max_attempts ?? 2,
+          parentRunId: input.parent_run_id ?? null,
+          trigger: input.trigger,
+          metadata: input.metadata ?? {},
+        })
+        .returning({ id: taskRuns.id });
+      if (!row) {
+        this.logger.warn(`task_runs begin failed: unknown`);
+        return null;
+      }
+      return row.id;
+    } catch (e) {
+      this.logger.warn(
+        `task_runs begin failed: ${(e as Error)?.message ?? 'unknown'}`,
+      );
       return null;
     }
-    return data.id;
   }
 
   /** Transition queued → dispatched/running. No-op when flag is off. */
@@ -108,42 +115,49 @@ export class TaskRunsService {
     status: 'dispatched' | 'running',
   ): Promise<void> {
     if (!runId || !this.isEnabled()) return;
-    const client = this.supabaseAdmin.getClient();
-    const update: Record<string, unknown> = { status };
-    if (status === 'running') update.started_at = new Date().toISOString();
-    const { error } = await client.from('task_runs').update(update).eq('id', runId);
-    if (error) this.logger.warn(`task_runs transition failed: ${error.message}`);
+    const update: Partial<typeof taskRuns.$inferInsert> = { status };
+    if (status === 'running') update.startedAt = new Date().toISOString();
+    try {
+      await this.db.update(taskRuns).set(update).where(eq(taskRuns.id, runId));
+    } catch (e) {
+      this.logger.warn(`task_runs transition failed: ${(e as Error).message}`);
+    }
   }
 
   /** Finalize a run with result + duration. No-op when flag is off. */
   async finish(input: FinishRunInput): Promise<void> {
     if (!input.run_id || !this.isEnabled()) return;
-    const client = this.supabaseAdmin.getClient();
-    const { data: existing } = await client
-      .from('task_runs')
-      .select('started_at, created_at')
-      .eq('id', input.run_id)
-      .maybeSingle();
-    const startedAt = existing?.started_at
-      ? new Date(existing.started_at as string).getTime()
-      : existing?.created_at
-        ? new Date(existing.created_at as string).getTime()
+    const [existing] = await this.db
+      .select({
+        startedAt: taskRuns.startedAt,
+        createdAt: taskRuns.createdAt,
+      })
+      .from(taskRuns)
+      .where(eq(taskRuns.id, input.run_id))
+      .limit(1);
+    const startedAt = existing?.startedAt
+      ? new Date(existing.startedAt).getTime()
+      : existing?.createdAt
+        ? new Date(existing.createdAt).getTime()
         : null;
     const finishedAt = Date.now();
     const duration = startedAt ? Math.max(0, finishedAt - startedAt) : null;
 
-    const { error } = await client
-      .from('task_runs')
-      .update({
-        status: input.status,
-        failure_reason: input.failure_reason ?? null,
-        failure_message: input.failure_message ?? null,
-        result: input.result ?? null,
-        finished_at: new Date(finishedAt).toISOString(),
-        duration_ms: duration,
-      })
-      .eq('id', input.run_id);
-    if (error) this.logger.warn(`task_runs finish failed: ${error.message}`);
+    try {
+      await this.db
+        .update(taskRuns)
+        .set({
+          status: input.status,
+          failureReason: input.failure_reason ?? null,
+          failureMessage: input.failure_message ?? null,
+          result: input.result ?? null,
+          finishedAt: new Date(finishedAt).toISOString(),
+          durationMs: duration,
+        })
+        .where(eq(taskRuns.id, input.run_id));
+    } catch (e) {
+      this.logger.warn(`task_runs finish failed: ${(e as Error).message}`);
+    }
   }
 
   // ============================================================
@@ -151,41 +165,32 @@ export class TaskRunsService {
   // ============================================================
 
   async listForAccount(accountId: string, limit = 50) {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('task_runs')
-      .select('*')
-      .eq('account_id', accountId)
-      .order('created_at', { ascending: false })
+    return this.db
+      .select()
+      .from(taskRuns)
+      .where(eq(taskRuns.accountId, accountId))
+      .orderBy(desc(taskRuns.createdAt))
       .limit(limit);
-    if (error) throw new Error(error.message);
-    return data ?? [];
   }
 
   async listForPod(accountId: string, podId: string, limit = 50) {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('task_runs')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('pod_id', podId)
-      .order('created_at', { ascending: false })
+    return this.db
+      .select()
+      .from(taskRuns)
+      .where(and(eq(taskRuns.accountId, accountId), eq(taskRuns.podId, podId)))
+      .orderBy(desc(taskRuns.createdAt))
       .limit(limit);
-    if (error) throw new Error(error.message);
-    return data ?? [];
   }
 
   async listForTask(accountId: string, taskId: string, limit = 20) {
-    const client = this.supabaseAdmin.getClient();
-    const { data, error } = await client
-      .from('task_runs')
-      .select('*')
-      .eq('account_id', accountId)
-      .eq('task_id', taskId)
-      .order('created_at', { ascending: false })
+    return this.db
+      .select()
+      .from(taskRuns)
+      .where(
+        and(eq(taskRuns.accountId, accountId), eq(taskRuns.taskId, taskId)),
+      )
+      .orderBy(desc(taskRuns.createdAt))
       .limit(limit);
-    if (error) throw new Error(error.message);
-    return data ?? [];
   }
 
   /**
@@ -193,21 +198,26 @@ export class TaskRunsService {
    * fail yesterday?"). Returns top reasons in the last N days.
    */
   async failureBreakdown(accountId: string, daysBack = 7) {
-    const client = this.supabaseAdmin.getClient();
     const since = new Date(Date.now() - daysBack * 86_400_000).toISOString();
-    const { data, error } = await client
-      .from('task_runs')
-      .select('failure_reason, pod_id')
-      .eq('account_id', accountId)
-      .eq('status', 'failed')
-      .gte('created_at', since);
-    if (error) throw new Error(error.message);
+    const data = await this.db
+      .select({
+        failure_reason: taskRuns.failureReason,
+        pod_id: taskRuns.podId,
+      })
+      .from(taskRuns)
+      .where(
+        and(
+          eq(taskRuns.accountId, accountId),
+          eq(taskRuns.status, 'failed'),
+          gte(taskRuns.createdAt, since),
+        ),
+      );
     const totals = new Map<string, number>();
     const byPod = new Map<string, Map<string, number>>();
     for (const r of data ?? []) {
-      const reason = (r as any).failure_reason ?? 'other';
+      const reason = r.failure_reason ?? 'other';
       totals.set(reason, (totals.get(reason) ?? 0) + 1);
-      const pid = (r as any).pod_id ?? 'unassigned';
+      const pid = r.pod_id ?? 'unassigned';
       if (!byPod.has(pid)) byPod.set(pid, new Map());
       const sub = byPod.get(pid)!;
       sub.set(reason, (sub.get(reason) ?? 0) + 1);

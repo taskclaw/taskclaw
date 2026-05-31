@@ -122,13 +122,7 @@ export class BackboneConnectionsController {
     );
 
     // Run the raw row through the health checker (need unmasked config)
-    const client = (this.connectionsService as any).supabaseAdmin.getClient();
-    const { data: row } = await client
-      .from('backbone_connections')
-      .select('*')
-      .eq('id', id)
-      .eq('account_id', accountId)
-      .single();
+    const row = await this.connectionsService.getRawConnection(accountId, id);
 
     const status = await this.healthService.checkOne(row);
 
