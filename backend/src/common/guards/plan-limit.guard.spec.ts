@@ -27,7 +27,7 @@ function makeReflector(resource: string | undefined): Reflector {
 function makeDrizzle(
   planName: string | null,
   resourceCount: number,
-  countError?: any,
+  countError?: Error,
 ): DrizzleMock {
   const mock = createDrizzleMock();
 

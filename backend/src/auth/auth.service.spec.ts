@@ -49,6 +49,9 @@ describe('AuthService (local path)', () => {
 
       const res: any = await svc.login({ email: 'a@b.com', password: 'correct-pw' });
       expect(res.access_token).toBe('access');
+      // tokens is cast to the real JwtAuthService type, so the jest mock reads
+      // as an unbound class method — a known false positive for this rule.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(tokens.issueSession).toHaveBeenCalled();
     });
 
