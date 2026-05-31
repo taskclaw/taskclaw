@@ -2,28 +2,6 @@
 
 import { useState } from 'react'
 import { clientApiBase } from '@/lib/api-base'
-
-function extractSupabaseToken(): string | null {
-  if (typeof document === 'undefined') return null
-  try {
-    const cookies = document.cookie.split('; ')
-    const parts: Record<string, string> = {}
-    for (const c of cookies) {
-      const eqIdx = c.indexOf('=')
-      const name = c.substring(0, eqIdx)
-      const val = c.substring(eqIdx + 1)
-      if (name.includes('auth-token')) parts[name] = val
-    }
-    const sorted = Object.entries(parts).sort(([a], [b]) => a.localeCompare(b))
-    const joined = sorted.map(([, v]) => v).join('')
-    if (!joined) return null
-    const raw = joined.startsWith('base64-') ? joined.slice(7) : joined
-    const decoded = JSON.parse(atob(raw))
-    return decoded?.access_token ?? null
-  } catch {
-    return null
-  }
-}
 import { CheckCircle, XCircle, AlertTriangle, Loader2, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -72,7 +50,7 @@ export function DAGApprovalCard({
   const risk = riskConfig[riskLevel]
 
   function getAuthHeader(): Record<string, string> {
-    const token = authToken ?? extractSupabaseToken()
+    const token = authToken
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }
   }
 
