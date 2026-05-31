@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { clientApiBase } from '@/lib/api-base'
 
 function extractSupabaseToken(): string | null {
   if (typeof document === 'undefined') return null
@@ -48,7 +49,7 @@ interface OrchestrationDetailRaw {
   tasks?: OrchestratedTaskRaw[]
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
+const API_URL = clientApiBase()
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
 
 export function OrchestrationTimelineLive({ orchestrationId, accountId, authToken, onComplete }: LiveProps) {

@@ -8,6 +8,12 @@ import { getThemeSetFromEnv } from "@/config/theme-env";
 import { getGlobalThemeSettings } from "@/lib/theme/getGlobalThemeSettings";
 import { THEME_SETS, getThemeSet } from "@/theme/themeConfig";
 
+// Render the root layout at request time so the per-install public config
+// (window.__TASKCLAW__: anon key / edition / brand) is read from the RUNTIME
+// environment on every response. Without this, statically-prerendered routes
+// would bake the build-time (empty) config and break host portability.
+export const dynamic = "force-dynamic";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -148,9 +154,27 @@ export default async function RootLayout({
     }
   })();`;
 
+  // Per-install PUBLIC config, read at RUNTIME (not baked) and injected as
+  // window.__TASKCLAW__ so one published image is host-portable and carries
+  // this box's unique Supabase anon key. See frontend/src/lib/public-config.ts.
+  const publicConfig = {
+    anonKey:
+      process.env.SUPABASE_ANON_KEY ??
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+      "",
+    edition:
+      process.env.EDITION ?? process.env.NEXT_PUBLIC_EDITION ?? "community",
+    brandName:
+      process.env.BRAND_NAME ?? process.env.NEXT_PUBLIC_BRAND_NAME ?? "TaskClaw",
+  };
+  const publicConfigScript = `window.__TASKCLAW__=${JSON.stringify(
+    publicConfig,
+  )};`;
+
   return (
     <html lang="en" data-app-theme={themeSet} suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: publicConfigScript }} />
         <GlobalThemeInjector themeSet={themeSet} />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { clientApiBase } from '@/lib/api-base'
 
 function extractSupabaseToken(): string | null {
   if (typeof document === 'undefined') return null
@@ -81,7 +82,7 @@ export function DAGApprovalCard({
     try {
       if (accountId) {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'}/accounts/${accountId}/orchestrations/${orchestrationId}/approve`,
+          `${clientApiBase()}/accounts/${accountId}/orchestrations/${orchestrationId}/approve`,
           { method: 'POST', headers: getAuthHeader() },
         )
         if (!res.ok) throw new Error('Failed to approve')
@@ -103,7 +104,7 @@ export function DAGApprovalCard({
     try {
       if (accountId) {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'}/accounts/${accountId}/orchestrations/${orchestrationId}/reject`,
+          `${clientApiBase()}/accounts/${accountId}/orchestrations/${orchestrationId}/reject`,
           { method: 'POST', headers: getAuthHeader() },
         )
         if (!res.ok) throw new Error('Failed to reject')

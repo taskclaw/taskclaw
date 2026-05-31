@@ -80,6 +80,10 @@ backend/.env.secrets
 frontend/.env
 frontend/.env.local
 
+# Per-install credentials written by `npx taskclaw remote` (contain secrets)
+taskclaw-*.credentials.json
+taskclaw-credentials.json
+
 # Cloud-specific deployment configs (keep in private branch)
 render.yaml
 railway.json
