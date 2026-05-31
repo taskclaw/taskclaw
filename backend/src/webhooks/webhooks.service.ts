@@ -2,17 +2,19 @@ import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { and, eq, desc } from 'drizzle-orm';
 import { DB, type Db } from '../db';
 import { webhooks, webhookDeliveries } from '../db/schema';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class WebhooksService {
   constructor(@Inject(DB) private readonly db: Db) {}
 
   async findAll(accountId: string) {
-    return this.db
+    const rows = await this.db
       .select()
       .from(webhooks)
       .where(eq(webhooks.accountId, accountId))
       .orderBy(desc(webhooks.createdAt));
+    return rows.map(snakeKeys);
   }
 
   async create(
@@ -29,7 +31,7 @@ export class WebhooksService {
         active: body.active ?? true,
       })
       .returning();
-    return row;
+    return snakeKeys(row);
   }
 
   async update(
@@ -48,7 +50,7 @@ export class WebhooksService {
       .where(and(eq(webhooks.id, webhookId), eq(webhooks.accountId, accountId)))
       .returning();
     if (!row) throw new NotFoundException('Webhook not found');
-    return row;
+    return snakeKeys(row);
   }
 
   async remove(accountId: string, webhookId: string) {
@@ -68,11 +70,12 @@ export class WebhooksService {
 
     if (!webhook) throw new NotFoundException('Webhook not found');
 
-    return this.db
+    const rows = await this.db
       .select()
       .from(webhookDeliveries)
       .where(eq(webhookDeliveries.webhookId, webhookId))
       .orderBy(desc(webhookDeliveries.createdAt))
       .limit(50);
+    return rows.map(snakeKeys);
   }
 }

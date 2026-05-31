@@ -84,7 +84,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
     try {
-      return await this.db
+      const defs = await this.db
         .select()
         .from(integrationDefinitions)
         .where(
@@ -94,6 +94,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
           ),
         )
         .orderBy(asc(integrationDefinitions.name));
+      return defs.map(snakeKeys);
     } catch (error: any) {
       this.logger.error(`Failed to fetch definitions: ${error.message}`);
       throw new Error(error.message);
@@ -121,7 +122,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException('Integration definition not found');
     }
 
-    return data;
+    return snakeKeys(data);
   }
 
   async createDefinition(
@@ -149,7 +150,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
           proxyBaseUrl: dto.proxy_base_url || null,
         })
         .returning();
-      return rows[0];
+      return snakeKeys(rows[0]);
     } catch (error: any) {
       if (error?.code === '23505') {
         throw new BadRequestException(
@@ -203,7 +204,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
           ),
         )
         .returning();
-      return rows[0];
+      return snakeKeys(rows[0]);
     } catch (error: any) {
       this.logger.error(`Failed to update definition: ${error.message}`);
       throw new Error(error.message);
@@ -454,11 +455,12 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      return await this.db
+      const defs = await this.db
         .select()
         .from(integrationDefinitions)
         .where(and(...conditions))
         .orderBy(asc(integrationDefinitions.name));
+      return defs.map(snakeKeys);
     } catch (error: any) {
       this.logger.error(
         `Failed to fetch definitions by category: ${error.message}`,

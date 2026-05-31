@@ -15,6 +15,7 @@ import {
   accounts,
 } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class TeamsService {
@@ -53,11 +54,12 @@ export class TeamsService {
     // Verify user belongs to account
     await this.accessControlHelper.verifyAccountAccess(null, accountId, userId);
 
-    return this.db
+    const rows = await this.db
       .select()
       .from(invitations)
       .where(eq(invitations.accountId, accountId))
       .orderBy(desc(invitations.createdAt));
+    return rows.map(snakeKeys);
   }
 
   async inviteUser(

@@ -2,6 +2,7 @@ import { Injectable, Inject, Logger, NotFoundException } from '@nestjs/common';
 import { and, desc, eq } from 'drizzle-orm';
 import { DB, type Db } from '../db';
 import { memoryConnections } from '../db/schema';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 export interface MemoryConnectionRow {
   id: string;
@@ -55,7 +56,7 @@ export class MemoryConnectionsService {
         desc(memoryConnections.createdAt),
       );
 
-    return rows as unknown as MemoryConnectionRow[];
+    return rows.map(snakeKeys) as unknown as MemoryConnectionRow[];
   }
 
   /**
@@ -74,7 +75,7 @@ export class MemoryConnectionsService {
       )
       .limit(1);
 
-    return (row as unknown as MemoryConnectionRow) || null;
+    return row ? (snakeKeys(row) as unknown as MemoryConnectionRow) : null;
   }
 
   /**
@@ -95,7 +96,7 @@ export class MemoryConnectionsService {
     if (!row) {
       throw new NotFoundException(`Memory connection ${id} not found`);
     }
-    return row as unknown as MemoryConnectionRow;
+    return snakeKeys(row) as unknown as MemoryConnectionRow;
   }
 
   /**
@@ -117,7 +118,7 @@ export class MemoryConnectionsService {
       })
       .returning();
 
-    return row as unknown as MemoryConnectionRow;
+    return snakeKeys(row) as unknown as MemoryConnectionRow;
   }
 
   /**
@@ -149,7 +150,7 @@ export class MemoryConnectionsService {
       )
       .returning();
 
-    return row as unknown as MemoryConnectionRow;
+    return snakeKeys(row) as unknown as MemoryConnectionRow;
   }
 
   /**

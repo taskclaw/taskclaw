@@ -2,6 +2,7 @@ import { Injectable, Inject, Logger } from '@nestjs/common';
 import { and, desc, eq, gte } from 'drizzle-orm';
 import { DB, type Db } from '../db';
 import { taskRuns } from '../db/schema';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 export type TaskRunStatus =
   | 'queued'
@@ -165,25 +166,27 @@ export class TaskRunsService {
   // ============================================================
 
   async listForAccount(accountId: string, limit = 50) {
-    return this.db
+    const rows = await this.db
       .select()
       .from(taskRuns)
       .where(eq(taskRuns.accountId, accountId))
       .orderBy(desc(taskRuns.createdAt))
       .limit(limit);
+    return rows.map(snakeKeys);
   }
 
   async listForPod(accountId: string, podId: string, limit = 50) {
-    return this.db
+    const rows = await this.db
       .select()
       .from(taskRuns)
       .where(and(eq(taskRuns.accountId, accountId), eq(taskRuns.podId, podId)))
       .orderBy(desc(taskRuns.createdAt))
       .limit(limit);
+    return rows.map(snakeKeys);
   }
 
   async listForTask(accountId: string, taskId: string, limit = 20) {
-    return this.db
+    const rows = await this.db
       .select()
       .from(taskRuns)
       .where(
@@ -191,6 +194,7 @@ export class TaskRunsService {
       )
       .orderBy(desc(taskRuns.createdAt))
       .limit(limit);
+    return rows.map(snakeKeys);
   }
 
   /**

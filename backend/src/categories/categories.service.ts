@@ -3,6 +3,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { DB, type Db } from '../db';
 import { categories } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 
@@ -21,11 +22,12 @@ export class CategoriesService {
   async findAll(userId: string, accountId: string, _accessToken?: string) {
     await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    return this.db
+    const rows = await this.db
       .select()
       .from(categories)
       .where(eq(categories.accountId, accountId))
       .orderBy(desc(categories.createdAt));
+    return rows.map(snakeKeys);
   }
 
   async findOne(
@@ -45,7 +47,7 @@ export class CategoriesService {
     if (!row) {
       throw new NotFoundException(`Category with ID ${id} not found`);
     }
-    return row;
+    return snakeKeys(row);
   }
 
   async create(
@@ -60,7 +62,7 @@ export class CategoriesService {
       .insert(categories)
       .values({ accountId, ...createCategoryDto })
       .returning();
-    return row;
+    return snakeKeys(row);
   }
 
   async createBulk(
@@ -71,16 +73,17 @@ export class CategoriesService {
   ) {
     await this.accessControl.verifyAccountAccess(null, accountId, userId);
 
-    const rows = categoryList.map((cat) => ({ accountId, ...cat }));
+    const values = categoryList.map((cat) => ({ accountId, ...cat }));
 
     // Upsert ignoring duplicates on (account_id, name).
-    return this.db
+    const rows = await this.db
       .insert(categories)
-      .values(rows)
+      .values(values)
       .onConflictDoNothing({
         target: [categories.accountId, categories.name],
       })
       .returning();
+    return rows.map(snakeKeys);
   }
 
   async update(
@@ -99,7 +102,7 @@ export class CategoriesService {
       .set(updateCategoryDto)
       .where(and(eq(categories.id, id), eq(categories.accountId, accountId)))
       .returning();
-    return row;
+    return snakeKeys(row);
   }
 
   async remove(
