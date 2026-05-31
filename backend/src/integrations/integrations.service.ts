@@ -29,6 +29,7 @@ import { UpdateDefinitionDto } from './dto/update-definition.dto';
 import { CreateConnectionDto } from './dto/create-connection.dto';
 import { UpdateConnectionDto } from './dto/update-connection.dto';
 import { IntegrationContext } from './interfaces/integration.interfaces';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
@@ -72,7 +73,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   private reKeyConnection(row: any): any {
     if (!row) return row;
     const { integrationDefinition, ...rest } = row;
-    return { ...rest, definition: integrationDefinition ?? null };
+    return { ...snakeKeys(rest), definition: integrationDefinition ?? null };
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -881,13 +882,13 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       const connection = integrationConnection ?? null;
       if (connection) {
         return {
-          ...rest,
+          ...snakeKeys(rest),
           connection: this.maskConnectionCredentials(
             this.reKeyConnection(connection),
           ),
         };
       }
-      return { ...rest, connection };
+      return { ...snakeKeys(rest), connection };
     });
   }
 
@@ -968,13 +969,13 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     const connection = integrationConnection ?? null;
     if (connection) {
       return {
-        ...rest,
+        ...snakeKeys(rest),
         connection: this.maskConnectionCredentials(
           this.reKeyConnection(connection),
         ),
       };
     }
-    return { ...rest, connection };
+    return { ...snakeKeys(rest), connection };
   }
 
   async removeRef(

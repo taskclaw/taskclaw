@@ -13,6 +13,7 @@ import {
 } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { InstallTemplateDto } from './dto/install-template.dto';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class BoardTemplatesService {
@@ -24,7 +25,7 @@ export class BoardTemplatesService {
   ) {}
 
   async findAll() {
-    return this.db
+    const rows = await this.db
       .select()
       .from(boardTemplates)
       .where(
@@ -34,6 +35,7 @@ export class BoardTemplatesService {
         ),
       )
       .orderBy(desc(boardTemplates.installCount));
+    return rows.map(snakeKeys);
   }
 
   async findOne(templateId: string) {
@@ -493,7 +495,7 @@ export class BoardTemplatesService {
    *   `boardSteps`                 → `board_steps`
    *   per-step `category`          → `linked_category`
    */
-  private async loadFullBoard(boardId: string) {
+  private async loadFullBoard(boardId: string): Promise<any> {
     const row = await this.db.query.boardInstances.findFirst({
       where: eq(boardInstances.id, boardId),
       with: {
@@ -531,15 +533,12 @@ export class BoardTemplatesService {
     } = row as any;
 
     return {
-      ...rest,
+      ...snakeKeys(rest),
       default_category: category_defaultCategoryId ?? null,
       board_steps: (steps ?? []).map((s: any) => {
         const { category, ...stepRest } = s;
         return {
-          ...stepRest,
-          step_key: stepRest.stepKey,
-          step_type: stepRest.stepType,
-          linked_category_id: stepRest.linkedCategoryId,
+          ...snakeKeys(stepRest),
           linked_category: category ?? null,
         };
       }),

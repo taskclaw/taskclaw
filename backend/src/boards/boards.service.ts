@@ -24,6 +24,7 @@ import {
   decrypt,
   maskSensitiveValue,
 } from '../common/utils/encryption.util';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 interface BoardFilters {
   archived?: boolean;
@@ -48,7 +49,7 @@ export class BoardsService {
    * Re-key to the PostgREST aliases so the response shape callers depend on is
    * unchanged.
    */
-  private presentBoard(row: any) {
+  private presentBoard(row: any): any {
     const {
       category_defaultCategoryId,
       category_orchestratorCategoryId,
@@ -56,13 +57,13 @@ export class BoardsService {
       ...rest
     } = row;
     return {
-      ...rest,
+      ...snakeKeys(rest),
       default_category: category_defaultCategoryId ?? null,
       orchestrator_category: category_orchestratorCategoryId ?? null,
       board_steps: (steps ?? []).map((s: any) => {
         const { category, ...stepRest } = s;
         return {
-          ...stepRest,
+          ...snakeKeys(stepRest),
           linked_category: category ?? null,
         };
       }),
@@ -345,7 +346,7 @@ export class BoardsService {
 
     this.webhookEmitter.emit(accountId, 'board.updated', { board: data });
 
-    return data;
+    return snakeKeys(data);
   }
 
   async remove(userId: string, accountId: string, boardId: string) {

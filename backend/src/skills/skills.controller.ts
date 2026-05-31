@@ -158,7 +158,7 @@ export class SkillsController {
     @Param('accountId') accountId: string,
     @Param('id') id: string,
   ) {
-    return this.skillsService.findOne(req.accessToken, accountId, id);
+    return this.skillsService.getOne(req.accessToken, accountId, id);
   }
 
   @Post()

@@ -16,6 +16,7 @@ import {
   tasks,
   boardInstances,
 } from '../db/schema';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 export type InboxKind =
   | 'orchestration_pending_approval'
@@ -261,12 +262,12 @@ export class InboxService {
       const { boardInstance, boardInstanceId, inputContext, createdAt, ...rest } =
         r;
       return {
-        ...rest,
+        ...snakeKeys(rest),
         board_instance_id: boardInstanceId,
         input_context: inputContext,
         created_at: createdAt,
         board_instances: boardInstance ?? null,
-      };
+      } as any;
     });
     for (const r of openMentions ?? []) {
       const board: any = r.board_instances;

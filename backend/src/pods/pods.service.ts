@@ -9,6 +9,7 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { DB, type Db } from '../db';
 import { pods, boardInstances } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 import { CreatePodDto } from './dto/create-pod.dto';
 import { UpdatePodDto } from './dto/update-pod.dto';
 
@@ -27,10 +28,10 @@ export class PodsService {
    * (`backbone_connection`) with snake_case columns. Re-key and re-shape so the
    * response callers depend on is unchanged.
    */
-  private present(row: any) {
+  private present(row: any): any {
     const { backboneConnection, ...rest } = row;
     return {
-      ...rest,
+      ...snakeKeys(rest),
       backbone_connection: backboneConnection
         ? {
             id: backboneConnection.id,
@@ -170,7 +171,7 @@ export class PodsService {
     }
 
     this.logger.log(`Pod created: ${data.id} (${data.slug})`);
-    return data;
+    return snakeKeys(data);
   }
 
   async update(
@@ -218,7 +219,7 @@ export class PodsService {
     }
 
     this.logger.log(`Pod updated: ${data.id}`);
-    return data;
+    return snakeKeys(data);
   }
 
   async delete(userId: string, accountId: string, podId: string) {

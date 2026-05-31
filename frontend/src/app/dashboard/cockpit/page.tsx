@@ -1742,7 +1742,7 @@ function TimelineEntry({
 
     const typeLabel = log.trigger_type === 'coordinator' ? 'PILOT'
         : log.trigger_type === 'workspace_chat' ? 'CHAT'
-        : log.trigger_type.toUpperCase()
+        : (log.trigger_type ?? '').toUpperCase()
 
     return (
         <div className="mb-1 rounded-xl bg-muted/10 hover:bg-muted/20 border border-white/5 transition-colors overflow-hidden cursor-pointer"

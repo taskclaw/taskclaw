@@ -3,6 +3,7 @@ import { and, count, desc, eq, ilike } from 'drizzle-orm';
 import { DB, type Db } from '../db';
 import { accounts, accountUsers } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 import { SystemSettingsService } from '../system-settings/system-settings.service';
 import { ProjectsService } from '../projects/projects.service';
@@ -216,7 +217,7 @@ export class AccountsService {
         const { user, ...rest } = account;
         const owner = user ?? null;
         return {
-          ...rest,
+          ...snakeKeys(rest),
           owner,
           ownerEmail: owner?.email || 'Unknown',
         };

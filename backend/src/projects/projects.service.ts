@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { DB, type Db } from '../db';
 import { accounts, projects, projectUsers } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 import { EmbeddingService } from '../ai-assistant/services/embedding.service';
 
 /**
@@ -118,7 +119,7 @@ export class ProjectsService {
       console.error('ProjectsService: Error adding admin', memberError);
     }
 
-    return data;
+    return snakeKeys(data);
   }
 
   async getProjectDetails(
@@ -139,7 +140,7 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
 
-    return data;
+    return snakeKeys(data);
   }
 
   async updateProject(
@@ -186,7 +187,7 @@ export class ProjectsService {
       throw new InternalServerErrorException('Failed to update project');
     }
 
-    return data;
+    return snakeKeys(data);
   }
 
   async deleteProject(
@@ -305,8 +306,13 @@ export class ProjectsService {
         const account = Array.isArray(project.account)
           ? project.account[0]
           : project.account;
+        // Re-key the project's own columns to snake_case (Drizzle returns
+        // `createdAt`; the admin UI reads `created_at`). `account` is already
+        // snake-shaped (single-key `{ name }`) and re-attached after.
+        const { account: _account, ...projectCols } = project;
         return {
-          ...project,
+          ...snakeKeys(projectCols),
+          account: account ?? null,
           accountName: account?.name || 'Unknown',
         };
       }),

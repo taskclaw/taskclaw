@@ -9,6 +9,33 @@ export class ExecutionLogService {
 
   constructor(@Inject(DB) private readonly db: Db) {}
 
+  /**
+   * Drizzle returns camelCase columns; the frontend ExecutionLog contract is
+   * snake_case (e.g. `trigger_type`). Re-key so the cockpit timeline renders
+   * (it does `log.trigger_type.toUpperCase()`).
+   */
+  private present(row: typeof executionLog.$inferSelect) {
+    return {
+      id: row.id,
+      account_id: row.accountId,
+      trigger_type: row.triggerType,
+      status: row.status,
+      pod_id: row.podId,
+      board_id: row.boardId,
+      task_id: row.taskId,
+      dag_id: row.dagId,
+      heartbeat_config_id: row.heartbeatConfigId,
+      route_id: row.routeId,
+      conversation_id: row.conversationId,
+      summary: row.summary,
+      error_details: row.errorDetails,
+      duration_ms: row.durationMs,
+      metadata: row.metadata,
+      started_at: row.startedAt,
+      completed_at: row.completedAt,
+    };
+  }
+
   async create(dto: {
     account_id: string;
     trigger_type: string;
@@ -113,13 +140,14 @@ export class ExecutionLogService {
     }
 
     try {
-      return await this.db
+      const rows = await this.db
         .select()
         .from(executionLog)
         .where(and(...conditions))
         .orderBy(desc(executionLog.startedAt))
         .limit(limit)
         .offset(offset);
+      return rows.map((r) => this.present(r));
     } catch (error) {
       throw new Error(
         `Failed to fetch execution logs: ${(error as Error).message}`,

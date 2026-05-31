@@ -10,6 +10,7 @@ import { boardSteps, boardInstances, tasks } from '../db/schema';
 import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { CreateBoardStepDto } from './dto/create-board-step.dto';
 import { UpdateBoardStepDto } from './dto/update-board-step.dto';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class BoardStepsService {
@@ -27,7 +28,7 @@ export class BoardStepsService {
   private present(row: any) {
     const { category, agent, ...rest } = row;
     return {
-      ...rest,
+      ...snakeKeys(rest),
       linked_category: category ?? null,
       default_agent: agent ?? null,
     };
@@ -126,7 +127,7 @@ export class BoardStepsService {
       })
       .returning();
 
-    return data;
+    return snakeKeys(data);
   }
 
   async update(
@@ -175,7 +176,7 @@ export class BoardStepsService {
       )
       .returning();
 
-    return data;
+    return snakeKeys(data);
   }
 
   async remove(

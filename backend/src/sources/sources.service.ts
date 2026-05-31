@@ -11,6 +11,7 @@ import { AccessControlHelper } from '../common/helpers/access-control.helper';
 import { AdapterRegistry } from '../adapters/adapter.registry';
 import { CreateSourceDto } from './dto/create-source.dto';
 import { UpdateSourceDto } from './dto/update-source.dto';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class SourcesService {
@@ -29,10 +30,10 @@ export class SourcesService {
   private present(row: any) {
     const { category, ...rest } = row;
     return {
-      ...rest,
+      ...snakeKeys(rest),
       categories: category ?? null,
       config: this.maskSensitiveConfig(rest.config),
-    };
+    } as any;
   }
 
   async findAll(userId: string, accountId: string) {
@@ -128,9 +129,9 @@ export class SourcesService {
       .returning();
 
     return {
-      ...row,
+      ...snakeKeys(row),
       config: this.maskSensitiveConfig(row.config),
-    };
+    } as any;
   }
 
   async update(
@@ -196,9 +197,9 @@ export class SourcesService {
       .returning();
 
     return {
-      ...row,
+      ...snakeKeys(row),
       config: this.maskSensitiveConfig(row.config),
-    };
+    } as any;
   }
 
   async remove(userId: string, accountId: string, id: string) {

@@ -38,6 +38,7 @@ import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { OrchestrationService } from '../orchestration/orchestration.service';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 @Injectable()
 export class ConversationsService {
@@ -81,7 +82,7 @@ export class ConversationsService {
       ...rest
     } = task;
     return {
-      ...rest,
+      ...snakeKeys(rest),
       sources: source ?? null,
       categories: category_categoryId ?? null,
       override_category: category_overrideCategoryId ?? null,
@@ -92,7 +93,7 @@ export class ConversationsService {
     if (!row) return row;
     const { task, boardInstance, ...rest } = row;
     return {
-      ...rest,
+      ...snakeKeys(rest),
       task: this.presentTask(task) ?? null,
       board: boardInstance ?? null,
     };
@@ -205,7 +206,7 @@ export class ConversationsService {
       conversation: data,
     });
 
-    return data;
+    return snakeKeys(data);
   }
 
   /**
@@ -266,7 +267,7 @@ export class ConversationsService {
     // Re-key the embedded `task` relation to the PostgREST `task` key (same name).
     const data = rows.map((r: any) => {
       const { task, ...rest } = r;
-      return { ...rest, task: task ?? null };
+      return { ...snakeKeys(rest), task: task ?? null };
     });
 
     if (taskId) {
@@ -388,7 +389,7 @@ export class ConversationsService {
     );
 
     return {
-      data,
+      data: data.map(snakeKeys),
       pagination: {
         page,
         limit,
@@ -1608,7 +1609,7 @@ export class ConversationsService {
       throw new Error(`Failed to update conversation: ${error.message}`);
     }
 
-    return data;
+    return snakeKeys(data);
   }
 
   /**

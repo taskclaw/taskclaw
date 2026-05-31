@@ -32,6 +32,7 @@ import {
   conversations,
 } from '../db/schema';
 import { StorageService } from '../storage/storage.service';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 import { CreateSkillDto } from './dto/create-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
 import { AgentSyncService } from '../agent-sync/agent-sync.service';
@@ -137,7 +138,7 @@ export class SkillsService {
         .where(conditions.length ? and(...conditions) : undefined)
         .orderBy(asc(skills.name));
 
-      return data || [];
+      return (data || []).map(snakeKeys);
     } catch (error) {
       this.logger.error('Error fetching skills:', error);
       throw error;
@@ -159,11 +160,25 @@ export class SkillsService {
         throw new NotFoundException('Skill not found');
       }
 
+      // NOTE: returns the RAW camelCase row on purpose — internal callers
+      // (update/uploadAttachment/removeAttachment/getAttachmentContent) read
+      // `skill.fileAttachments`. The HTTP GET :id route re-keys via
+      // `getOne()` below; do not snake_key here.
       return data;
     } catch (error) {
       this.logger.error('Error fetching skill:', error);
       throw error;
     }
+  }
+
+  /**
+   * HTTP-facing single-skill fetch — same as `findOne` but re-keyed to the
+   * snake_case shape the frontend reads (`skill_type`, `is_active`,
+   * `file_attachments`, `created_at`, …). Kept separate from `findOne` because
+   * that method is also consumed internally with camelCase keys.
+   */
+  async getOne(accessToken: string, accountId: string, id: string) {
+    return snakeKeys(await this.findOne(accessToken, accountId, id));
   }
 
   /**
@@ -300,7 +315,7 @@ export class SkillsService {
     // Already imported? source_type='disk-scan' rows ARE the import. We just
     // mark them eligible for normal use by linking to the agent context. So
     // for v1, "import" returns the disk-scan row itself.
-    return source;
+    return snakeKeys(source);
   }
 
   /**
@@ -488,7 +503,7 @@ export class SkillsService {
         })
         .returning();
 
-      return rows[0];
+      return snakeKeys(rows[0]);
     } catch (error) {
       this.logger.error('Error creating skill:', error);
       throw error;
@@ -550,7 +565,7 @@ export class SkillsService {
       // Trigger sync for all linked categories
       await this.syncLinkedCategories(accountId, id);
 
-      return data;
+      return snakeKeys(data);
     } catch (error) {
       this.logger.error('Error updating skill:', error);
       throw error;
@@ -756,7 +771,7 @@ export class SkillsService {
       // Trigger sync for linked categories
       await this.syncLinkedCategories(accountId, skillId);
 
-      return data;
+      return snakeKeys(data);
     } catch (error) {
       this.logger.error('Error uploading skill attachment:', error);
       throw error;
@@ -845,7 +860,7 @@ export class SkillsService {
       // Trigger sync for linked categories
       await this.syncLinkedCategories(accountId, skillId);
 
-      return data;
+      return snakeKeys(data);
     } catch (error) {
       this.logger.error('Error removing skill attachment:', error);
       throw error;

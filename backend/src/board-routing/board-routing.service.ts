@@ -9,6 +9,7 @@ import {
 } from '../db/schema';
 import { CreateBoardRouteDto } from './dto/create-board-route.dto';
 import { UpdateBoardRouteDto } from './dto/update-board-route.dto';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 /**
  * Maps the snake_case task column names that may appear in a route's
@@ -68,7 +69,7 @@ export class BoardRoutingService {
       })
       .returning();
 
-    return data;
+    return snakeKeys(data);
   }
 
   async findAllRoutes(accountId: string) {
@@ -78,7 +79,7 @@ export class BoardRoutingService {
       .where(eq(boardRoutes.accountId, accountId))
       .orderBy(desc(boardRoutes.createdAt));
 
-    return data;
+    return data.map(snakeKeys);
   }
 
   async findRoute(accountId: string, routeId: string) {
@@ -97,7 +98,7 @@ export class BoardRoutingService {
       throw new NotFoundException(`Board route ${routeId} not found`);
     }
 
-    return data;
+    return snakeKeys(data);
   }
 
   async updateRoute(
@@ -119,7 +120,7 @@ export class BoardRoutingService {
       )
       .returning();
 
-    return data;
+    return snakeKeys(data);
   }
 
   async deleteRoute(accountId: string, routeId: string) {

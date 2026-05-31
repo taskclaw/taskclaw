@@ -25,6 +25,7 @@ import { WebhookEmitterService } from '../webhooks/webhook-emitter.service';
 import { DAGExecutorService } from '../board-routing/dag-executor.service';
 import { ExecutionLogService } from '../heartbeat/execution-log.service';
 import { MentionDispatchService } from '../mention/dispatch.service';
+import { snakeKeys } from '../common/utils/snake-keys.util';
 
 interface TaskFilters {
   category_id?: string;
@@ -88,7 +89,7 @@ export class TasksService {
    * Each missing relation collapses to `null`, matching PostgREST's behaviour
    * for an unmatched embedded select.
    */
-  private present(row: any) {
+  private present(row: any): any {
     const {
       category_categoryId,
       category_overrideCategoryId,
@@ -97,7 +98,7 @@ export class TasksService {
       ...rest
     } = row;
     return {
-      ...rest,
+      ...snakeKeys(rest),
       categories: category_categoryId ?? null,
       sources: source ?? null,
       override_category: category_overrideCategoryId ?? null,
@@ -1039,10 +1040,10 @@ export class TasksService {
    * Re-key the slim blocker embed (`categories!category_id(id, name, color),
    * agents!assignee_id(id, name)`) back to the PostgREST aliases.
    */
-  private presentBlocker(row: any) {
+  private presentBlocker(row: any): any {
     const { category_categoryId, agent, ...rest } = row;
     return {
-      ...rest,
+      ...snakeKeys(rest),
       categories: category_categoryId ?? null,
       assignee_agent: agent ?? null,
     };
