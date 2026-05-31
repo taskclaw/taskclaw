@@ -478,7 +478,11 @@ async function remote() {
   const user = args.user || args.login || "root";
   const key = args.key || args.i || process.env.TASKCLAW_SSH_KEY || null;
   const domain = args.domain || null;
-  const port = String(args.port || PORT);
+  // Server installs default to port 80, NOT 3000. The browser then omits the
+  // port from Origin, which matches the gateway's port-stripped X-Forwarded-Host
+  // so Next.js Server Actions (login, mutations) work. On a custom non-80 port
+  // those server actions break — warn the user when they override it.
+  const port = String(args.port || "80");
   const sshPort = args["ssh-port"] || args.sshPort || null;
   // --ref <branch|tag>: install from a non-default repo ref (default: main).
   const ref = args.ref || process.env.TASKCLAW_REPO_REF || null;
@@ -550,12 +554,18 @@ async function remote() {
   const sshBase = baseSshOpts(sshOpts);
 
   // ── Compute the public SITE_URL ───────────────────────────
+  // Omit the port when it's the HTTP default (80) so the browser Origin has no
+  // port and matches the gateway's X-Forwarded-Host (Server Actions guard).
   const siteUrl = domain
     ? `https://${domain}`
-    : `http://${host}:${port}`;
+    : `http://${host}${port === "80" ? "" : `:${port}`}`;
 
   log(`Remote install target: ${c.cyan}${target}${c.reset}`);
   log(`Public URL will be:    ${c.cyan}${siteUrl}${c.reset}`);
+  if (!domain && port !== "80") {
+    warn(`Non-default port ${port}: the browser Origin will include the port,`);
+    warn("which breaks Next.js Server Actions (login). Prefer 80, or --domain + TLS.");
+  }
   if (domain) {
     warn(`Make sure a DNS A-record for ${domain} points at ${host} first,`);
     warn("and that you have TLS termination (reverse proxy) in front of port " + port + ".");

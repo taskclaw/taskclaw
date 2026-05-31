@@ -47,9 +47,15 @@ TASKCLAW_SITE_URL="${TASKCLAW_SITE_URL:-}"
 TASKCLAW_HOST="${TASKCLAW_HOST:-}"
 TASKCLAW_PORT="${TASKCLAW_PORT:-3000}"
 
-# Derive a SITE_URL from TASKCLAW_HOST if only the host was given.
+# Derive a SITE_URL from TASKCLAW_HOST if only the host was given. Omit the
+# port when it's the HTTP default (80) so the browser Origin has no port —
+# required for Next.js Server Actions behind the single-origin gateway.
 if [ -z "$TASKCLAW_SITE_URL" ] && [ -n "$TASKCLAW_HOST" ]; then
-  TASKCLAW_SITE_URL="http://${TASKCLAW_HOST}:${TASKCLAW_PORT}"
+  if [ "$TASKCLAW_PORT" = "80" ]; then
+    TASKCLAW_SITE_URL="http://${TASKCLAW_HOST}"
+  else
+    TASKCLAW_SITE_URL="http://${TASKCLAW_HOST}:${TASKCLAW_PORT}"
+  fi
 fi
 
 is_localhost_url() {
@@ -322,6 +328,7 @@ ensure_env() {
 # TaskClaw — generated $(date -u +%Y-%m-%dT%H:%M:%SZ)
 # Auto-loaded by docker compose. Keep this file private (chmod 600).
 SITE_URL=${SITE_URL}
+EXTERNAL_PORT=${TASKCLAW_PORT}
 COOKIE_SECURE=${COOKIE_SECURE}
 JWT_SECRET=${JWT_SECRET}
 ANON_KEY=${ANON_KEY}

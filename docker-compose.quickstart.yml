@@ -145,7 +145,10 @@ services:
   kong:
     image: kong:2.8.1
     ports:
-      - "3000:8000"
+      # Host port follows EXTERNAL_PORT (server installs use 80 so the browser
+      # Origin has no port — required for Next.js Server Actions). Default 3000
+      # for the localhost quickstart.
+      - "${EXTERNAL_PORT:-3000}:8000"
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
@@ -195,7 +198,7 @@ services:
       GOTRUE_URL: http://auth:9999
       STORAGE_URL: http://kong:8000/storage/v1
       QUICKSTART: "true"
-      EXTERNAL_PORT: "3000"
+      EXTERNAL_PORT: "${EXTERNAL_PORT:-3000}"
     depends_on:
       redis:
         condition: service_healthy
