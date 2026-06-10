@@ -2,7 +2,7 @@ import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomBytes, createHash } from 'crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { DB, type Db } from '../db';
 import { refreshTokens } from '../db/schema';
 
@@ -99,24 +99,37 @@ export class JwtAuthService {
    */
   async rotateRefresh(rawToken: string): Promise<{ userId: string; refresh: string }> {
     const hash = this.sha256(rawToken);
+
+    // Atomically CLAIM the token: a conditional UPDATE flips revoked_at only if
+    // it is still NULL, so of N concurrent refreshes exactly one gets the row
+    // back. A separate select-then-revoke leaves a race window where parallel
+    // replays of the same token all validate and all mint children.
     const [row] = await this.db
-      .select()
-      .from(refreshTokens)
-      .where(eq(refreshTokens.tokenHash, hash))
-      .limit(1);
+      .update(refreshTokens)
+      .set({ revokedAt: new Date().toISOString() })
+      .where(
+        and(eq(refreshTokens.tokenHash, hash), isNull(refreshTokens.revokedAt)),
+      )
+      .returning();
 
-    if (!row) throw new UnauthorizedException('Invalid refresh token');
-
-    if (row.revokedAt) {
-      // reuse of a rotated token → revoke the entire family
+    if (!row) {
+      // Lost the claim: unknown token, or a replay of an already-rotated one.
+      const [existing] = await this.db
+        .select()
+        .from(refreshTokens)
+        .where(eq(refreshTokens.tokenHash, hash))
+        .limit(1);
+      if (!existing) throw new UnauthorizedException('Invalid refresh token');
+      // reuse of a rotated token → revoke the entire family (theft signal)
       await this.db
         .update(refreshTokens)
         .set({ revokedAt: new Date().toISOString() })
-        .where(eq(refreshTokens.familyId, row.familyId));
+        .where(eq(refreshTokens.familyId, existing.familyId));
       throw new UnauthorizedException('Refresh token reuse detected');
     }
 
     if (new Date(row.expiresAt) < new Date()) {
+      // Already revoked above — revoking an expired token is harmless.
       throw new UnauthorizedException('Refresh token expired');
     }
 
@@ -126,10 +139,6 @@ export class JwtAuthService {
       row.familyId,
       row.id,
     );
-    await this.db
-      .update(refreshTokens)
-      .set({ revokedAt: new Date().toISOString() })
-      .where(eq(refreshTokens.id, row.id));
 
     return { userId: row.userId, refresh: childRaw };
   }
