@@ -55,9 +55,19 @@ export class ApiKeysService {
       );
     }
 
-    // Return the full key only on creation
+    // Return the full key only on creation. Shape explicitly to the same
+    // snake_case contract as findAll — spreading the raw Drizzle row would
+    // leak camelCase columns AND the internal key_hash.
     return {
-      ...data,
+      id: data.id,
+      account_id: data.accountId,
+      user_id: data.userId,
+      key_prefix: data.keyPrefix,
+      name: data.name,
+      scopes: data.scopes,
+      last_used_at: data.lastUsedAt,
+      expires_at: data.expiresAt,
+      created_at: data.createdAt,
       key: rawKey,
     };
   }

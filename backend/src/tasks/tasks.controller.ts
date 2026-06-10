@@ -51,6 +51,24 @@ export class TasksController {
     );
   }
 
+  // NOTE: declared BEFORE @Get(':id') — NestJS matches routes in declaration
+  // order, so a later 'search' would be swallowed by ':id' (id='search' →
+  // 22P02 invalid uuid → 500).
+  @Get('search')
+  @ApiOperation({ summary: 'Full-text search tasks by title and notes' })
+  search(
+    @Req() req,
+    @Param('accountId') accountId: string,
+    @Query('q') query: string,
+  ) {
+    return this.tasksService.search(
+      req.user.id,
+      accountId,
+      query,
+      req.accessToken,
+    );
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get task by ID' })
   findOne(
@@ -107,21 +125,6 @@ export class TasksController {
       req.user.id,
       accountId,
       id,
-      req.accessToken,
-    );
-  }
-
-  @Get('search')
-  @ApiOperation({ summary: 'Full-text search tasks by title and notes' })
-  search(
-    @Req() req,
-    @Param('accountId') accountId: string,
-    @Query('q') query: string,
-  ) {
-    return this.tasksService.search(
-      req.user.id,
-      accountId,
-      query,
       req.accessToken,
     );
   }
