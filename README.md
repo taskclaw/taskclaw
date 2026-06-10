@@ -42,7 +42,6 @@ npx taskclaw
 Or deploy with [Docker](https://docs.docker.com/get-docker/) directly:
 
 ```bash
-docker volume create taskclaw_data
 curl -fsSL https://raw.githubusercontent.com/taskclaw/taskclaw/main/scripts/install.sh | sh
 ```
 
@@ -72,8 +71,9 @@ npx taskclaw remote --host <your-server-ip>
 ```
 
 This single command provisions Docker on the server, generates unique secrets,
-brings up the full stack, and saves a credentials file you can keep. For
-automatic HTTPS, add a domain:
+brings up the full stack, and saves a credentials file you can keep. To serve
+over HTTPS at your own domain (DNS A-record + TLS-terminating proxy required),
+add:
 
 ```bash
 npx taskclaw remote --host <your-server-ip> --domain <example.com>
@@ -139,22 +139,20 @@ This brings up the full plain-PostgreSQL stack: Postgres (pgvector), MinIO (S3-c
 
 Running on a real server (not `localhost`) needs a few extra steps the quickstart doesn't cover:
 
-1. **Set `backend/.env` essentials.** Use strong secrets and point CORS at your host:
+1. **Set strong secrets and your public URL.** The quickstart compose reads these from a `.env` file next to the compose file (or the shell environment). CORS and the Server Actions allowed-origin both derive from `SITE_URL` automatically:
 
    ```bash
-   DATABASE_URL=postgresql://postgres:<strong-random-password>@db:5432/postgres
+   POSTGRES_PASSWORD=<strong-random-password>
    JWT_SECRET=<strong-random-secret>          # openssl rand -hex 32
    ENCRYPTION_KEY=<strong-random-hex-string>  # openssl rand -hex 32
-   AUTH_LOCAL=true
-   CORS_ORIGIN=http://<your-server-ip>:3002
-   SITE_URL=http://<your-server-ip>:3002
+   SITE_URL=http://<your-server-ip>:3000      # or EXTERNAL_PORT=80 + SITE_URL=http://<your-server-ip>
+   MINIO_ROOT_USER=<user>
+   MINIO_ROOT_PASSWORD=<strong-random-password>
    # MinIO / S3-compatible storage — point S3_PUBLIC_URL at a browser-reachable URL:
    S3_PUBLIC_URL=http://<your-server-ip>:9000
    ```
 
-   Also set `POSTGRES_PASSWORD` (Postgres) and `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` (MinIO) in the root `.env`.
-
-2. **Over plain HTTP, set `COOKIE_SECURE=false`** in the frontend env. Otherwise the auth session cookie is marked `Secure`, browsers silently drop it, and login never reaches the dashboard. (For production, serve HTTPS instead and leave this at its default.)
+2. **Over plain HTTP, `COOKIE_SECURE` must be `false`** (the quickstart compose default). Otherwise the auth session cookie is marked `Secure`, browsers silently drop it, and login never reaches the dashboard. (For production, serve HTTPS instead and set it to `true`.)
 
    The frontend serves a single-origin `/api/[...path]` proxy that forwards to the backend over the Docker network (`INTERNAL_API_URL=http://backend:3003`) and injects the Bearer token from the httpOnly `auth_token` cookie — so the published frontend image works on any host without rebuilding `NEXT_PUBLIC_*` URLs.
 
@@ -165,7 +163,7 @@ See [docs/self-hosting.md](./docs/self-hosting.md) for the full self-hosting gui
 ## Upgrading
 
 ```bash
-TASKCLAW_VERSION=v1.2.0 docker compose pull && docker compose up -d
+TASKCLAW_VERSION=v2.0.0 docker compose pull && docker compose up -d
 ```
 
 ## Documentation
