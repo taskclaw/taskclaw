@@ -16,7 +16,7 @@
 //
 // Remote install (one command, from your laptop):
 //   npx taskclaw remote --host <ip> [--user root] [--key <path>]
-//                       [--password] [--domain <example.com>] [--port 3000]
+//                       [--password] [--domain <example.com>] [--port 80]
 //   Aliases also accepted:  ip=<ip> login=<user> password=<pw> domain=<d>
 //
 // Complete uninstall (DESTRUCTIVE — deletes ALL data, double-confirmed):
@@ -478,10 +478,10 @@ async function remote() {
   const user = args.user || args.login || "root";
   const key = args.key || args.i || process.env.TASKCLAW_SSH_KEY || null;
   const domain = args.domain || null;
-  // Server installs default to port 80, NOT 3000. The browser then omits the
-  // port from Origin, which matches the gateway's port-stripped X-Forwarded-Host
-  // so Next.js Server Actions (login, mutations) work. On a custom non-80 port
-  // those server actions break — warn the user when they override it.
+  // Server installs default to port 80 (clean http://<ip> URLs, no port in the
+  // browser Origin). Custom ports also work on current images — the frontend is
+  // the public origin and SITE_URL drives the Server Actions allowed-origins —
+  // but pre-v2 (Kong-gateway) images REQUIRED 80/443, so 80 stays the default.
   const port = String(args.port || "80");
   const sshPort = args["ssh-port"] || args.sshPort || null;
   // --ref <branch|tag>: install from a non-default repo ref (default: main).
@@ -563,8 +563,8 @@ async function remote() {
   log(`Remote install target: ${c.cyan}${target}${c.reset}`);
   log(`Public URL will be:    ${c.cyan}${siteUrl}${c.reset}`);
   if (!domain && port !== "80") {
-    warn(`Non-default port ${port}: the browser Origin will include the port,`);
-    warn("which breaks Next.js Server Actions (login). Prefer 80, or --domain + TLS.");
+    warn(`Non-default port ${port}: works on current images; pre-v2 (Kong) images`);
+    warn("required port 80 or --domain + TLS for login to work.");
   }
   if (domain) {
     warn(`Make sure a DNS A-record for ${domain} points at ${host} first,`);
@@ -759,7 +759,7 @@ Options:
                        ${c.dim}(alias: password=<pw> — insecure, prefer --key)${c.reset}
   --domain <example>   Serve over https://<domain> instead of http://<ip>:<port>
                        ${c.dim}(alias: domain=<example>)${c.reset}
-  --port <n>           Public HTTP port on the server (default: ${PORT})
+  --port <n>           Public HTTP port on the server (default: 80)
   --ssh-port <n>       SSH port if not 22
 
 Examples:
@@ -1153,7 +1153,7 @@ Commands:
 
 Remote install:
   npx taskclaw remote --host <ip> [--user root] [--key <path>]
-                      [--password] [--domain <example.com>] [--port 3000]
+                      [--password] [--domain <example.com>] [--port 80]
   Aliases: ip=<ip> login=<user> password=<pw> domain=<d>
   See: npx taskclaw remote --help
 

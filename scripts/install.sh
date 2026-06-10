@@ -101,14 +101,28 @@ download_files() {
 
   mkdir -p "$INSTALL_DIR/docker/volumes/api"
   mkdir -p "$INSTALL_DIR/docker/volumes/db"
-  for file in docker/volumes/api/kong.quickstart.yml docker/volumes/db/roles.sql docker/volumes/db/jwt.sql; do
-    fetch "$file" "$INSTALL_DIR/$file"
+  # Union of the files the quickstart compose bind-mounts across releases:
+  #   v2 (plain Postgres):  db/init-extensions.sql (pgvector etc. — REQUIRED; if
+  #     it's missing while the compose references it, Docker silently creates an
+  #     empty DIRECTORY at that path and the db comes up without extensions)
+  #   v1 (Supabase):        api/kong.quickstart.yml, db/roles.sql, db/jwt.sql
+  # Each fetch is tolerant because any given ref only ships its own era's files
+  # (the compose fetched above comes from the SAME ref, so the pairing is safe).
+  for file in \
+    docker/volumes/db/init-extensions.sql \
+    docker/volumes/api/kong.quickstart.yml \
+    docker/volumes/db/roles.sql \
+    docker/volumes/db/jwt.sql; do
+    if ! fetch "$file" "$INSTALL_DIR/$file" 2>/dev/null; then
+      rm -f "$INSTALL_DIR/$file"
+      info "  (skipping $file — not present on this ref)"
+    fi
   done
 
-  # The Supabase containers (Kong, etc.) run as NON-root users and bind-mount
-  # these config files read-only. A hardened host (root umask 077) would leave
-  # them mode 600, so the container can't read them -> "kong.yml: Permission
-  # denied". Force world-read + dir-traverse so any container UID can read them.
+  # Containers run as NON-root users and bind-mount these config files
+  # read-only. A hardened host (root umask 077) would leave them mode 600, so
+  # the container can't read them (e.g. Kong: "kong.yml: Permission denied").
+  # Force world-read + dir-traverse so any container UID can read them.
   chmod -R a+rX "$INSTALL_DIR/docker"
 
   ok "Files downloaded."
@@ -135,20 +149,20 @@ wait_for_health() {
   return 1
 }
 
-# ── DB bootstrap (idempotent) ───────────────────────────────
-# The supabase/postgres image's init-scripts (roles.sql/jwt.sql) don't reliably
-# apply across image versions / bind-mount handling, and the base image
-# pre-creates the auth.* objects owned by supabase_admin. So run an explicit
-# bootstrap against a freshly-up db BEFORE auth/rest/storage/realtime migrate:
-#   1) set the internal Supabase roles' passwords == POSTGRES_PASSWORD (so
-#      rest/auth/storage/realtime can authenticate),
-#   2) give supabase_auth_admin OWNERSHIP of the auth schema + its objects, so
-#      GoTrue's CREATE OR REPLACE FUNCTION auth.uid()/role() succeeds instead of
-#      failing with "must be owner of function uid" (SQLSTATE 42501), and
-#   3) ensure the realtime schema exists, so realtime's migrate doesn't abort
-#      with "no schema has been selected to create in" (SQLSTATE 3F000).
+# ── DB bootstrap (idempotent, stack-aware) ──────────────────
+# Brings up ONLY the db first and waits for it. What happens next depends on
+# the stack the downloaded compose ships:
+#   • v2 (plain Postgres / pgvector): nothing to do — init-extensions.sql and
+#     the backend's drizzle migrations handle everything. We only align the
+#     postgres superuser password with .env (cheap insurance against drift).
+#   • v1 (Supabase): the supabase/postgres image's init-scripts don't reliably
+#     apply, and the base image pre-creates auth.* owned by supabase_admin. So:
+#     1) set the internal Supabase roles' passwords == POSTGRES_PASSWORD,
+#     2) give supabase_auth_admin OWNERSHIP of the auth schema + objects (else
+#        GoTrue fails 42501 "must be owner of function uid"),
+#     3) ensure the realtime schema exists (else realtime aborts 3F000).
 bootstrap_db() {
-  info "Bootstrapping database (roles, ownership, schemas)..."
+  info "Bootstrapping database..."
   local pgpw
   pgpw="$(grep '^POSTGRES_PASSWORD=' "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2- || true)"
   [ -n "$pgpw" ] || pgpw="postgres"
@@ -161,9 +175,24 @@ bootstrap_db() {
     [ $attempts -ge 60 ] && { warn "db did not become ready in time; continuing."; break; }
     sleep 2
   done
-  # Let the base image's own init (which creates auth.* + the supabase roles)
-  # settle after the port opens.
+  # Let the image's own init scripts settle after the port opens.
   sleep 3
+
+  # Detect the stack: the Supabase image pre-creates the auth schema; the
+  # plain-Postgres (pgvector) stack has no such schema.
+  local has_auth_schema
+  has_auth_schema="$(docker compose exec -T db psql -U postgres -d postgres -tAc \
+    "SELECT 1 FROM pg_namespace WHERE nspname='auth'" 2>/dev/null </dev/null | tr -d '[:space:]' || true)"
+
+  if [ "$has_auth_schema" != "1" ]; then
+    # v2 plain-Postgres stack — keep the superuser password aligned and exit.
+    docker compose exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=0 \
+      -v pw="$pgpw" >/dev/null 2>&1 <<'SQL' || true
+ALTER USER postgres WITH PASSWORD :'pw';
+SQL
+    ok "Database ready (plain-Postgres stack — no Supabase bootstrap needed)."
+    return 0
+  fi
 
   docker compose exec -T db \
     psql -U postgres -d postgres -v ON_ERROR_STOP=0 -v pw="$pgpw" >/dev/null 2>&1 <<'SQL' || \
@@ -221,8 +250,14 @@ run_server_mode() {
   # locally-built/preloaded image (e.g. a from-source build of the frontend).
   docker compose up -d --pull missing
 
-  # ── 5. Open the firewall for the single exposed port ────────
+  # ── 5. Open the firewall ─────────────────────────────────────
   open_firewall "$TASKCLAW_PORT"
+  # v2 stack only: attachments are served to the browser straight from MinIO
+  # (S3_PUBLIC_URL = http://<host>:9000), so that port must be reachable too.
+  # The MinIO admin console (9001) stays bound to 127.0.0.1 — see ensure_env.
+  if grep -q '^  minio:' "$INSTALL_DIR/docker-compose.yml" 2>/dev/null; then
+    open_firewall 9000
+  fi
 
   # ── 6. Health poll + activate seeded super admin ────────────
   if wait_for_health "$SITE_URL"; then
@@ -309,12 +344,17 @@ ensure_env() {
 
   info "Generating unique secrets..."
   local POSTGRES_PASSWORD ENCRYPTION_KEY JWT_SECRET REALTIME_SECRET_KEY_BASE ANON_KEY SERVICE_ROLE_KEY COOKIE_SECURE
+  local MINIO_ROOT_PASSWORD SITE_HOST
   POSTGRES_PASSWORD="$(openssl rand -hex 24)"
   ENCRYPTION_KEY="$(openssl rand -hex 32)"
   JWT_SECRET="$(openssl rand -hex 32)"
   REALTIME_SECRET_KEY_BASE="$(openssl rand -base64 48 | tr -d '\n')"
   ANON_KEY="$(sign_jwt anon "$JWT_SECRET")"
   SERVICE_ROLE_KEY="$(sign_jwt service_role "$JWT_SECRET")"
+  # MinIO ships compose defaults of minioadmin/minioadmin and its API port is
+  # public (attachments are fetched by the browser) — a public install MUST get
+  # unique credentials.
+  MINIO_ROOT_PASSWORD="$(openssl rand -hex 16)"
 
   # http:// site -> cookies cannot be Secure (browser would drop them).
   case "$SITE_URL" in
@@ -322,7 +362,16 @@ ensure_env() {
     *)         COOKIE_SECURE="false" ;;
   esac
 
+  # Host (no scheme/port/path) — the browser-facing URL for MinIO attachments.
+  SITE_HOST="$(printf '%s' "$SITE_URL" | sed -E 's#^https?://##; s#/.*$##; s#:.*$##')"
+  [ -n "$SITE_HOST" ] || SITE_HOST="localhost"
+
   # docker compose auto-loads a .env file sitting next to the compose file.
+  # ANON_KEY / SERVICE_ROLE_KEY / REALTIME_SECRET_KEY_BASE are only consumed by
+  # the v1 (Supabase) compose; on the v2 plain-Postgres stack they're inert.
+  # MINIO_CONSOLE_PORT prefixed with 127.0.0.1 keeps the admin console private
+  # (compose expands it to "127.0.0.1:9001:9001"); the 9000 API stays public
+  # because the browser loads attachments from S3_PUBLIC_URL directly.
   umask 077
   cat > "$env_file" <<EOF
 # TaskClaw — generated $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -336,6 +385,10 @@ SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
 REALTIME_SECRET_KEY_BASE=${REALTIME_SECRET_KEY_BASE}
+MINIO_ROOT_USER=taskclaw
+MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+S3_PUBLIC_URL=http://${SITE_HOST}:9000
+MINIO_CONSOLE_PORT=127.0.0.1:9001
 EOF
   chmod 600 "$env_file" 2>/dev/null || true
   ok "Wrote $env_file with unique secrets."
@@ -356,17 +409,16 @@ open_firewall() {
 }
 
 # ── Activate the seeded super admin (make login actually work) ──
-# The backend seed inserts the super-admin auth user by hand, which leaves two
-# quirks that block password login until repaired here — so do it deterministically
-# once the stack is healthy:
-#   • the row's `aud` is 'authenticated', but this GoTrue version looks users up
-#     with an EMPTY audience on a password grant, so the email never matches —
-#     set aud='' so it does;
-#   • (re)set a known bcrypt password + confirm the email, so the credentials we
-#     report are guaranteed to work regardless of the seed's stored hash.
-# Also flips the app-level approval gate (public.users.status) to 'active', and
-# captures the REAL admin email (the seed may rename it) for the banner + creds.
-# Override the password by putting SUPER_ADMIN_PASSWORD=... in the .env.
+# Stack-aware:
+#   • v2 (plain Postgres, local auth): the drizzle seed already creates
+#     super@admin.com with a CORRECT password123 bcrypt hash and status
+#     'active' — just make sure the approval gate is open and read the real
+#     email for the banner/credentials.
+#   • v1 (Supabase/GoTrue): the seed hand-inserts the auth user with two quirks
+#     that block password login — aud='authenticated' (this GoTrue matches an
+#     EMPTY audience on a password grant) and an unreliable stored hash. Repair:
+#     set aud='', (re)set a known bcrypt password, confirm the email. Override
+#     the password by putting SUPER_ADMIN_PASSWORD=... in the .env (v1 only).
 SUPER_ADMIN_EMAIL=""
 SUPER_ADMIN_PASSWORD=""
 activate_super_admin() {
@@ -376,6 +428,28 @@ activate_super_admin() {
   # optional and usually absent) would otherwise abort the whole install here.
   SUPER_ADMIN_PASSWORD="$(grep -E '^SUPER_ADMIN_PASSWORD=' "$INSTALL_DIR/.env" 2>/dev/null | head -1 | cut -d= -f2- || true)"
   [ -n "$SUPER_ADMIN_PASSWORD" ] || SUPER_ADMIN_PASSWORD="password123"
+
+  local has_auth_schema
+  has_auth_schema="$(docker compose exec -T db psql -U postgres -d postgres -tAc \
+    "SELECT 1 FROM pg_namespace WHERE nspname='auth'" 2>/dev/null </dev/null | tr -d '[:space:]' || true)"
+
+  if [ "$has_auth_schema" != "1" ]; then
+    # v2 local-auth stack: the seed's password hash is already correct; only
+    # open the approval gate and capture the real admin email.
+    SUPER_ADMIN_EMAIL="$(docker compose exec -T db psql -U postgres -d postgres -tAc \
+      "SELECT email FROM public.users ORDER BY created_at ASC LIMIT 1" </dev/null 2>/dev/null | tr -d '[:space:]' || true)"
+    if docker compose exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+         >/dev/null 2>&1 <<'SQL'
+UPDATE public.users SET status = 'active' WHERE status IS DISTINCT FROM 'active';
+SQL
+    then
+      ok "Super admin ready: ${SUPER_ADMIN_EMAIL:-super@admin.com} / password123"
+    else
+      warn "Could not open the account-approval gate automatically (table may not exist yet)."
+      warn "If login fails, see: cd $INSTALL_DIR && docker compose logs backend"
+    fi
+    return 0
+  fi
 
   SUPER_ADMIN_EMAIL="$(docker compose exec -T db psql -U postgres -d postgres -tAc \
     "SELECT email FROM auth.users ORDER BY created_at ASC LIMIT 1" </dev/null 2>/dev/null | tr -d '[:space:]' || true)"
